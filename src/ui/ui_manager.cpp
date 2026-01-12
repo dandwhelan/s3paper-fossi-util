@@ -9,6 +9,8 @@
 #include "../hardware/battery.h"
 #include "../hardware/buzzer.h"
 #include "../hardware/rtc.h"
+#include <FS.h>
+#include <SD.h>
 
 // Colors for eInk (grayscale)
 #define COLOR_BLACK 0x0000
@@ -1545,27 +1547,91 @@ void UIManager::updateNotes() {
 }
 
 void UIManager::notesSave() {
-  // Placeholder: Save canvas to SD
-  M5.Display.setEpdMode(epd_mode_t::epd_quality);
-  M5.Display.fillRect(200, 200, 400, 100, COLOR_WHITE);
-  M5.Display.drawRect(200, 200, 400, 100, COLOR_BLACK);
-  M5.Display.setCursor(220, 240);
-  M5.Display.print("Saving not impl yet...");
+  if (!_notesCanvas)
+    return;
+
+  // Show saving status
+  M5.Display.setEpdMode(epd_mode_t::epd_fast);
+  M5.Display.fillRect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 - 30, 200, 60,
+                      COLOR_BLACK);
+  M5.Display.setTextColor(COLOR_WHITE);
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(SCREEN_WIDTH / 2 - 40, SCREEN_HEIGHT / 2 - 10);
+  M5.Display.print("Saving...");
   M5.Display.display();
-  delay(1000);
-  _needsRefresh = true; // Redraw
+
+  File f = SD.open("/note.bin", FILE_WRITE);
+  if (f) {
+    uint16_t w = _notesCanvas->width();
+    uint16_t h = _notesCanvas->height();
+    uint8_t d = _notesCanvas->getColorDepth();
+
+    // Header
+    f.write((uint8_t *)"M5NOTE", 6);
+    f.write((uint8_t *)&w, 2);
+    f.write((uint8_t *)&h, 2);
+    f.write(&d, 1);
+
+    // Data
+    // Calculate size in bytes
+    size_t len = (w * h * d) / 8;
+    if (d < 8 && (w * h * d) % 8 != 0)
+      len++; // Round up bits
+
+    f.write((uint8_t *)_notesCanvas->getBuffer(), len);
+    f.close();
+  } else {
+    Serial.println("Failed to open file for writing");
+  }
+
+  // Restore UI
+  _needsRefresh = true;
   _lastRefresh = 0;
 }
 
 void UIManager::notesLoad() {
-  // Placeholder
-  M5.Display.setEpdMode(epd_mode_t::epd_quality);
-  M5.Display.fillRect(200, 200, 400, 100, COLOR_WHITE);
-  M5.Display.drawRect(200, 200, 400, 100, COLOR_BLACK);
-  M5.Display.setCursor(220, 240);
-  M5.Display.print("Loading not impl yet...");
+  if (!_notesCanvas)
+    return;
+
+  // Show loading status
+  M5.Display.setEpdMode(epd_mode_t::epd_fast);
+  M5.Display.fillRect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 - 30, 200, 60,
+                      COLOR_BLACK);
+  M5.Display.setTextColor(COLOR_WHITE);
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(SCREEN_WIDTH / 2 - 40, SCREEN_HEIGHT / 2 - 10);
+  M5.Display.print("Loading...");
   M5.Display.display();
-  delay(1000);
+
+  if (SD.exists("/note.bin")) {
+    File f = SD.open("/note.bin", FILE_READ);
+    if (f) {
+      char header[7];
+      f.read((uint8_t *)header, 6);
+      header[6] = 0;
+
+      if (strcmp(header, "M5NOTE") == 0) {
+        uint16_t w, h;
+        uint8_t d;
+        f.read((uint8_t *)&w, 2);
+        f.read((uint8_t *)&h, 2);
+        f.read(&d, 1);
+
+        if (w == _notesCanvas->width() && h == _notesCanvas->height() &&
+            d == _notesCanvas->getColorDepth()) {
+          size_t len = (w * h * d) / 8;
+          if (d < 8 && (w * h * d) % 8 != 0)
+            len++;
+
+          f.read((uint8_t *)_notesCanvas->getBuffer(), len);
+          // Push to display immediately handled by refresh below
+        }
+      }
+      f.close();
+    }
+  }
+
+  // Restore UI
   _needsRefresh = true;
   _lastRefresh = 0;
 }

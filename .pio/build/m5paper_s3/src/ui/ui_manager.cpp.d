@@ -365,4 +365,7 @@
  .pio/libdeps/m5paper_s3/NimBLE-Arduino/src/NimBLESecurity.h \
  C:/Users/DanielWhelan/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/bt/include/esp32c3/include/esp_bt.h \
  src/ui/../hardware/battery.h src/ui/../hardware/buzzer.h \
- src/ui/../hardware/rtc.h
+ src/ui/../hardware/rtc.h \
+ C:/Users/DanielWhelan/.platformio/packages/framework-arduinoespressif32/libraries/FS/src/FS.h \
+ C:/Users/DanielWhelan/.platformio/packages/framework-arduinoespressif32/libraries/SD/src/SD.h \
+ C:/Users/DanielWhelan/.platformio/packages/framework-arduinoespressif32/libraries/SD/src/sd_defines.h
