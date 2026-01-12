@@ -1,0 +1,109 @@
+/**
+ * SD Card Manager
+ *
+ * Handles SD card initialization and common file operations.
+ */
+
+#ifndef SD_MANAGER_H
+#define SD_MANAGER_H
+
+#include <Arduino.h>
+#include <FS.h>
+#include <SD.h>
+#include <vector>
+
+
+class SDManager {
+public:
+  SDManager();
+  ~SDManager();
+
+  /**
+   * Initialize SD card
+   * @return true if successful
+   */
+  bool init();
+
+  /**
+   * Check if SD card is available
+   */
+  bool isAvailable() const { return _available; }
+
+  /**
+   * Ensure a directory exists (creates if needed)
+   * @param path Directory path
+   * @return true if directory exists or was created
+   */
+  bool ensureDirectory(const char *path);
+
+  /**
+   * Read entire file content
+   * @param path File path
+   * @return File content as String (empty if failed)
+   */
+  String readFile(const char *path);
+
+  /**
+   * Write content to file
+   * @param path File path
+   * @param content Content to write
+   * @return true if successful
+   */
+  bool writeFile(const char *path, const String &content);
+
+  /**
+   * Append content to file
+   * @param path File path
+   * @param content Content to append
+   * @return true if successful
+   */
+  bool appendFile(const char *path, const String &content);
+
+  /**
+   * Check if file exists
+   * @param path File path
+   */
+  bool fileExists(const char *path);
+
+  /**
+   * Delete a file
+   * @param path File path
+   * @return true if successful
+   */
+  bool deleteFile(const char *path);
+
+  /**
+   * Get file size in bytes
+   * @param path File path
+   * @return File size (-1 if not found)
+   */
+  int64_t getFileSize(const char *path);
+
+  /**
+   * Get total SD card size in bytes
+   */
+  uint64_t getTotalBytes();
+
+  /**
+   * Get used SD card space in bytes
+   */
+  uint64_t getUsedBytes();
+
+  /**
+   * List files in directory
+   * @param dirPath Directory path
+   * @param files Output vector of file names
+   * @param extensions Optional filter by extensions (comma separated, e.g.
+   * "epub,txt")
+   * @return Number of files found
+   */
+  int listFiles(const char *dirPath, std::vector<String> &files,
+                const char *extensions = nullptr);
+
+private:
+  bool _available;
+
+  bool matchesExtension(const String &filename, const char *extensions);
+};
+
+#endif // SD_MANAGER_H

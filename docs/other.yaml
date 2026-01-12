@@ -1,0 +1,381 @@
+esphome:
+  name: fossibot-dashboard
+  friendly_name: Fossibot Remote
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino  # Arduino has lighter BLE stack than ESP-IDF
+
+logger:
+  level: INFO  # Reduce logging to save RAM (was DEBUG)
+
+api:
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  manual_ip:
+    static_ip: 192.168.7.127
+    gateway: 192.168.4.1
+    subnet: 255.255.252.0
+  
+  # Power Saving: NONE for better BLE coexistence (LIGHT can cause dropped packets)
+  power_save_mode: NONE
+
+# BLE Tracker with relaxed scanning to save shared radio time
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 20s      # Longer interval between scans
+    window: 300ms      # Shorter scan window  
+    active: false
+    continuous: true   # Need continuous to maintain connection
+
+external_components:
+  - source: github://ylianst/esp-fbot
+    refresh: 0s  # FIX: Don't auto-refresh to avoid mid-run issues
+
+# ---------------------------------------------------------
+# SPI BUS
+# ---------------------------------------------------------
+spi:
+  id: bus_a
+  clk_pin: GPIO18
+  mosi_pin: GPIO23
+  miso_pin: GPIO19
+
+# ---------------------------------------------------------
+# I2C BUS (for BME280 sensor)
+# ---------------------------------------------------------
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+  scan: true
+
+# ---------------------------------------------------------
+# FONT (Minimal - single small font)
+# ---------------------------------------------------------
+font:
+  - file: "gfonts://Press Start 2P"
+    id: font_main
+    size: 16
+    glyphs: ' !"%()-.:0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz°'
+  - file: "gfonts://Press Start 2P"
+    id: font_large
+    size: 24
+    glyphs: '0123456789%.W '
+
+# ---------------------------------------------------------
+# COLORS (8-bit palette compatible)
+# ---------------------------------------------------------
+color:
+  - id: color_white
+    hex: "FFFFFF"
+  - id: color_black
+    hex: "1A1A1A"
+  - id: color_green
+    hex: "00FF00"
+  - id: color_orange
+    hex: "FF8C00"
+  - id: color_yellow
+    hex: "FFD700"
+  - id: color_blue
+    hex: "00BFFF"
+  - id: color_gray
+    hex: "404040"
+  - id: color_cyan
+    hex: "00CED1"
+
+# BLE Client configuration
+ble_client:
+  - mac_address: "DC:1E:D5:E4:07:1E" 
+    id: fossibot_ble
+
+# Configure the Fbot component. This component will inherit the ble_client above.
+fbot:
+  id: my_fbot
+  polling_interval: 30s
+  settings_polling_interval: 60s
+  
+# Switches 
+switch:
+  - platform: restart
+    name: "Restart Device"
+    id: restart_sw
+
+  # Restoring Fbot Switches (Software control)
+  - platform: fbot
+    fbot_id: my_fbot
+    usb:
+      name: "USB"
+      id: usb_switch
+    dc:
+      name: "DC"
+      id: dc_switch
+    ac:
+      name: "AC"
+      id: ac_switch
+
+# Physical Buttons (Tactile Switches)
+binary_sensor:
+  - platform: fbot
+    fbot_id: my_fbot
+    connected:
+      name: "Connected"
+      id: fbot_connected
+    usb_active:
+      name: "USB Active"
+      id: fbot_usb_active
+    dc_active:
+      name: "DC Active"
+      id: fbot_dc_active
+    ac_active:
+      name: "AC Inverter Active"
+      id: fbot_ac_active
+
+  # --- HARDWARE BUTTONS ---
+  # Wire diagonally: Pin 1 to GPIO, Pin 3 to GND.
+  
+  # Button 1: AC Toggle (Combo: USB)
+  - platform: gpio
+    pin:
+      number: GPIO14
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    name: "Button AC"
+    id: btn_ac
+    filters:
+      - delayed_on: 10ms  # FIX: Add debounce filter
+    on_press:
+      then:
+        - if:
+            condition:
+              binary_sensor.is_on: btn_dc
+            then:
+              - switch.toggle: usb_switch
+            else:
+              - switch.toggle: ac_switch
+
+  # Button 2: DC Toggle (Combo: USB)
+  - platform: gpio
+    pin:
+      number: GPIO25
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    name: "Button DC"
+    id: btn_dc
+    filters:
+      - delayed_on: 10ms  # FIX: Add debounce filter
+    on_press:
+      then:
+        - if:
+            condition:
+              binary_sensor.is_on: btn_ac
+            then:
+              - switch.toggle: usb_switch
+            else:
+              - switch.toggle: dc_switch
+
+  # Button 3: Standby / Screen Toggle
+  - platform: gpio
+    pin:
+      number: GPIO33
+      mode:
+        input: true
+        pullup: true
+      inverted: true
+    name: "Button Standby"
+    id: btn_standby
+    filters:
+      - delayed_on: 10ms  # FIX: Add debounce filter
+    on_press:
+      then:
+        - if:
+            condition:
+              display.is_displaying_page: page_black
+            then:
+              - display.page.show: page_main
+            else:
+              - display.page.show: page_black
+
+
+# Sensors for battery and power readings
+sensor:
+  # BME280 Temperature & Humidity sensor
+  - platform: bme280_i2c
+    temperature:
+      name: "Campervan Temperature"
+      id: campervan_temp
+      oversampling: 1x
+    humidity:
+      name: "Campervan Humidity"
+      id: campervan_humidity
+      oversampling: 1x
+    pressure:
+      name: "Campervan Pressure"
+      id: campervan_pressure
+    address: 0x76
+    update_interval: 60s
+  
+  - platform: fbot
+    fbot_id: my_fbot
+    battery_level:
+      name: "Battery"
+      id: battery_percent
+    input_power:
+      name: "Total Input Power"
+      id: input_watts
+    output_power:
+      name: "Output Power"
+      id: output_watts
+
+# Display configuration (Updated for Standby Pages)
+display:
+  - platform: ili9xxx
+    model: ILI9341
+    spi_id: bus_a
+    cs_pin: GPIO26
+    dc_pin: GPIO27
+    reset_pin: GPIO4
+    rotation: 90
+    data_rate: 20MHz 
+    invert_colors: false
+    color_palette: 8BIT
+    update_interval: 5s 
+    
+    pages:
+      - id: page_main
+        lambda: |-
+          // --- COLOR DEFINITIONS ---
+          auto bg_color = id(color_black);
+          auto text_color = id(color_white);
+          auto accent_color = id(color_blue);
+          auto alert_color = id(color_orange);
+          auto success_color = id(color_green);
+          auto gray_color = id(color_gray);
+
+          // --- LAYOUT CONSTANTS ---
+          int w = 320;
+          int h = 240;
+          int header_h = 30;
+          int footer_y = 210;
+
+          // 1. HEADER (Dynamic Battery Bar)
+          it.fill(bg_color);
+          
+          if (id(battery_percent).has_state()) {
+             float batt = id(battery_percent).state;
+             int bar_width = (int)((batt / 100.0) * w);
+             
+             // Bar Color Logic
+             Color bar_color = success_color;             // > 50% Green
+             if (batt < 20) bar_color = alert_color;      // < 20% Orange/Red
+             else if (batt < 50) bar_color = id(color_yellow); // 20-50% Yellow
+             
+             // Draw Bar
+             it.filled_rectangle(0, 0, bar_width, header_h, bar_color);
+             
+             // Draw Border for Bar (to show full capacity)
+             it.rectangle(0, 0, w, header_h, gray_color);
+          } else {
+             it.rectangle(0, 0, w, header_h, gray_color); // Empty bar if no state
+          }
+
+          // 2. MAIN BATTERY TEXT (Top Center)
+          if (id(battery_percent).has_state()) {
+            char batt_str[10];
+            snprintf(batt_str, sizeof(batt_str), "%.0f%%", id(battery_percent).state);
+            it.print(w / 2, 40, id(font_large), success_color, TextAlign::TOP_CENTER, batt_str);
+          } else {
+            it.print(w / 2, 40, id(font_main), text_color, TextAlign::TOP_CENTER, "WAIT...");
+          }
+
+          // 3. POWER GRID (Middle Split)
+          // Input (Left)
+          it.print(70, 90, id(font_main), text_color, TextAlign::TOP_CENTER, "INPUT");
+          if (id(input_watts).has_state()) {
+            char in_str[10];
+            snprintf(in_str, sizeof(in_str), "%.0fW", id(input_watts).state);
+            it.print(70, 115, id(font_large), success_color, TextAlign::TOP_CENTER, in_str);
+          } else {
+             it.print(70, 115, id(font_main), text_color, TextAlign::TOP_CENTER, "--");
+          }
+
+          // Output (Right)
+          it.print(250, 90, id(font_main), text_color, TextAlign::TOP_CENTER, "OUTPUT");
+          if (id(output_watts).has_state()) {
+            char out_str[10];
+            snprintf(out_str, sizeof(out_str), "%.0fW", id(output_watts).state);
+            it.print(250, 115, id(font_large), alert_color, TextAlign::TOP_CENTER, out_str);
+          } else {
+             it.print(250, 115, id(font_main), text_color, TextAlign::TOP_CENTER, "--");
+          }
+          
+          // Divider Line
+          it.line(160, 90, 160, 150, gray_color);
+
+          // 4. STATUS ICONS (Centered Group)
+          int icon_y = 170;
+          int btn_w = 54;
+          int btn_h = 24;
+          int gap = 12;
+          int group_x = 67;
+          int text_y_center = icon_y + (btn_h / 2) - 2; 
+
+          // AC Icon (Left)
+          int ac_x = group_x;
+          if (id(fbot_ac_active).state) {
+            it.filled_rectangle(ac_x, icon_y, btn_w, btn_h, alert_color);
+            it.print(ac_x + btn_w/2, text_y_center, id(font_main), bg_color, TextAlign::CENTER, "AC");
+          } else {
+            it.rectangle(ac_x, icon_y, btn_w, btn_h, gray_color);
+            it.print(ac_x + btn_w/2, text_y_center, id(font_main), gray_color, TextAlign::CENTER, "AC");
+          }
+          
+          // DC Icon (Middle)
+          int dc_x = ac_x + btn_w + gap;
+          if (id(fbot_dc_active).state) {
+             it.filled_rectangle(dc_x, icon_y, btn_w, btn_h, success_color);
+             it.print(dc_x + btn_w/2, text_y_center, id(font_main), bg_color, TextAlign::CENTER, "DC");
+          } else {
+             it.rectangle(dc_x, icon_y, btn_w, btn_h, gray_color);
+             it.print(dc_x + btn_w/2, text_y_center, id(font_main), gray_color, TextAlign::CENTER, "DC");
+          }
+
+          // USB Icon (Right)
+          int usb_x = dc_x + btn_w + gap;
+          if (id(fbot_usb_active).state) {
+             it.filled_rectangle(usb_x, icon_y, btn_w, btn_h, success_color);
+             it.print(usb_x + btn_w/2, text_y_center, id(font_main), bg_color, TextAlign::CENTER, "USB");
+          } else {
+             it.rectangle(usb_x, icon_y, btn_w, btn_h, gray_color);
+             it.print(usb_x + btn_w/2, text_y_center, id(font_main), gray_color, TextAlign::CENTER, "USB");
+          }
+
+          // Connection Status (Only show if NOT connected)
+          if (!id(fbot_connected).state) {
+             it.print(290, icon_y + 10, id(font_main), alert_color, TextAlign::CENTER, "!");
+          }
+
+          // 5. ENVIRONMENT FOOTER (Simplified)
+          it.line(0, footer_y - 5, w, footer_y - 5, accent_color);
+          
+          char env_str[64];
+          if (id(campervan_temp).has_state() && id(campervan_humidity).has_state()) {
+            snprintf(env_str, sizeof(env_str), "%.0fC  %.0f%%",
+                     id(campervan_temp).state, 
+                     id(campervan_humidity).state);
+          } else {
+            snprintf(env_str, sizeof(env_str), "Sensors Init...");
+          }
+          it.print(w / 2, footer_y + 15, id(font_main), text_color, TextAlign::CENTER, env_str);
+
+      - id: page_black
+        lambda: |-
+          it.fill(id(color_black));

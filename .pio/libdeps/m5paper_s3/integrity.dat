@@ -1,0 +1,5 @@
+h2zero/NimBLE-Arduino@^1.4.2
+m5stack/M5GFX@^0.2.0
+SD
+m5stack/M5Unified@^0.1.16
+bblanchon/ArduinoJson@^7.0.0

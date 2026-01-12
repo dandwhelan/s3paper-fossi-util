@@ -1,0 +1,1257 @@
+PowerShell 7.5.4
+PS C:\Users\DanielWhelan> cd 'c:\Users\DanielWhelan\ESP32\TorDL\S3'
+PS C:\Users\DanielWhelan\ESP32\TorDL\S3> python -m platformio device monitor
+--- Terminal on COM6 | 115200 8-N-1
+--- Available filters and text transformations: colorize, debug, default, direct, esp32_exception_decoder, hexlify, log2file, nocontrol, printable, send_on_enter, time
+--- More details at https://bit.ly/pio-monitor-filters
+--- Quit: Ctrl+C | Menu: Ctrl+T | Help: Ctrl+T followed by Ctrl+H
+BLE: Failed to connect
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(51, 414) Raw(126, 51)
+POLL TOUCH: 51, 414 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(51, 414) Raw(126, 51)
+POLL TOUCH: 51, 414 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(51, 414) Raw(126, 51)
+POLL TOUCH: 51, 414 (INT Pin: 0)
+GT911 Status: 0x80
+DEBUG UI: Touch(51, 414) Screen=0
+  StatusPanel: X[10-475] Y[280-460]
+HIT TEST: Touch(51, 414)
+  Boundaries: StatusPanel X[10-475] Y[280-460]
+  Toggle Zone Y: 350 to 500
+  USB Zone X: 30 to 171
+  DC Zone X: 171 to 312
+  AC Zone X: 312 to 453
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+BLE: Connecting to DC:1E:D5:E4:07:1E...
+BLE: Connecting with AddrType: PUBLIC (Default)
+BLE: Failed to connect
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(194, 383) Raw(157, 194)
+POLL TOUCH: 194, 383 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+DEBUG UI: Touch(194, 383) Screen=0
+  StatusPanel: X[10-475] Y[280-460]
+HIT TEST: Touch(194, 383)
+  Boundaries: StatusPanel X[10-475] Y[280-460]
+  Toggle Zone Y: 350 to 500
+  USB Zone X: 30 to 171
+  DC Zone X: 171 to 312
+  AC Zone X: 312 to 453
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(213, 379) Raw(161, 213)
+POLL TOUCH: 213, 379 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(213, 379) Raw(161, 213)
+POLL TOUCH: 213, 379 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(213, 379) Raw(161, 213)
+POLL TOUCH: 213, 379 (INT Pin: 0)
+GT911 Status: 0x80
+DEBUG UI: Touch(213, 379) Screen=0
+  StatusPanel: X[10-475] Y[280-460]
+HIT TEST: Touch(213, 379)
+  Boundaries: StatusPanel X[10-475] Y[280-460]
+  Toggle Zone Y: 350 to 500
+  USB Zone X: 30 to 171
+  DC Zone X: 171 to 312
+  AC Zone X: 312 to 453
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(349, 363) Raw(177, 349)
+POLL TOUCH: 349, 363 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(349, 363) Raw(177, 349)
+POLL TOUCH: 349, 363 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(349, 363) Raw(177, 349)
+POLL TOUCH: 349, 363 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(349, 363) Raw(177, 349)
+POLL TOUCH: 349, 363 (INT Pin: 0)
+GT911 Status: 0x80
+DEBUG UI: Touch(349, 363) Screen=0
+  StatusPanel: X[10-475] Y[280-460]
+HIT TEST: Touch(349, 363)
+  Boundaries: StatusPanel X[10-475] Y[280-460]
+  Toggle Zone Y: 350 to 500
+  USB Zone X: 30 to 171
+  DC Zone X: 171 to 312
+  AC Zone X: 312 to 453
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+BLE: Connecting to DC:1E:D5:E4:07:1E...
+BLE: Connecting with AddrType: PUBLIC (Default)
+BLE: Failed to connect
+--- System Alive (Heartbeat) ---
+BLE: Connecting to DC:1E:D5:E4:07:1E...
+BLE: Connecting with AddrType: PUBLIC (Default)
+BLE: Failed to connect
+--- System Alive (Heartbeat) ---
+BLE: Connecting to DC:1E:D5:E4:07:1E...
+BLE: Connecting with AddrType: PUBLIC (Default)
+BLE: Connected callback
+BLE: Discovering services...
+BLE: Service found
+BLE: Write characteristic found
+BLE: Notify characteristic found
+BLE: Subscribed to notifications
+BLE: Requested status data
+UI: Drawing home screen
+BLE: Received 168 bytes
+BLE: SOC=7.0% IN=0W OUT=0W TTF=0m TTE=847m
+--- System Alive (Heartbeat) ---
+BLE: Requested status data
+BLE: Requested settings data
+BLE: Received 168 bytes
+BLE: SOC=7.0% IN=0W OUT=0W TTF=0m TTE=847m
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+UI: Drawing home screen
+BLE: Requested status data
+--- System Alive (Heartbeat) ---
+BLE: Received 168 bytes
+BLE: SOC=7.0% IN=0W OUT=0W TTF=0m TTE=953m
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+UI: Drawing home screen
+BLE: Requested status data
+BLE: Requested settings data
+BLE: Received 168 bytes
+BLE: SOC=7.0% IN=0W OUT=0W TTF=0m TTE=1017m
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+UI: Drawing home screen
+BLE: Requested status data
+--- System Alive (Heartbeat) ---
+BLE: Received 168 bytes
+BLE: SOC=7.0% IN=0W OUT=0W TTF=0m TTE=1017m
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+UI: Drawing home screen
+BLE: Requested status data
+BLE: Requested settings data
+--- System Alive (Heartbeat) ---
+BLE: Received 168 bytes
+BLE: SOC=7.0% IN=0W OUT=0W TTF=0m TTE=1017m
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+UI: Drawing home screen
+BLE: Requested status data
+BLE: Received 168 bytes
+BLE: SOC=7.0% IN=0W OUT=0W TTF=0m TTE=953m
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+UI: Drawing home screen
+BLE: Requested status data
+BLE: Requested settings data
+--- System Alive (Heartbeat) ---
+BLE: Received 168 bytes
+BLE: SOC=7.0% IN=0W OUT=0W TTF=0m TTE=1017m
+BLE: Received 168 bytes
+BLE: SOC=7.0% IN=0W OUT=0W TTF=0m TTE=1017m
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+UI: Drawing home screen
+BLE: Requested status data
+BLE: Received 168 bytes
+BLE: SOC=7.0% IN=0W OUT=0W TTF=0m TTE=1017m
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+UI: Drawing home screen
+BLE: Requested status data
+BLE: Requested settings data
+--- System Alive (Heartbeat) ---
+BLE: Received 168 bytes
+BLE: SOC=6.9% IN=0W OUT=0W TTF=0m TTE=939m
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+UI: Drawing home screen
+BLE: Requested status data
+BLE: Received 168 bytes
+BLE: SOC=6.9% IN=0W OUT=0W TTF=0m TTE=939m
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+UI: Drawing home screen
+BLE: Requested status data
+BLE: Requested settings data
+--- System Alive (Heartbeat) ---
+BLE: Received 168 bytes
+BLE: SOC=6.9% IN=0W OUT=0W TTF=0m TTE=1002m
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(29, 390) Raw(150, 29)
+POLL TOUCH: 29, 390 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(29, 390) Raw(150, 29)
+POLL TOUCH: 29, 390 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(29, 390) Raw(150, 29)
+POLL TOUCH: 29, 390 (INT Pin: 0)
+GT911 Status: 0x80
+DEBUG UI: Touch(29, 390) Screen=0
+  StatusPanel: X[10-475] Y[280-460]
+HIT TEST: Touch(29, 390)
+  Boundaries: StatusPanel X[10-475] Y[280-460]
+  Toggle Zone Y: 350 to 500
+  USB Zone X: 30 to 171
+  DC Zone X: 171 to 312
+  AC Zone X: 312 to 453
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(181, 380) Raw(160, 181)
+POLL TOUCH: 181, 380 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(181, 380) Raw(160, 181)
+POLL TOUCH: 181, 380 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(181, 380) Raw(160, 181)
+POLL TOUCH: 181, 380 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(181, 380) Raw(160, 181)
+POLL TOUCH: 181, 380 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(181, 380) Raw(160, 181)
+POLL TOUCH: 181, 380 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(181, 380) Raw(160, 181)
+POLL TOUCH: 181, 380 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(339, 390) Raw(150, 339)
+POLL TOUCH: 339, 390 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(339, 390) Raw(150, 339)
+POLL TOUCH: 339, 390 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(339, 390) Raw(150, 339)
+POLL TOUCH: 339, 390 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(339, 390) Raw(150, 339)
+POLL TOUCH: 339, 390 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(339, 390) Raw(150, 339)
+POLL TOUCH: 339, 390 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+UI: Drawing home screen
+BLE: Requested status data
+BLE: Received 168 bytes
+BLE: SOC=6.9% IN=0W OUT=0W TTF=0m TTE=1002m
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(41, 371) Raw(169, 41)
+POLL TOUCH: 41, 371 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(41, 371) Raw(169, 41)
+POLL TOUCH: 41, 371 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(41, 371) Raw(169, 41)
+POLL TOUCH: 41, 371 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(41, 371) Raw(169, 41)
+POLL TOUCH: 41, 371 (INT Pin: 0)
+GT911 Status: 0x80
+DEBUG UI: Touch(41, 371) Screen=0
+  StatusPanel: X[10-475] Y[280-460]
+HIT TEST: Touch(41, 371)
+  Boundaries: StatusPanel X[10-475] Y[280-460]
+  Toggle Zone Y: 350 to 500
+  USB Zone X: 30 to 171
+  DC Zone X: 171 to 312
+  AC Zone X: 312 to 453
+UI: MATCH USB!
+BLE: Sent command reg=24 value=1
+EVENT: RELEASE
+BLE: Received 8 bytes
+GT911 Status: 0x80
+GT911 Status: 0x80
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(190, 368) Raw(172, 190)
+POLL TOUCH: 190, 368 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(190, 368) Raw(172, 190)
+POLL TOUCH: 190, 368 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(190, 368) Raw(172, 190)
+POLL TOUCH: 190, 368 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(190, 368) Raw(172, 190)
+POLL TOUCH: 190, 368 (INT Pin: 0)
+GT911 Status: 0x80
+DEBUG UI: Touch(190, 368) Screen=0
+  StatusPanel: X[10-475] Y[280-460]
+HIT TEST: Touch(190, 368)
+  Boundaries: StatusPanel X[10-475] Y[280-460]
+  Toggle Zone Y: 350 to 500
+  USB Zone X: 30 to 171
+  DC Zone X: 171 to 312
+  AC Zone X: 312 to 453
+UI: MATCH DC!
+BLE: Sent command reg=25 value=1
+EVENT: RELEASE
+BLE: Received 8 bytes
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(342, 364) Raw(176, 342)
+POLL TOUCH: 342, 364 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(342, 364) Raw(176, 342)
+POLL TOUCH: 342, 364 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(342, 364) Raw(176, 342)
+POLL TOUCH: 342, 364 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(342, 364) Raw(176, 342)
+POLL TOUCH: 342, 364 (INT Pin: 0)
+GT911 Status: 0x80
+DEBUG UI: Touch(342, 364) Screen=0
+  StatusPanel: X[10-475] Y[280-460]
+HIT TEST: Touch(342, 364)
+  Boundaries: StatusPanel X[10-475] Y[280-460]
+  Toggle Zone Y: 350 to 500
+  USB Zone X: 30 to 171
+  DC Zone X: 171 to 312
+  AC Zone X: 312 to 453
+UI: MATCH AC!
+BLE: Sent command reg=26 value=1
+EVENT: RELEASE
+BLE: Received 8 bytes
+GT911 Status: 0x80
+GT911 Status: 0x80
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+UI: Drawing home screen
+BLE: Requested status data
+BLE: Requested settings data
+BLE: Received 168 bytes
+BLE: SOC=6.9% IN=0W OUT=0W TTF=0m TTE=939m
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(861, 530) Raw(10, 861)
+POLL TOUCH: 861, 530 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(861, 530) Raw(10, 861)
+POLL TOUCH: 861, 530 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(861, 530) Raw(10, 861)
+POLL TOUCH: 861, 530 (INT Pin: 0)
+GT911 Status: 0x80
+DEBUG UI: Touch(861, 530) Screen=0
+  StatusPanel: X[10-475] Y[280-460]
+UI: Navigate to screen 10
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+BLE: Received 168 bytes
+BLE: SOC=6.9% IN=0W OUT=0W TTF=0m TTE=1002m
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(882, 535) Raw(5, 882)
+POLL TOUCH: 882, 535 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(882, 535) Raw(5, 882)
+POLL TOUCH: 882, 535 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(882, 535) Raw(5, 882)
+POLL TOUCH: 882, 535 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+BLE: Requested status data
+BLE: Received 168 bytes
+BLE: SOC=6.9% IN=0W OUT=0W TTF=0m TTE=1002m
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(391, 164) Raw(376, 391)
+POLL TOUCH: 391, 164 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(391, 164) Raw(376, 391)
+POLL TOUCH: 391, 164 (INT Pin: 1)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(389, 151) Raw(389, 389)
+POLL TOUCH: 389, 151 (INT Pin: 0)
+EVENT: PRESS
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(389, 151) Raw(389, 389)
+POLL TOUCH: 389, 151 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(384, 156) Raw(384, 384)
+POLL TOUCH: 384, 156 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(384, 156) Raw(384, 384)
+POLL TOUCH: 384, 156 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(380, 143) Raw(397, 380)
+POLL TOUCH: 380, 143 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(380, 143) Raw(397, 380)
+POLL TOUCH: 380, 143 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(388, 143) Raw(397, 388)
+POLL TOUCH: 388, 143 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(388, 143) Raw(397, 388)
+POLL TOUCH: 388, 143 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(392, 152) Raw(388, 392)
+POLL TOUCH: 392, 152 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(390, 133) Raw(407, 390)
+POLL TOUCH: 390, 133 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(390, 133) Raw(407, 390)
+POLL TOUCH: 390, 133 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(396, 167) Raw(373, 396)
+POLL TOUCH: 396, 167 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(396, 167) Raw(373, 396)
+POLL TOUCH: 396, 167 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(381, 157) Raw(383, 381)
+POLL TOUCH: 381, 157 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(381, 157) Raw(383, 381)
+POLL TOUCH: 381, 157 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(388, 154) Raw(386, 388)
+POLL TOUCH: 388, 154 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(388, 154) Raw(386, 388)
+POLL TOUCH: 388, 154 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(376, 155) Raw(385, 376)
+POLL TOUCH: 376, 155 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(376, 155) Raw(385, 376)
+POLL TOUCH: 376, 155 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(384, 154) Raw(386, 384)
+POLL TOUCH: 384, 154 (INT Pin: 0)
+EVENT: PRESS
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(382, 148) Raw(392, 382)
+POLL TOUCH: 382, 148 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(382, 148) Raw(392, 382)
+POLL TOUCH: 382, 148 (INT Pin: 1)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(381, 151) Raw(389, 381)
+POLL TOUCH: 381, 151 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(381, 151) Raw(389, 381)
+POLL TOUCH: 381, 151 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(401, 146) Raw(394, 401)
+POLL TOUCH: 401, 146 (INT Pin: 1)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(401, 146) Raw(394, 401)
+POLL TOUCH: 401, 146 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(389, 147) Raw(393, 389)
+POLL TOUCH: 389, 147 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(389, 147) Raw(393, 389)
+POLL TOUCH: 389, 147 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(393, 150) Raw(390, 393)
+POLL TOUCH: 393, 150 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(393, 150) Raw(390, 393)
+POLL TOUCH: 393, 150 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(389, 151) Raw(389, 389)
+POLL TOUCH: 389, 151 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(385, 154) Raw(386, 385)
+POLL TOUCH: 385, 154 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(378, 164) Raw(376, 378)
+POLL TOUCH: 378, 164 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(378, 164) Raw(376, 378)
+POLL TOUCH: 378, 164 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(387, 157) Raw(383, 387)
+POLL TOUCH: 387, 157 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(387, 157) Raw(383, 387)
+POLL TOUCH: 387, 157 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(376, 152) Raw(388, 376)
+POLL TOUCH: 376, 152 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(389, 166) Raw(374, 389)
+POLL TOUCH: 389, 166 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(389, 166) Raw(374, 389)
+POLL TOUCH: 389, 166 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(408, 165) Raw(375, 408)
+POLL TOUCH: 408, 165 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(408, 165) Raw(375, 408)
+POLL TOUCH: 408, 165 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(386, 161) Raw(379, 386)
+POLL TOUCH: 386, 161 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(386, 161) Raw(379, 386)
+POLL TOUCH: 386, 161 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(385, 150) Raw(390, 385)
+POLL TOUCH: 385, 150 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(837, 156) Raw(384, 837)
+POLL TOUCH: 837, 156 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(844, 163) Raw(377, 844)
+POLL TOUCH: 844, 163 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+BLE: Requested status data
+BLE: Requested settings data
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(838, 148) Raw(392, 838)
+POLL TOUCH: 838, 148 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(842, 154) Raw(386, 842)
+POLL TOUCH: 842, 154 (INT Pin: 0)
+EVENT: PRESS
+BLE: Received 168 bytes
+BLE: SOC=6.9% IN=0W OUT=0W TTF=0m TTE=1002m
+GT911 Status: 0x80
+EVENT: RELEASE
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(832, 149) Raw(391, 832)
+POLL TOUCH: 832, 149 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(832, 149) Raw(391, 832)
+POLL TOUCH: 832, 149 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x81
+TOUCH: Mapped(842, 156) Raw(384, 842)
+POLL TOUCH: 842, 156 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(833, 158) Raw(382, 833)
+POLL TOUCH: 833, 158 (INT Pin: 1)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(833, 158) Raw(382, 833)
+POLL TOUCH: 833, 158 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(841, 162) Raw(378, 841)
+POLL TOUCH: 841, 162 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(841, 162) Raw(378, 841)
+POLL TOUCH: 841, 162 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(838, 142) Raw(398, 838)
+POLL TOUCH: 838, 142 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(842, 162) Raw(378, 842)
+POLL TOUCH: 842, 162 (INT Pin: 0)
+EVENT: PRESS
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(842, 162) Raw(378, 842)
+POLL TOUCH: 842, 162 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(358, 256) Raw(284, 358)
+POLL TOUCH: 358, 256 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(358, 256) Raw(284, 358)
+POLL TOUCH: 358, 256 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(348, 223) Raw(317, 348)
+POLL TOUCH: 348, 223 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(348, 223) Raw(317, 348)
+POLL TOUCH: 348, 223 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x81
+TOUCH: Mapped(366, 235) Raw(305, 366)
+POLL TOUCH: 366, 235 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(369, 232) Raw(308, 369)
+POLL TOUCH: 369, 232 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x81
+TOUCH: Mapped(375, 232) Raw(308, 375)
+POLL TOUCH: 375, 232 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x81
+TOUCH: Mapped(364, 234) Raw(306, 364)
+POLL TOUCH: 364, 234 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x81
+TOUCH: Mapped(362, 233) Raw(307, 362)
+POLL TOUCH: 362, 233 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(375, 246) Raw(294, 375)
+POLL TOUCH: 375, 246 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(375, 246) Raw(294, 375)
+POLL TOUCH: 375, 246 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x81
+TOUCH: Mapped(369, 255) Raw(285, 369)
+POLL TOUCH: 369, 255 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(600, 264) Raw(276, 600)
+POLL TOUCH: 600, 264 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(595, 242) Raw(298, 595)
+POLL TOUCH: 595, 242 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(601, 243) Raw(297, 601)
+POLL TOUCH: 601, 243 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(596, 236) Raw(304, 596)
+POLL TOUCH: 596, 236 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(596, 240) Raw(300, 596)
+POLL TOUCH: 596, 240 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(596, 240) Raw(300, 596)
+POLL TOUCH: 596, 240 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x81
+TOUCH: Mapped(593, 232) Raw(308, 593)
+POLL TOUCH: 593, 232 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(594, 235) Raw(305, 594)
+POLL TOUCH: 594, 235 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x81
+TOUCH: Mapped(588, 236) Raw(304, 588)
+POLL TOUCH: 588, 236 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+BLE: Requested status data
+BLE: Received 168 bytes
+BLE: SOC=6.9% IN=0W OUT=0W TTF=0m TTE=1002m
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(845, 155) Raw(385, 845)
+POLL TOUCH: 845, 155 (INT Pin: 1)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(845, 155) Raw(385, 845)
+POLL TOUCH: 845, 155 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(845, 155) Raw(385, 845)
+POLL TOUCH: 845, 155 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(365, 229) Raw(311, 365)
+POLL TOUCH: 365, 229 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(365, 229) Raw(311, 365)
+POLL TOUCH: 365, 229 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(366, 246) Raw(294, 366)
+POLL TOUCH: 366, 246 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(366, 246) Raw(294, 366)
+POLL TOUCH: 366, 246 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(620, 253) Raw(287, 620)
+POLL TOUCH: 620, 253 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(620, 253) Raw(287, 620)
+POLL TOUCH: 620, 253 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x81
+TOUCH: Mapped(600, 266) Raw(274, 600)
+POLL TOUCH: 600, 266 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(599, 272) Raw(268, 599)
+POLL TOUCH: 599, 272 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x81
+TOUCH: Mapped(616, 270) Raw(270, 616)
+POLL TOUCH: 616, 270 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x81
+TOUCH: Mapped(616, 254) Raw(286, 616)
+POLL TOUCH: 616, 254 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(616, 254) Raw(286, 616)
+POLL TOUCH: 616, 254 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x81
+TOUCH: Mapped(601, 258) Raw(282, 601)
+POLL TOUCH: 601, 258 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(597, 267) Raw(273, 597)
+POLL TOUCH: 597, 267 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x81
+TOUCH: Mapped(599, 269) Raw(271, 599)
+POLL TOUCH: 599, 269 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(606, 261) Raw(279, 606)
+POLL TOUCH: 606, 261 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x81
+TOUCH: Mapped(595, 272) Raw(268, 595)
+POLL TOUCH: 595, 272 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(596, 264) Raw(276, 596)
+POLL TOUCH: 596, 264 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x81
+TOUCH: Mapped(592, 270) Raw(270, 592)
+POLL TOUCH: 592, 270 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(592, 270) Raw(270, 592)
+POLL TOUCH: 592, 270 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(589, 227) Raw(313, 589)
+POLL TOUCH: 589, 227 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(589, 227) Raw(313, 589)
+POLL TOUCH: 589, 227 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(589, 227) Raw(313, 589)
+POLL TOUCH: 589, 227 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(598, 268) Raw(272, 598)
+POLL TOUCH: 598, 268 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(309, 490) Raw(50, 309)
+POLL TOUCH: 309, 490 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(309, 490) Raw(50, 309)
+POLL TOUCH: 309, 490 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(309, 490) Raw(50, 309)
+POLL TOUCH: 309, 490 (INT Pin: 0)
+GT911 Status: 0x80
+UI: Navigate to screen 0
+UI: Navigate to screen 1
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+UI: Drawing home screen
+BLE: Requested status data
+BLE: Requested settings data
+BLE: Received 168 bytes
+BLE: SOC=6.9% IN=0W OUT=0W TTF=0m TTE=1002m
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+UI: Drawing home screen
+BLE: Requested status data
+BLE: Received 168 bytes
+BLE: SOC=6.9% IN=0W OUT=0W TTF=0m TTE=1002m
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+UI: Drawing home screen
+BLE: Requested status data
+BLE: Requested settings data
+BLE: Received 168 bytes
+BLE: SOC=6.9% IN=0W OUT=0W TTF=0m TTE=1002m
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+BLE: Received 168 bytes
+BLE: SOC=6.9% IN=0W OUT=0W TTF=0m TTE=1002m
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
+UI: Drawing home screen
+BLE: Requested status data
+BLE: Received 168 bytes
+BLE: SOC=6.9% IN=0W OUT=0W TTF=0m TTE=939m
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(31, 366) Raw(174, 31)
+POLL TOUCH: 31, 366 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(31, 366) Raw(174, 31)
+POLL TOUCH: 31, 366 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(31, 366) Raw(174, 31)
+POLL TOUCH: 31, 366 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(29, 407) Raw(133, 29)
+POLL TOUCH: 29, 407 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(29, 407) Raw(133, 29)
+POLL TOUCH: 29, 407 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(29, 407) Raw(133, 29)
+POLL TOUCH: 29, 407 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(50, 337) Raw(203, 50)
+POLL TOUCH: 50, 337 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(50, 337) Raw(203, 50)
+POLL TOUCH: 50, 337 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(50, 337) Raw(203, 50)
+POLL TOUCH: 50, 337 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x81
+TOUCH: Mapped(182, 365) Raw(175, 182)
+POLL TOUCH: 182, 365 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(182, 365) Raw(175, 182)
+POLL TOUCH: 182, 365 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(189, 419) Raw(121, 189)
+POLL TOUCH: 189, 419 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(189, 419) Raw(121, 189)
+POLL TOUCH: 189, 419 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(189, 419) Raw(121, 189)
+POLL TOUCH: 189, 419 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(193, 354) Raw(186, 193)
+POLL TOUCH: 193, 354 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(193, 354) Raw(186, 193)
+POLL TOUCH: 193, 354 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(193, 354) Raw(186, 193)
+POLL TOUCH: 193, 354 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(325, 349) Raw(191, 325)
+POLL TOUCH: 325, 349 (INT Pin: 1)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(325, 349) Raw(191, 325)
+POLL TOUCH: 325, 349 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(325, 349) Raw(191, 325)
+POLL TOUCH: 325, 349 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+GT911 Status: 0x80
+GT911 Status: 0x80
+GT911 Status: 0x81
+TOUCH: Mapped(319, 409) Raw(131, 319)
+POLL TOUCH: 319, 409 (INT Pin: 0)
+EVENT: PRESS
+GT911 Status: 0x81
+TOUCH: Mapped(319, 409) Raw(131, 319)
+POLL TOUCH: 319, 409 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(319, 409) Raw(131, 319)
+POLL TOUCH: 319, 409 (INT Pin: 0)
+GT911 Status: 0x81
+TOUCH: Mapped(319, 409) Raw(131, 319)
+POLL TOUCH: 319, 409 (INT Pin: 0)
+GT911 Status: 0x80
+EVENT: RELEASE
+--- System Alive (Heartbeat) ---
+GT911 Status: 0x80
+GT911 Status: 0x80
+--- System Alive (Heartbeat) ---
+--- System Alive (Heartbeat) ---
