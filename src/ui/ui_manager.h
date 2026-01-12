@@ -29,6 +29,15 @@ enum class ScreenID {
   SETTINGS
 };
 
+// Clock screen sub-modes (Side-Dock navigation)
+enum class ClockMode { CLOCK, ALARM, POMODORO };
+
+// Pomodoro timer states
+enum class PomodoroState { STOPPED, RUNNING, PAUSED, COMPLETED };
+
+// Pomodoro session types
+enum class PomodoroSession { WORK, SHORT_BREAK, LONG_BREAK };
+
 // Menu button definition
 struct MenuButton {
   int x, y, w, h;
@@ -51,6 +60,11 @@ public:
    * Update UI (call in main loop)
    */
   void update();
+
+  /**
+   * Feed manual touch data (from main loop)
+   */
+  void setTouchState(int x, int y, bool pressed);
 
   /**
    * Handle touch event
@@ -156,6 +170,64 @@ private:
   int _editHour;
   int _editMinute;
   int _refreshRateSeconds = 5; // Default 5s for testing
+
+  // Clock screen state
+  ClockMode _clockMode = ClockMode::POMODORO; // Default to Pomodoro
+
+  // Pomodoro state
+  PomodoroState _pomodoroState = PomodoroState::STOPPED;
+  PomodoroSession _pomodoroSession = PomodoroSession::WORK;
+  int _pomodoroRemainingSeconds = 25 * 60; // 25 minutes default
+  unsigned long _pomodoroLastTick = 0;
+
+  // Pomodoro constants
+  static const int POMODORO_WORK_SECONDS = 25 * 60;
+  static const int POMODORO_SHORT_BREAK_SECONDS = 5 * 60;
+  static const int POMODORO_LONG_BREAK_SECONDS = 15 * 60;
+
+  // Clock screen drawing methods
+  void drawClockScreen();
+  void drawClockSidebar(int x, int y, int w, int h);
+  void drawPomodoroContent(int x, int y, int w, int h);
+  void handleClockTouch(int x, int y);
+  void updatePomodoro();
+
+  // Calculator state
+  char _calcExpression[64] = "";
+  double _calcResult = 0;
+  double _calcOperand1 = 0;
+  char _calcOperator = 0;
+  bool _calcNewInput = true;
+
+  // Calculator methods
+  void drawCalculatorScreen();
+  void handleCalculatorTouch(int x, int y);
+  void calcAppendDigit(char digit);
+  void calcSetOperator(char op);
+  void calcCalculate();
+  void calcClear();
+  void calcBackspace();
+
+  // Notes state
+  int _lastDrawX = -1;
+  int _lastDrawY = -1;
+  bool _isDrawing = false;
+  int _penSize = 2;
+  uint16_t _penColor = 0; // BLACK (0) or WHITE (0xFFFF)
+
+  // Touch state from main loop
+  int _currentTouchX = -1;
+  int _currentTouchY = -1;
+  bool _currentTouchPressed = false;
+
+  M5Canvas *_notesCanvas = nullptr; // Pointer to dynamic canvas
+
+  // Notes methods
+  void drawNotesScreen();
+  void handleNotesTouch(int x, int y);
+  void updateNotes();
+  void notesSave();
+  void notesLoad();
 };
 
 #endif // UI_MANAGER_H

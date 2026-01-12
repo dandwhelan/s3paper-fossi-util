@@ -364,4 +364,5 @@
  .pio/libdeps/m5paper_s3/NimBLE-Arduino/src/NimBLE2904.h \
  .pio/libdeps/m5paper_s3/NimBLE-Arduino/src/NimBLESecurity.h \
  C:/Users/DanielWhelan/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32s3/include/bt/include/esp32c3/include/esp_bt.h \
+ src/ui/../hardware/battery.h src/ui/../hardware/buzzer.h \
  src/ui/../hardware/rtc.h

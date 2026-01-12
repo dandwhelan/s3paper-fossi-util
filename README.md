@@ -1,16 +1,50 @@
 # M5Paper S3 Fossibot Dashboard
 
-A "retro dashboard" interface for M5Paper S3 that displays and controls Fossibot power station status via Bluetooth Low Energy (BLE).
+A "retro dashboard" interface for M5Paper S3 that displays and controls Fossibot power station status via Bluetooth Low Energy (BLE), now enhanced with productivity tools.
 
 ![M5Paper S3](https://static-cdn.m5stack.com/resource/docs/products/core/PaperS3/img-ae5e6b0a-f54c-4fa4-953b-fca2ed1e1a1d.webp)
 
 ## Features
 
-- 📊 **Real-time Power Monitoring** - Battery %, input/output power, time remaining
-- 🔌 **Output Control** - Toggle USB, DC, and AC outputs via touch
-- 🕐 **Clock Display** - Time and date with software-based timekeeping
-- 📱 **Touch Interface** - Full touch control on 540x960 E-Ink display
-- 🔄 **Configurable Refresh** - 5-300 second refresh rate for E-Ink
+### 🔋 Power Dashboard
+
+- **Real-time Monitoring**: Battery %, Input/Output Watts, Time Remaining.
+- **Wireless Control**: Toggle USB, DC, and AC outlets remotely via BLE.
+- **Smart Refresh**: Configurable E-Ink refresh rates to save power.
+
+### 📝 Notes (Scribble Pad)
+
+*New in v2.0!*
+
+- **Fast Low-Latency Drawing**: Optimized 15ms touch polling for smooth ink.
+- **Tools**: Thin, Medium, Thick pens, and Eraser.
+- **Smart Persistence**: Scribbles stay on screen even if you change tools.
+- **Auto-Silence**: Battery updates are paused in Notes mode to prevent screen flashing.
+- **Clean Exit**: Exiting wipes the screen pure white to remove ghosting.
+
+### 🧮 Calculator
+
+*New in v2.0!*
+
+- Standard arithmetic operations (+, -, *, /).
+- Clean Retro UI.
+
+### 🍅 Pomodoro Timer
+
+*New in v2.0!*
+
+- Focus Timer (25 min) and Break Timer (5 min).
+- Visual Progress Bar.
+- Play/Pause/Reset controls.
+- Background operation (timer continues even if you switch screens).
+
+### 🛠️ System Improvements
+
+- **Dual I2C Architecture**: Solved hardware conflict between Touch (GT911) and RTC (BM8563) by separating buses.
+- **Enhanced Stability**: Fixed crashes related to stack overflow and I2C collisions.
+- **Optimized UI**: Improved button responsiveness and layout.
+
+---
 
 ## Hardware Requirements
 
@@ -18,7 +52,6 @@ A "retro dashboard" interface for M5Paper S3 that displays and controls Fossibot
 |-----------|-------------|
 | M5Paper S3 | ESP32-S3 based E-Ink device with touch |
 | Fossibot Power Station | Compatible portable power station |
-| USB-C Cable | For programming and charging |
 
 ## Quick Start
 
@@ -33,19 +66,34 @@ cd S3
 
 Install [PlatformIO](https://platformio.org/) extension in VS Code.
 
-### 3. Configure WiFi (Optional)
-
-Edit `src/config/config.h` if NTP time sync is desired.
-
-### 4. Build and Upload
+### 3. Build and Upload
 
 ```bash
 pio run -t upload
 ```
 
-### 5. Pair with Fossibot
+### 4. Pair with Fossibot
 
 Power on your Fossibot and the M5Paper S3 will automatically scan and connect.
+
+## Development Plan & Roadmap
+
+### Completed (v2.0) ✅
+
+- [x] **I2C Conflict Fix**: Separated Touch (Wire1) and RTC (Wire).
+- [x] **Pomodoro Timer**: Functional timer with background tracking.
+- [x] **Calculator**: Basic UI and logic implementation.
+- [x] **Notes App**:
+  - [x] Smooth Scribbling (Fast EPD mode).
+  - [x] Canvas Persistence.
+  - [x] Layout Optimizations (Centered Text, logical button flow).
+  - [x] Ghost Touch Fixes.
+
+### Upcoming 🚧
+
+- [ ] **Notes Saving**: Save scribbles to SD Card (BMP/PNG).
+- [ ] **History Graph**: Plot power usage over time.
+- [ ] **Wifi MQTT**: Publish stats to Home Assistant.
 
 ## Project Structure
 
@@ -55,56 +103,18 @@ S3/
 │   ├── main.cpp              # Entry point, touch handling, setup
 │   ├── ble/
 │   │   ├── ble_client.cpp    # BLE connection and Modbus protocol
-│   │   └── fossibot_protocol.h # Register definitions
-│   ├── ui/
-│   │   ├── ui_manager.cpp    # Screen rendering and touch
-│   │   └── ui_manager.h      # UI state and constants
-│   └── config/
-│       └── config.cpp        # Settings persistence
-├── docs/
-│   ├── hardware-guide.md     # I2C, pins, peripherals
-│   ├── ble-protocol.md       # Fossibot Modbus protocol
-│   ├── ui-architecture.md    # Screens and touch handling
-│   └── known-issues.md       # Limitations and workarounds
+│   └── ui/
+│       ├── ui_manager.cpp    # Screen rendering and touch
+│       └── ui_manager.h      # UI state and constants
 └── platformio.ini            # Build configuration
 ```
 
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Hardware Guide](docs/hardware-guide.md) | I2C buses, pin mapping, M5Paper S3 specs |
-| [BLE Protocol](docs/ble-protocol.md) | Fossibot registers, CRC calculation, commands |
-| [UI Architecture](docs/ui-architecture.md) | Screen navigation, touch handling |
-| [Known Issues](docs/known-issues.md) | Limitations and workarounds |
-
-## Screenshots
-
-### Home Screen
-
-- Battery percentage with large display
-- Input/Output power bars
-- USB/DC/AC toggle buttons
-- Time and date display
-
-### Settings Screen
-
-- Date/time adjustment
-- Refresh rate configuration (5-300 seconds)
-- Save/Cancel buttons
-
 ## Dependencies
 
-- [M5Unified](https://github.com/m5stack/M5Unified) - M5Stack hardware abstraction
-- [M5GFX](https://github.com/m5stack/M5GFX) - Graphics library
-- [NimBLE-Arduino](https://github.com/h2zero/NimBLE-Arduino) - BLE client
-- [ArduinoJson](https://github.com/bblanchon/ArduinoJson) - JSON parsing
-
-## Credits
-
-- Fossibot protocol reverse engineering based on:
-  - [ESP-FBot](https://github.com/Pat-Laugh/ESP-FBot)
-  - [fossibot-reverse-engineering](https://github.com/DirkH78/fossibot-reverse-engineering)
+- [M5Unified](https://github.com/m5stack/M5Unified)
+- [M5GFX](https://github.com/m5stack/M5GFX)
+- [NimBLE-Arduino](https://github.com/h2zero/NimBLE-Arduino)
+- [ArduinoJson](https://github.com/bblanchon/ArduinoJson)
 
 ## License
 

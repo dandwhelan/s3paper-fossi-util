@@ -248,21 +248,28 @@ void loop() {
   M5.update();
 
   // --- TOUCH POLLING MODE (Bypass INT pin) ---
-  // Try to read touch every ~100ms regardless of INT pin
+  // Try to read touch every ~15ms for smooth drawing
   static unsigned long lastTouchPoll = 0;
   static bool wasTouching = false;
   static int lastTouchX = 0;
   static int lastTouchY = 0;
 
-  if (millis() - lastTouchPoll > 100) {
+  if (millis() - lastTouchPoll > 15) {
     lastTouchPoll = millis();
 
     int tx, ty;
     bool touching = readTouchManual(&tx, &ty);
 
+    // Feed raw touch state to UI Manager for continuous drawing
     if (touching && tx > 0 && tx < 960 && ty > 0 && ty < 540) {
-      Serial.printf("POLL TOUCH: %d, %d (INT Pin: %d)\n", tx, ty,
-                    digitalRead(48));
+      uiManager->setTouchState(tx, ty, true);
+    } else {
+      uiManager->setTouchState(lastTouchX, lastTouchY, false);
+    }
+
+    if (touching && tx > 0 && tx < 960 && ty > 0 && ty < 540) {
+      // Serial.printf("POLL TOUCH: %d, %d (INT Pin: %d)\n", tx, ty,
+      //               digitalRead(48));
 
       if (!wasTouching) {
         // New touch started - send PRESS
