@@ -33,7 +33,8 @@ enum class ScreenID {
 };
 
 // Clock screen sub-modes (Side-Dock navigation)
-enum class ClockMode { CLOCK, ALARM, POMODORO };
+// Clock screen sub-modes (Side-Dock navigation)
+enum class ClockMode { CLOCK, ALARM, POMODORO, TIMER };
 
 // Pomodoro timer states
 enum class PomodoroState { STOPPED, RUNNING, PAUSED, COMPLETED };
@@ -48,6 +49,8 @@ struct MenuButton {
   const char *icon;
   ScreenID targetScreen;
 };
+
+#include "../ble/fossibot_protocol.h" // Needed for PowerBankData
 
 class UIManager {
 public:
@@ -78,6 +81,7 @@ public:
    * Show home screen
    */
   void showHomeScreen();
+  void drawHomeScreen(); // Helper for drawing content
 
   /**
    * Draw settings screen
@@ -132,6 +136,17 @@ private:
   static const int NUM_MENU_BUTTONS = 6;
   MenuButton _menuButtons[NUM_MENU_BUTTONS];
 
+  // --- Timer State ---
+  bool _timerRunning = false;
+  int _timerDurationSeconds = 0; // Initial setting
+  int _timerRemainingSeconds = 0;
+  unsigned long _timerLastTick = 0;
+  bool _timerRinging = false;
+  unsigned long _timerRingStart = 0;
+
+  // --- External Data ---
+  Fossibot::PowerBankData _lastRenderedData;
+
   // Touch state
   int _touchStartX, _touchStartY;
   unsigned long _touchStartTime;
@@ -142,7 +157,6 @@ private:
   bool _needsRefresh;
 
   // Drawing methods
-  void drawHomeScreen();
   void drawBatteryBar(float percent);
   void drawPowerPanel(int x, int y, int w, int h, const char *title,
                       float power, float maxPower, const char *timeLabel,
@@ -162,7 +176,6 @@ private:
   void executeMenuButton(int index);
 
   // Screen-specific handlers
-  // Screen-specific handlers
   void handleHomeTouch(int x, int y, TouchEvent event);
   void handleSettingsTouch(int x, int y);
 
@@ -172,10 +185,13 @@ private:
   int _editDay;
   int _editHour;
   int _editMinute;
-  int _refreshRateSeconds = 5; // Default 5s for testing
+  int _refreshRateSeconds = 30; // Default refresh rate for preview
+  int _editAutoSleep;           // Auto sleep timeout in minutes
 
   // Clock screen state
   ClockMode _clockMode = ClockMode::POMODORO; // Default to Pomodoro
+  bool _alarmRinging = false;
+  unsigned long _alarmRingStart = 0;
 
   // Pomodoro state
   PomodoroState _pomodoroState = PomodoroState::STOPPED;
@@ -192,8 +208,12 @@ private:
   void drawClockScreen();
   void drawClockSidebar(int x, int y, int w, int h);
   void drawPomodoroContent(int x, int y, int w, int h);
-  void handleClockTouch(int x, int y);
+  void drawAlarmContent(int x, int y, int w, int h);
+  void drawTimerContent(int x, int y, int w, int h);
+  void handleClockTouch(int x, int y, TouchEvent event = TouchEvent::RELEASE);
   void updatePomodoro();
+  void checkAlarm();
+  void drawAlertScreen(const char *label);
 
   // Calculator state
   char _calcExpression[64] = "";
@@ -256,10 +276,53 @@ private:
   // SD Diagnostics methods
   void drawSDDiagScreen();
   void handleSDDiagTouch(int x, int y);
+
+  // Power Management & Smart Refresh
+  unsigned long _lastDashboardUpdate = 0;
+  unsigned long _lastActivityTime = 0; // Last user interaction time
+  bool shouldUpdateDashboard(const Fossibot::PowerBankData &newData);
+  void checkPowerManagement(); // Check idle time and CPU scaling
+  void enterDeepSleep();       // Enter deep sleep mode
   void runSDMountTest();
   void runSDWriteTest();
   void runSDReadTest();
   char _sdDiagResult[256] = ""; // Stores test result text
+
+  // 2048 Game state
+  int _game2048Grid[4][4]; // Tile values (0 = empty, 2, 4, 8, ...)
+  int _game2048Score;
+  int _game2048HighScore;
+  bool _game2048GameOver;
+  bool _game2048Won;
+
+  // 2048 Game methods
+  void drawGamesMenu();
+  void handleGamesMenuTouch(int x, int y);
+  void drawGame2048();
+  void handleGame2048Touch(int x, int y, TouchEvent event);
+  void game2048Init();
+  void game2048AddRandomTile();
+  bool game2048Slide(int direction); // 0=up, 1=right, 2=down, 3=left
+  bool game2048IsGameOver();
+  void game2048Save();
+  void game2048Load();
+
+  // Sudoku Game state (6x6 for better fit!)
+  byte _sudokuGrid[6][6];     // Current values (0-6, 0 = empty)
+  byte _sudokuSolution[6][6]; // Correct solution
+  bool _sudokuGiven[6][6];    // true = locked given number
+  int8_t _sudokuSelectedRow;  // Currently selected cell (-1 = none)
+  int8_t _sudokuSelectedCol;
+  byte _sudokuPuzzleNum;  // Current puzzle number (1-based)
+  byte _sudokuDifficulty; // 0=easy, 1=medium, 2=hard
+
+  // Sudoku Game methods
+  void drawSudokuGame();
+  void handleSudokuTouch(int x, int y, TouchEvent event);
+  void sudokuLoadPuzzle(byte difficulty, byte num);
+  bool sudokuValidateCell(byte row, byte col);
+  bool sudokuCheckWin();
+  void sudokuClearCell();
 };
 
 #endif // UI_MANAGER_H

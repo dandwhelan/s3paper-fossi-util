@@ -37,6 +37,27 @@ A "retro dashboard" interface for M5Paper S3 that displays and controls Fossibot
 - Visual Progress Bar.
 - Play/Pause/Reset controls.
 - Background operation (timer continues even if you switch screens).
+- **NEW**: ±5 minute adjustment buttons for quick timer changes.
+
+### 🎮 Games
+
+*New in v2.1!*
+
+#### 2048
+- Classic tile-merging puzzle game
+- Fast EPD refresh mode for smooth gameplay
+- Score tracking with high score persistence
+- Auto-save/load game state to SD card
+- Swipe controls (up/down/left/right)
+- Optimized for e-ink display
+
+#### 6x6 Sudoku
+- Perfect size for e-ink (85px cells vs cramped 9x9)
+- Numbers 1-6 with 2x3 block rules
+- 9 handcrafted puzzles (3 easy, 3 medium, 3 hard)
+- Real-time validation (errors shown in red)
+- Win detection with success message
+- Controls: Number input, Clear, Check, New Puzzle
 
 ### 🛠️ System Improvements
 

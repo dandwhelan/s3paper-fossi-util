@@ -235,32 +235,6 @@ bool SDManager::deleteFile(const char *path) {
   return SD.remove(path);
 }
 
-int64_t SDManager::getFileSize(const char *path) {
-  if (!_available)
-    return -1;
-
-  File file = SD.open(path, FILE_READ);
-  if (!file) {
-    return -1;
-  }
-
-  int64_t size = file.size();
-  file.close();
-  return size;
-}
-
-uint64_t SDManager::getTotalBytes() {
-  if (!_available)
-    return 0;
-  return SD.totalBytes();
-}
-
-uint64_t SDManager::getUsedBytes() {
-  if (!_available)
-    return 0;
-  return SD.usedBytes();
-}
-
 int SDManager::listFiles(const char *dirPath, std::vector<String> &files,
                          const char *extensions) {
   files.clear();
@@ -322,4 +296,110 @@ bool SDManager::matchesExtension(const String &filename,
   }
 
   return false;
+}
+
+SDManager::SDCardInfo SDManager::getCardInfo() {
+  SDCardInfo info = {0, 0, "Unknown"};
+
+  if (!_available)
+    return info;
+
+  // Get storage info
+  info.totalBytes = SD.totalBytes();
+  info.usedBytes = SD.usedBytes();
+
+  // Get card type
+  uint8_t cardType = SD.cardType();
+  switch (cardType) {
+  case CARD_MMC:
+    info.type = "MMC";
+    break;
+  case CARD_SD:
+    info.type = "SDSC";
+    break;
+  case CARD_SDHC:
+    info.type = "SDHC/XC";
+    break;
+  default:
+    info.type = "Unknown";
+    break;
+  }
+
+  return info;
+}
+
+bool SDManager::runBenchmark(float &writeSpeedMBps, float &readSpeedMBps) {
+  if (!_available)
+    return false;
+
+  const char *testFile = "/diag_test.bin";
+  const int bufSize = 32 * 1024;     // 32KB buffer
+  const int totalSize = 1024 * 1024; // 1MB test
+  uint8_t *buf = (uint8_t *)malloc(bufSize);
+
+  if (!buf) {
+    Serial.println("SDManager: Benchmark failed - Out of RAM");
+    return false;
+  }
+
+  // Initialize buffer
+  for (int i = 0; i < bufSize; i++)
+    buf[i] = i & 0xFF;
+
+  // --- Write Test ---
+  // Ensure fresh file
+  if (SD.exists(testFile))
+    SD.remove(testFile);
+
+  File file = SD.open(testFile, FILE_WRITE);
+  if (!file) {
+    free(buf);
+    return false;
+  }
+
+  unsigned long startT = millis();
+  for (int i = 0; i < totalSize / bufSize; i++) {
+    if (file.write(buf, bufSize) != bufSize) {
+      file.close();
+      free(buf);
+      SD.remove(testFile);
+      return false;
+    }
+  }
+  file.close(); // Commit to disk
+  unsigned long writeTime = millis() - startT;
+
+  // --- Read Test ---
+  file = SD.open(testFile, FILE_READ);
+  if (!file) {
+    free(buf);
+    SD.remove(testFile);
+    return false;
+  }
+
+  startT = millis();
+  for (int i = 0; i < totalSize / bufSize; i++) {
+    if (file.read(buf, bufSize) != bufSize) {
+      file.close();
+      free(buf);
+      SD.remove(testFile);
+      return false;
+    }
+  }
+  file.close();
+  unsigned long readTime = millis() - startT;
+
+  // Cleanup
+  SD.remove(testFile);
+  free(buf);
+
+  // Calculate speeds (MB/s)
+  // Time is in ms. 1MB / (time/1000) = 1000 / time
+  writeSpeedMBps = 1000.0f / (float)writeTime;
+  readSpeedMBps = 1000.0f / (float)readTime;
+
+  Serial.printf("SD Benchmark: Write %.2f MB/s, Read %.2f MB/s\n",
+                writeSpeedMBps, readSpeedMBps);
+
+  return true;
 }

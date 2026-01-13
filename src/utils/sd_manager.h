@@ -77,25 +77,33 @@ public:
    * Delete a file
    * @param path File path
    * @return true if successful
+  /**
+   * Delete a file
+   * @param path File path
+   * @return true if successful
    */
   bool deleteFile(const char *path);
 
-  /**
-   * Get file size in bytes
-   * @param path File path
-   * @return File size (-1 if not found)
-   */
-  int64_t getFileSize(const char *path);
+  // --- Diagnostics ---
+
+  struct SDCardInfo {
+    uint64_t totalBytes;
+    uint64_t usedBytes;
+    String type; // SD, SDHC, SDXC, etc.
+  };
 
   /**
-   * Get total SD card size in bytes
+   * Get SD Card Information
    */
-  uint64_t getTotalBytes();
+  SDCardInfo getCardInfo();
 
   /**
-   * Get used SD card space in bytes
+   * Run Read/Write Benchmark
+   * @param writeSpeedMBps Output write speed
+   * @param readSpeedMBps Output read speed
+   * @return true if benchmark completed successfully
    */
-  uint64_t getUsedBytes();
+  bool runBenchmark(float &writeSpeedMBps, float &readSpeedMBps);
 
   /**
    * List files in directory

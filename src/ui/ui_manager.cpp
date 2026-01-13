@@ -9,6 +9,7 @@
 #include "../hardware/battery.h"
 #include "../hardware/buzzer.h"
 #include "../hardware/rtc.h"
+#include "../utils/config.h"
 #include "../utils/sd_manager.h"
 #include <FS.h>
 #include <SD.h>
@@ -22,9 +23,12 @@
 
 UIManager::UIManager()
     : _currentScreen(ScreenID::HOME), _previousScreen(ScreenID::HOME),
-      _powerDataDirty(true), _touchStartX(0), _touchStartY(0),
-      _touchStartTime(0), _isTouching(false), _lastRefresh(0),
-      _needsRefresh(true) {
+      _needsRefresh(true), _lastRefresh(0), _clockMode(ClockMode::CLOCK),
+      _pomodoroState(PomodoroState::STOPPED),
+      _pomodoroSession(PomodoroSession::WORK),
+      _pomodoroRemainingSeconds(POMODORO_WORK_SECONDS), _alarmRinging(false),
+      _timerRunning(false), _timerRinging(false),
+      _timerDurationSeconds(30 * 60), _timerRemainingSeconds(30 * 60) {
   initMenuButtons();
 }
 
@@ -42,6 +46,7 @@ void UIManager::init() {
                 M5.Display.height());
 
   _needsRefresh = true;
+  _lastActivityTime = millis();
 }
 
 void UIManager::initMenuButtons() {
@@ -55,7 +60,7 @@ void UIManager::initMenuButtons() {
                      MENU_BAR_HEIGHT,     "GAME",  "GM",
                      ScreenID::GAMES_MENU};
   _menuButtons[2] = {2 * buttonWidth, buttonY, buttonWidth,    MENU_BAR_HEIGHT,
-                     "CLOCK",         "CL",    ScreenID::CLOCK};
+                     "ALARM",         "AL",    ScreenID::CLOCK};
   _menuButtons[3] = {3 * buttonWidth,     buttonY, buttonWidth,
                      MENU_BAR_HEIGHT,     "CALC",  "CA",
                      ScreenID::CALCULATOR};
@@ -67,6 +72,13 @@ void UIManager::initMenuButtons() {
 }
 
 void UIManager::update() {
+  // Check power savings first (might enter deep sleep)
+  // Check power savings first (might enter deep sleep)
+  checkPowerManagement();
+
+  // Check Alarm/Timer globally (regardless of screen)
+  checkAlarm();
+
   // Always update notes logic for continuous drawing
   if (_currentScreen == ScreenID::NOTES) {
     updateNotes();
@@ -105,6 +117,15 @@ void UIManager::update() {
   case ScreenID::NOTES_BROWSE:
     drawNotesBrowseScreen();
     break;
+  case ScreenID::GAMES_MENU:
+    drawGamesMenu();
+    break;
+  case ScreenID::GAME_2048:
+    drawGame2048();
+    break;
+  case ScreenID::GAME_SUDOKU:
+    drawSudokuGame();
+    break;
   // Other screens will be implemented later
   default:
     drawHomeScreen(); // Fallback to home
@@ -119,7 +140,18 @@ void UIManager::update() {
   _powerDataDirty = false;
 }
 
+// Dispatcher
 void UIManager::handleTouch(int x, int y, TouchEvent event) {
+  _lastActivityTime = millis(); // Reset idle timer
+
+  // Clock Mode handles its own events for better responsiveness
+  if (_currentScreen == ScreenID::CLOCK) {
+    handleClockTouch(x, y, event);
+    // Don't return! Let it fall through to handle menu buttons (on Release)
+  }
+
+  // ... (rest of function as before, but without CLOCK check inside tap block)
+  // ...
   switch (event) {
   case TouchEvent::PRESS:
     _touchStartX = x;
@@ -135,39 +167,48 @@ void UIManager::handleTouch(int x, int y, TouchEvent event) {
       int dy = abs(y - _touchStartY);
       unsigned long duration = millis() - _touchStartTime;
 
-      if (dx < 20 && dy < 20 && duration < 500) {
+      if (dx < 20 && dy < 20 &&
+          duration < 800) { // Increased duration tolerance
         // It's a tap
         if (_currentScreen == ScreenID::HOME) {
           handleHomeTouch(x, y, event);
         } else if (_currentScreen == ScreenID::SETTINGS) {
           handleSettingsTouch(x, y);
-        } else if (_currentScreen == ScreenID::CLOCK) {
-          handleClockTouch(x, y);
+          // CLOCK handled above
         } else if (_currentScreen == ScreenID::CALCULATOR) {
           handleCalculatorTouch(x, y);
+          // ...
+
         } else if (_currentScreen == ScreenID::NOTES) {
           handleNotesTouch(x, y);
         } else if (_currentScreen == ScreenID::SD_DIAG) {
           handleSDDiagTouch(x, y);
         } else if (_currentScreen == ScreenID::NOTES_BROWSE) {
           handleNotesBrowseTouch(x, y);
+        } else if (_currentScreen == ScreenID::GAMES_MENU) {
+          handleGamesMenuTouch(x, y);
+        } else if (_currentScreen == ScreenID::GAME_SUDOKU) {
+          handleSudokuTouch(x, y, event);
         }
+      }
 
-        // Check menu buttons (excluding Notes screens which have own toolbars)
-        if (_currentScreen != ScreenID::NOTES &&
-            _currentScreen != ScreenID::NOTES_BROWSE) {
-          int menuHit = hitTestMenuButton(x, y);
-          if (menuHit >= 0) {
-            executeMenuButton(menuHit);
-          }
+      // GAME_2048 needs swipe detection, handle separately
+      if (_currentScreen == ScreenID::GAME_2048) {
+        handleGame2048Touch(x, y, event);
+      }
+
+      // Check menu buttons (excluding Notes and Games which have own controls)
+      if (_currentScreen != ScreenID::NOTES &&
+          _currentScreen != ScreenID::NOTES_BROWSE &&
+          _currentScreen != ScreenID::GAME_2048 &&
+          _currentScreen != ScreenID::GAME_SUDOKU &&
+          _currentScreen != ScreenID::GAMES_MENU) {
+        int menuHit = hitTestMenuButton(x, y);
+        if (menuHit >= 0) {
+          executeMenuButton(menuHit);
         }
       }
     }
-    _isTouching = false;
-    break;
-
-  case TouchEvent::DRAG:
-    // Handle swipe gestures for games, reader, etc.
     break;
   }
 }
@@ -213,6 +254,14 @@ void UIManager::navigateTo(ScreenID screen) {
     _editDay = day;
     _editHour = hours;
     _editMinute = minutes;
+
+    // Load Auto Sleep setting
+    extern Config *config;
+    if (config) {
+      _editAutoSleep = config->getAutoSleepMinutes();
+    } else {
+      _editAutoSleep = 60; // Default fallback
+    }
   }
 }
 
@@ -221,9 +270,17 @@ void UIManager::goBack() { navigateTo(_previousScreen); }
 void UIManager::updatePowerBankData(const Fossibot::PowerBankData &data) {
   _powerData = data;
   _powerDataDirty = true;
+
   // Block auto-refresh in Notes mode to prevent clearing scribbles
-  if (_currentScreen != ScreenID::NOTES) {
+  if (_currentScreen == ScreenID::NOTES) {
+    return;
+  }
+
+  // Smart Refresh: Only update if data changed significantly
+  if (shouldUpdateDashboard(data)) {
     _needsRefresh = true;
+    _lastRenderedData = data;
+    _lastDashboardUpdate = millis();
   }
 }
 
@@ -649,37 +706,52 @@ void UIManager::drawSettingsScreen() {
   M5.Display.printf("%02d", _editMinute);
   drawButton(570, y, 70, 60, "+");
 
-  // --- Refresh Rate ---
+  // --- Refresh Rate (Left Side) ---
   y = 320;
   M5.Display.setCursor(20, y + 15);
   M5.Display.print("Refresh:");
 
   // - Button
-  drawButton(200, y, 80, 60, "-5");
+  drawButton(160, y, 60, 60, "-");
   // Value display
   char rateStr[32];
   snprintf(rateStr, sizeof(rateStr), "%ds", _refreshRateSeconds);
-  M5.Display.setCursor(310, y + 15);
+  M5.Display.setCursor(240, y + 15);
   M5.Display.print(rateStr);
   // + Button
-  drawButton(420, y, 80, 60, "+5");
+  drawButton(320, y, 60, 60, "+");
 
-  // --- Battery Status ---
-  M5.Display.setTextSize(3);
-  M5.Display.setCursor(600, 320 + 15);
-  float voltage = Battery::getVoltage();
-  int percentage = Battery::getPercentage();
-  M5.Display.printf("Bat: %d%%", percentage);
-  M5.Display.setTextSize(2);
-  M5.Display.setCursor(600, 320 + 50);
-  M5.Display.printf("(%.2fV)", voltage);
+  // --- Sleep Timeout (Right Side) ---
+  // Uses remaining space on Row 3
+  M5.Display.setCursor(450, y + 15);
+  M5.Display.print("Sleep:");
+
+  // - Button
+  drawButton(560, y, 60, 60, "-");
+
+  // Value display
+  M5.Display.setCursor(640, y + 15);
+  if (_editAutoSleep == 0) {
+    M5.Display.print("Never");
+  } else {
+    M5.Display.printf("%dm", _editAutoSleep);
+  }
+
+  // + Button
+  drawButton(740, y, 60, 60, "+");
 
   // --- Actions ---
-  // Moved to right side and up to avoid menu overlap
   y = 400;
   drawButton(320, y, 200, 70, "SD Diag");
   drawButton(540, y, 200, 70, "SAVE", true);
   drawButton(750, y, 200, 70, "CANCEL");
+
+  // --- Battery Status (Moved to Top Right) ---
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(SCREEN_WIDTH - 220, 15);
+  float voltage = Battery::getVoltage();
+  int percentage = Battery::getPercentage();
+  M5.Display.printf("Bat: %d%% (%.2fV)", percentage, voltage);
 }
 
 void UIManager::handleSettingsTouch(int x, int y) {
@@ -756,10 +828,40 @@ void UIManager::handleSettingsTouch(int x, int y) {
       _refreshRateSeconds = 5; // Minimum 5s
   }
   // Refresh Rate +5
-  if (isHit(420, row3, 80, 60)) {
+  if (isHit(320, row3, 60, 60)) {
     _refreshRateSeconds += 5;
     if (_refreshRateSeconds > 300)
       _refreshRateSeconds = 300; // Max 5 minutes
+  }
+
+  // --- Sleep Timeout ---
+  // Minus Button
+  if (isHit(560, row3, 60, 60)) {
+    // 0, 5, 15, 30, 60
+    if (_editAutoSleep > 30)
+      _editAutoSleep = 30;
+    else if (_editAutoSleep > 15)
+      _editAutoSleep = 15;
+    else if (_editAutoSleep > 5)
+      _editAutoSleep = 5;
+    else if (_editAutoSleep > 0)
+      _editAutoSleep = 0;
+    else
+      _editAutoSleep = 60; // Wrap around
+  }
+
+  // Plus Button
+  if (isHit(740, row3, 60, 60)) {
+    if (_editAutoSleep == 0)
+      _editAutoSleep = 5;
+    else if (_editAutoSleep < 15)
+      _editAutoSleep = 15;
+    else if (_editAutoSleep < 30)
+      _editAutoSleep = 30;
+    else if (_editAutoSleep < 60)
+      _editAutoSleep = 60;
+    else
+      _editAutoSleep = 0; // Wrap around
   }
 
   int row4 = 400;
@@ -777,6 +879,14 @@ void UIManager::handleSettingsTouch(int x, int y) {
 
     Serial.printf("RTC Time Set: %04d-%02d-%02d %02d:%02d:00\n", _editYear,
                   _editMonth, _editDay, _editHour, _editMinute);
+
+    // Save Config (Sleep Timeout)
+    extern Config *config;
+    if (config) {
+      config->setAutoSleepMinutes(_editAutoSleep);
+      config->save("/config/settings.json");
+      Serial.printf("Config Saved: Auto Sleep = %d min\n", _editAutoSleep);
+    }
 
     Buzzer::click();
     navigateTo(ScreenID::HOME);
@@ -813,14 +923,19 @@ void UIManager::drawClockScreen() {
   case ClockMode::POMODORO:
     drawPomodoroContent(CONTENT_X, 0, CONTENT_WIDTH, CONTENT_HEIGHT);
     break;
-  case ClockMode::CLOCK:
   case ClockMode::ALARM:
+    drawAlarmContent(CONTENT_X, 0, CONTENT_WIDTH, CONTENT_HEIGHT);
+    break;
+  case ClockMode::TIMER:
+    drawTimerContent(CONTENT_X, 0, CONTENT_WIDTH, CONTENT_HEIGHT);
+    break;
+  case ClockMode::CLOCK:
   default:
-    // Placeholder for Clock/Alarm modes
+    // Placeholder for Clock mode
     M5.Display.setTextSize(3);
     M5.Display.setTextColor(COLOR_DARK_GRAY);
     M5.Display.setCursor(CONTENT_X + 100, 200);
-    M5.Display.print("Coming Soon...");
+    M5.Display.print("Clock Coming Soon...");
     break;
   }
 
@@ -837,7 +952,7 @@ void UIManager::drawClockSidebar(int x, int y, int w, int h) {
   M5.Display.setTextSize(2);
   M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setCursor(x + 20, y + 15);
-  M5.Display.print("CLOCKS");
+  M5.Display.print("ALARMS");
 
   // Sidebar buttons (y positions)
   int btnY = y + 60;
@@ -873,6 +988,16 @@ void UIManager::drawClockSidebar(int x, int y, int w, int h) {
   M5.Display.setTextColor(pomodoroActive ? COLOR_WHITE : COLOR_BLACK);
   M5.Display.setCursor(x + 20, btnY + 25);
   M5.Display.print("Pomodoro");
+
+  // Timer button
+  btnY += btnH + btnSpacing;
+  bool timerActive = (_clockMode == ClockMode::TIMER);
+  M5.Display.fillRect(x + 10, btnY, w - 20, btnH,
+                      timerActive ? COLOR_BLACK : COLOR_WHITE);
+  M5.Display.drawRect(x + 10, btnY, w - 20, btnH, COLOR_BLACK);
+  M5.Display.setTextColor(timerActive ? COLOR_WHITE : COLOR_BLACK);
+  M5.Display.setCursor(x + 30, btnY + 25);
+  M5.Display.print("Timer");
 }
 
 void UIManager::drawPomodoroContent(int x, int y, int w, int h) {
@@ -949,151 +1074,25 @@ void UIManager::drawPomodoroContent(int x, int y, int w, int h) {
              "LONG", _pomodoroSession == PomodoroSession::LONG_BREAK);
 }
 
-void UIManager::handleClockTouch(int x, int y) {
-  // Check Exit Button (Top Right)
-  if (x >= SCREEN_WIDTH - 80 && x < SCREEN_WIDTH - 10 && y >= 10 && y < 60) {
-    Buzzer::click();
-    navigateTo(ScreenID::HOME);
-    return;
-  }
-
-  const int SIDEBAR_WIDTH = 160;
-
-  // Sidebar button hit detection
-  if (x < SIDEBAR_WIDTH) {
-    int btnY = 60;
-    int btnH = 70;
-    int btnSpacing = 10;
-
-    // Clock button
-    if (y >= btnY && y < btnY + btnH) {
-      _clockMode = ClockMode::CLOCK;
-      _needsRefresh = true;
-      _lastRefresh = 0;
-      return;
-    }
-    // Alarm button
-    btnY += btnH + btnSpacing;
-    if (y >= btnY && y < btnY + btnH) {
-      _clockMode = ClockMode::ALARM;
-      _needsRefresh = true;
-      _lastRefresh = 0;
-      return;
-    }
-    // Pomodoro button
-    btnY += btnH + btnSpacing;
-    if (y >= btnY && y < btnY + btnH) {
-      _clockMode = ClockMode::POMODORO;
-      _needsRefresh = true;
-      _lastRefresh = 0;
-      return;
-    }
-  }
-
-  // Pomodoro content area touch handling
-  if (_clockMode == ClockMode::POMODORO && x >= SIDEBAR_WIDTH) {
-    int contentX = SIDEBAR_WIDTH;
-    int contentW = SCREEN_WIDTH - SIDEBAR_WIDTH;
-
-    // Control buttons
-    int btnW = 150;
-    int btnH = 60;
-    int btnY = 250;
-    int btnSpacing = 40;
-
-    // Start/Pause button
-    int startBtnX = contentX + (contentW / 2) - btnW - (btnSpacing / 2);
-    if (x >= startBtnX && x < startBtnX + btnW && y >= btnY &&
-        y < btnY + btnH) {
-      if (_pomodoroState == PomodoroState::RUNNING) {
-        _pomodoroState = PomodoroState::PAUSED;
-      } else if (_pomodoroState == PomodoroState::PAUSED ||
-                 _pomodoroState == PomodoroState::STOPPED) {
-        _pomodoroState = PomodoroState::RUNNING;
-        _pomodoroLastTick = millis();
-        Buzzer::click(); // Audio feedback
-      } else if (_pomodoroState == PomodoroState::COMPLETED) {
-        // Reset and start new session
-        _pomodoroState = PomodoroState::RUNNING;
-        _pomodoroRemainingSeconds = POMODORO_WORK_SECONDS;
-        _pomodoroSession = PomodoroSession::WORK;
-        _pomodoroLastTick = millis();
-      }
-      _needsRefresh = true;
-      _lastRefresh = 0;
-      return;
-    }
-
-    // Reset button
-    int resetBtnX = contentX + (contentW / 2) + (btnSpacing / 2);
-    if (x >= resetBtnX && x < resetBtnX + btnW && y >= btnY &&
-        y < btnY + btnH) {
-      _pomodoroState = PomodoroState::STOPPED;
-      // Reset to current session type duration
-      switch (_pomodoroSession) {
-      case PomodoroSession::WORK:
-        _pomodoroRemainingSeconds = POMODORO_WORK_SECONDS;
-        break;
-      case PomodoroSession::SHORT_BREAK:
-        _pomodoroRemainingSeconds = POMODORO_SHORT_BREAK_SECONDS;
-        break;
-      case PomodoroSession::LONG_BREAK:
-        _pomodoroRemainingSeconds = POMODORO_LONG_BREAK_SECONDS;
-        break;
-      }
-      _needsRefresh = true;
-      _lastRefresh = 0;
-      return;
-    }
-
-    // Session type selection buttons
-    int modeY = 350;
-    int modeBtnW = 100;
-    int modeSpacing = 20;
-    int modeStartX =
-        contentX + (contentW - (3 * modeBtnW + 2 * modeSpacing)) / 2;
-
-    // WORK button
-    if (x >= modeStartX && x < modeStartX + modeBtnW && y >= modeY &&
-        y < modeY + 50) {
-      _pomodoroSession = PomodoroSession::WORK;
-      _pomodoroRemainingSeconds = POMODORO_WORK_SECONDS;
-      _pomodoroState = PomodoroState::STOPPED;
-      Buzzer::click();
-      _needsRefresh = true;
-      _lastRefresh = 0;
-      return;
-    }
-
-    // SHORT button
-    int shortBtnX = modeStartX + modeBtnW + modeSpacing;
-    if (x >= shortBtnX && x < shortBtnX + modeBtnW && y >= modeY &&
-        y < modeY + 50) {
-      _pomodoroSession = PomodoroSession::SHORT_BREAK;
-      _pomodoroRemainingSeconds = POMODORO_SHORT_BREAK_SECONDS;
-      _pomodoroState = PomodoroState::STOPPED;
-      Buzzer::click();
-      _needsRefresh = true;
-      _lastRefresh = 0;
-      return;
-    }
-
-    // LONG button
-    int longBtnX = modeStartX + 2 * (modeBtnW + modeSpacing);
-    if (x >= longBtnX && x < longBtnX + modeBtnW && y >= modeY &&
-        y < modeY + 50) {
-      _pomodoroSession = PomodoroSession::LONG_BREAK;
-      _pomodoroRemainingSeconds = POMODORO_LONG_BREAK_SECONDS;
-      _pomodoroState = PomodoroState::STOPPED;
-      Buzzer::click();
-      _needsRefresh = true;
-      _lastRefresh = 0;
-      return;
-    }
-  }
-}
-
 void UIManager::updatePomodoro() {
+  checkAlarm(); // Check Alarm and Timer status
+
+  if (_clockMode == ClockMode::TIMER && _timerRunning) {
+    if (millis() - _timerLastTick >= 1000) {
+      _timerLastTick = millis();
+      if (_timerRemainingSeconds > 0) {
+        _timerRemainingSeconds--;
+        _needsRefresh = true;
+      } else {
+        _timerRunning = false;
+        _timerRinging = true;
+        _timerRingStart = millis();
+        Buzzer::click(); // Initial beep
+        _needsRefresh = true;
+      }
+    }
+  }
+
   if (_pomodoroState != PomodoroState::RUNNING)
     return;
 
@@ -1767,228 +1766,7 @@ void UIManager::notesLoad() {
 }
 
 // ============================================================================
-// SD Card Diagnostics Screen
-// ============================================================================
 
-void UIManager::drawSDDiagScreen() {
-  M5.Display.fillScreen(COLOR_WHITE);
-
-  // Title
-  M5.Display.setTextSize(4);
-  M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setCursor(SCREEN_WIDTH / 2 - 150, 20);
-  M5.Display.print("SD Card Diagnostics");
-
-  // Button layout
-  int btnW = 200;
-  int btnH = 70;
-  int y = 120;
-  int gap = 20;
-
-  drawButton(100, y, btnW, btnH, "Mount Test");
-  drawButton(320, y, btnW, btnH, "Write Test");
-  drawButton(540, y, btnW, btnH, "Read Test");
-
-  // Exit button
-  drawButton(760, y, btnW, btnH, "Exit");
-
-  // Results area
-  y = 220;
-  M5.Display.drawRect(50, y, SCREEN_WIDTH - 100, 250, COLOR_BLACK);
-  M5.Display.setTextSize(2);
-  M5.Display.setCursor(60, y + 10);
-  M5.Display.print("Results:");
-
-  // Display stored result
-  if (strlen(_sdDiagResult) > 0) {
-    M5.Display.setCursor(60, y + 40);
-    M5.Display.setTextSize(2);
-    // Print result line by line
-    char *line = _sdDiagResult;
-    int lineY = y + 40;
-    while (*line && lineY < y + 230) {
-      char *next = strchr(line, '\n');
-      if (next) {
-        *next = '\0';
-        M5.Display.setCursor(60, lineY);
-        M5.Display.print(line);
-        *next = '\n';
-        line = next + 1;
-        lineY += 25;
-      } else {
-        M5.Display.setCursor(60, lineY);
-        M5.Display.print(line);
-        break;
-      }
-    }
-  }
-}
-
-void UIManager::handleSDDiagTouch(int x, int y) {
-  int btnW = 200;
-  int btnH = 70;
-  int btnY = 120;
-
-  auto isHit = [&](int bx, int by, int bw, int bh) {
-    if (x >= bx && x < bx + bw && y >= by && y < by + bh) {
-      Buzzer::click();
-      return true;
-    }
-    return false;
-  };
-
-  // Mount Test
-  if (isHit(100, btnY, btnW, btnH)) {
-    runSDMountTest();
-    _needsRefresh = true;
-    _lastRefresh = 0;
-  }
-
-  // Write Test
-  if (isHit(320, btnY, btnW, btnH)) {
-    runSDWriteTest();
-    _needsRefresh = true;
-    _lastRefresh = 0;
-  }
-
-  // Read Test
-  if (isHit(540, btnY, btnW, btnH)) {
-    runSDReadTest();
-    _needsRefresh = true;
-    _lastRefresh = 0;
-  }
-
-  // Exit
-  if (isHit(760, btnY, btnW, btnH)) {
-    _sdDiagResult[0] = '\0'; // Clear results
-    navigateTo(ScreenID::SETTINGS);
-  }
-}
-
-void UIManager::runSDMountTest() {
-  Serial.println("\n=== SD MOUNT TEST START ===");
-  snprintf(_sdDiagResult, sizeof(_sdDiagResult), "Running mount test...");
-  _needsRefresh = true;
-  update();
-
-  extern SDManager *sdManager;
-  bool success = false;
-
-  if (sdManager) {
-    success = sdManager->powerCycleAndReinit();
-    if (success) {
-      uint8_t cardType = SD.cardType();
-      uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-      snprintf(_sdDiagResult, sizeof(_sdDiagResult),
-               "MOUNT: PASS\nCard Type: %s\nCard Size: %llu MB\nTotal: %llu "
-               "bytes\nUsed: %llu bytes",
-               cardType == CARD_MMC    ? "MMC"
-               : cardType == CARD_SD   ? "SDSC"
-               : cardType == CARD_SDHC ? "SDHC"
-                                       : "UNKNOWN",
-               cardSize, SD.totalBytes(), SD.usedBytes());
-    } else {
-      snprintf(_sdDiagResult, sizeof(_sdDiagResult),
-               "MOUNT: FAIL\nPower cycle failed");
-    }
-  } else {
-    snprintf(_sdDiagResult, sizeof(_sdDiagResult),
-             "MOUNT: FAIL\nNo SDManager available");
-  }
-
-  Serial.println(_sdDiagResult);
-  Serial.println("=== SD MOUNT TEST END ===\n");
-}
-
-void UIManager::runSDWriteTest() {
-  Serial.println("\n=== SD WRITE TEST START ===");
-  snprintf(_sdDiagResult, sizeof(_sdDiagResult), "Running write test...");
-  _needsRefresh = true;
-  update();
-
-  extern SDManager *sdManager;
-  if (sdManager && !sdManager->isAvailable()) {
-    sdManager->powerCycleAndReinit();
-  }
-
-  const char *testFile = "/sd_test.bin";
-  const char *testData = "SD Card Write Test - 0123456789ABCDEF";
-  size_t dataLen = strlen(testData);
-
-  Serial.printf("Opening %s for write...\n", testFile);
-  File f = SD.open(testFile, FILE_WRITE);
-  if (f) {
-    size_t written = f.write((uint8_t *)testData, dataLen);
-    f.flush();
-    f.close();
-
-    Serial.printf("Wrote %d/%d bytes\n", written, dataLen);
-    if (written == dataLen) {
-      snprintf(_sdDiagResult, sizeof(_sdDiagResult),
-               "WRITE: PASS\nFile: %s\nBytes written: %d/%d", testFile, written,
-               dataLen);
-    } else {
-      snprintf(_sdDiagResult, sizeof(_sdDiagResult),
-               "WRITE: PARTIAL\nFile: %s\nBytes: %d/%d (incomplete)", testFile,
-               written, dataLen);
-    }
-  } else {
-    Serial.println("Failed to open file for writing");
-    snprintf(_sdDiagResult, sizeof(_sdDiagResult),
-             "WRITE: FAIL\nCould not open %s", testFile);
-  }
-
-  Serial.println(_sdDiagResult);
-  Serial.println("=== SD WRITE TEST END ===\n");
-}
-
-void UIManager::runSDReadTest() {
-  Serial.println("\n=== SD READ TEST START ===");
-  snprintf(_sdDiagResult, sizeof(_sdDiagResult), "Running read test...");
-  _needsRefresh = true;
-  update();
-
-  extern SDManager *sdManager;
-  if (sdManager && !sdManager->isAvailable()) {
-    sdManager->powerCycleAndReinit();
-  }
-
-  const char *testFile = "/sd_test.bin";
-  const char *expectedData = "SD Card Write Test - 0123456789ABCDEF";
-  size_t expectedLen = strlen(expectedData);
-
-  Serial.printf("Opening %s for read...\n", testFile);
-  File f = SD.open(testFile, FILE_READ);
-  if (f) {
-    size_t fileSize = f.size();
-    char readBuf[64] = {0};
-    size_t bytesRead = f.read((uint8_t *)readBuf, sizeof(readBuf) - 1);
-    f.close();
-
-    Serial.printf("Read %d bytes, file size=%d\n", bytesRead, fileSize);
-    Serial.printf("Content: %s\n", readBuf);
-
-    if (bytesRead == expectedLen && strcmp(readBuf, expectedData) == 0) {
-      snprintf(_sdDiagResult, sizeof(_sdDiagResult),
-               "READ: PASS\nFile: %s\nBytes read: %d\nContent verified OK",
-               testFile, bytesRead);
-    } else if (bytesRead > 0) {
-      snprintf(_sdDiagResult, sizeof(_sdDiagResult),
-               "READ: MISMATCH\nBytes: %d, Expected: %d\nData: %.30s...",
-               bytesRead, expectedLen, readBuf);
-    } else {
-      snprintf(_sdDiagResult, sizeof(_sdDiagResult),
-               "READ: FAIL\nNo data read");
-    }
-  } else {
-    Serial.println("Failed to open file for reading");
-    snprintf(_sdDiagResult, sizeof(_sdDiagResult),
-             "READ: FAIL\nCould not open %s\n(Run Write Test first)", testFile);
-  }
-
-  Serial.println(_sdDiagResult);
-  Serial.println("=== SD READ TEST END ===\n");
-}
 // ============================================================================
 // Notes File Browser Screen
 // ============================================================================
@@ -2396,4 +2174,1662 @@ void UIManager::loadNotePreview(int index) {
   tempCanvas.deleteSprite();
   _previewFileIndex = index;
   Serial.println("Preview loaded successfully");
+}
+
+// ============================================================================
+// Power Management & Smart Refresh
+// ============================================================================
+
+bool UIManager::shouldUpdateDashboard(const Fossibot::PowerBankData &newData) {
+  // Always update if we haven't rendered yet (first run)
+  if (_lastDashboardUpdate == 0)
+    return true;
+
+  // 1. Critical Status Changes (Always Update)
+  if (newData.usbActive != _lastRenderedData.usbActive)
+    return true;
+  if (newData.dcActive != _lastRenderedData.dcActive)
+    return true;
+  if (newData.acActive != _lastRenderedData.acActive)
+    return true;
+
+  // 2. Battery Percentage Change (Any change is significant for user)
+  if (newData.batteryPercent != _lastRenderedData.batteryPercent)
+    return true;
+
+  // 3. Power Jitter Filtering (Only update if power changes > 3 Watts)
+  // Input Power
+  if (abs(newData.inputPower - _lastRenderedData.inputPower) > 3)
+    return true;
+
+  // Output Power
+  if (abs(newData.outputPower - _lastRenderedData.outputPower) > 3)
+    return true;
+
+  // 4. Force update every 30 seconds regardless of data to keep clock/time sync
+  if (millis() - _lastDashboardUpdate > 30000)
+    return true;
+
+  return false;
+}
+
+void UIManager::checkPowerManagement() {
+  // USER REQUEST: Disable Deep Sleep (Option 1)
+  // To fix "stuck in sleep" issue, we disable the auto-sleep logic entirely.
+  return;
+
+  // 0. Pomodoro Lock (User Request)
+  // Don't sleep if timer is ticking!
+  if (_pomodoroState == PomodoroState::RUNNING) {
+    _lastActivityTime = millis(); // Keep resetting idle timer
+    return;
+  }
+
+  // 1. Check for Auto Sleep
+  extern Config *config;
+  if (!config)
+    return;
+
+  int sleepMin = config->getAutoSleepMinutes();
+  if (sleepMin > 0) {
+    unsigned long elapsed = millis() - _lastActivityTime;
+    unsigned long timeout = sleepMin * 60 * 1000UL;
+
+    if (elapsed > timeout) {
+      Serial.printf("Idle for %d min, entering deep sleep...\n", sleepMin);
+      enterDeepSleep();
+    }
+  }
+
+  // 2. CPU Frequency Scaling (DFS)
+  // If idle for > 5 seconds, drop to 80MHz to save power
+  // Only if NOT in critical sections (like file ops)
+  // Note: touch interrupt handling needs to be fast to wake up CPU freq
+
+  static bool lowPowerMode = false;
+  if (millis() - _lastActivityTime > 5000) {
+    if (!lowPowerMode) {
+      // setCpuFrequencyMhz(80); // Can cause instability with BLE?
+      // For now, let's stick to deep sleep as primary saver
+      // lowPowerMode = true;
+    }
+  } else {
+    if (lowPowerMode) {
+      // setCpuFrequencyMhz(240);
+      // lowPowerMode = false;
+    }
+  }
+}
+
+void UIManager::enterDeepSleep() {
+  // 1. Show sleep message overlay (User Request: Keep previous state)
+  // Centered "Zzz..." banner
+  int bannerW = 200;
+  int bannerH = 80;
+  int x = (SCREEN_WIDTH - bannerW) / 2;
+  int y = (SCREEN_HEIGHT - bannerH) / 2;
+
+  M5.Display.fillRect(x, y, bannerW, bannerH, COLOR_WHITE);
+  M5.Display.drawRect(x, y, bannerW, bannerH, COLOR_BLACK);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(4);
+  M5.Display.setCursor(x + 50, y + 25);
+  M5.Display.print("Zzz");
+  M5.Display.display(); // Force update
+  delay(500);
+
+  // 2. Turn off peripherals
+  // M5.Power.setExtOutput(false); // CAUTION: If this powers Touch, wake fails.
+  // M5PExt (Port B/C power) shouldn't affect main touch (usually internal)
+
+  // 3. Configure Wakeup Sources
+  // GT911 INT pin is GPIO 36 on M5Paper v1.
+
+  // Try wake up on TOUCH (Touch controller pulls INT low)
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_48, 0);
+
+  // Wake up for ALARM if enabled
+  extern Config *config;
+  if (config && config->getAlarmEnabled()) {
+    int h, m, s;
+    RTC::getTime(h, m, s);
+    int ah = config->getAlarmHour();
+    int am = config->getAlarmMinute();
+
+    long currentSec = h * 3600 + m * 60 + s;
+    long alarmSec = ah * 3600 + am * 60;
+
+    long diffSec = alarmSec - currentSec;
+    if (diffSec <= 0)
+      diffSec += 24 * 3600; // Next day
+
+    // Safety: Don't sleep if alarm is < 1 min away (might miss it during
+    // transition)
+    if (diffSec < 60) {
+      Serial.println("Alarm imminent! Aborting sleep.");
+      return;
+    }
+
+    uint64_t wakeUs = (uint64_t)diffSec * 1000000ULL;
+    esp_sleep_enable_timer_wakeup(wakeUs);
+    Serial.printf("Alarm set for %ld sec from now\n", diffSec);
+  }
+
+  // 4. Shutdown Display Controller (M5EPD)
+  // M5Unified's sleep() puts the panel into low power maintain mode.
+  // It should NOT kill the ESP32 or Touch power itself.
+  M5.Display.sleep();
+
+  // 5. Enter Deep Sleep
+  Serial.println("Entering Deep Sleep...");
+  Serial.flush();
+  esp_deep_sleep_start();
+
+  // Dead code
+}
+
+// ============================================================================
+// SD Diagnostics Screen
+// ============================================================================
+
+void UIManager::drawSDDiagScreen() {
+  M5.Display.fillScreen(COLOR_WHITE);
+
+  // Header
+  M5.Display.fillRect(0, 0, SCREEN_WIDTH, MENU_BAR_HEIGHT, COLOR_BLACK);
+  M5.Display.setTextColor(COLOR_WHITE);
+  M5.Display.setTextSize(3);
+  M5.Display.setCursor(20, 15);
+  M5.Display.print("SD Card Diagnostics");
+
+  // Back Button (Top Right)
+  M5.Display.fillRect(SCREEN_WIDTH - 130, 5, 120, 50, COLOR_WHITE);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.drawRect(SCREEN_WIDTH - 130, 5, 120, 50, COLOR_BLACK);
+  M5.Display.setCursor(SCREEN_WIDTH - 110, 15);
+  M5.Display.print("BACK");
+
+  extern SDManager *sdManager;
+  if (!sdManager || !sdManager->isAvailable()) {
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setCursor(50, 200);
+    M5.Display.print("SD Card Not Detected!");
+    return;
+  }
+
+  // Card Info
+  SDManager::SDCardInfo info = sdManager->getCardInfo();
+
+  // Retry if info is invalid (User Feedback: "Unknown or 0")
+  if (info.totalBytes == 0) {
+    Serial.println("SD Diag: Info invalid, attempting re-init...");
+    sdManager->powerCycleAndReinit();
+    info = sdManager->getCardInfo();
+  }
+
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(3);
+  int y = 100;
+
+  M5.Display.setCursor(50, y);
+  M5.Display.printf("Type: %s", info.type.c_str());
+
+  y += 50;
+  float totalSize = info.totalBytes / (1024.0 * 1024.0); // Start in MB
+  const char *totalUnit = "MB";
+  if (totalSize > 1024.0) {
+    totalSize /= 1024.0;
+    totalUnit = "GB";
+  }
+
+  float usedSize = info.usedBytes / (1024.0 * 1024.0); // Start in MB
+  const char *usedUnit = "MB";
+  if (usedSize > 1024.0) {
+    usedSize /= 1024.0;
+    usedUnit = "GB";
+  }
+
+  float freeBytes = (float)(info.totalBytes - info.usedBytes);
+  float freeSize = freeBytes / (1024.0 * 1024.0);
+  const char *freeUnit = "MB";
+  if (freeSize > 1024.0) {
+    freeSize /= 1024.0;
+    freeUnit = "GB";
+  }
+
+  M5.Display.setCursor(50, y);
+  M5.Display.printf("Size: %.2f %s", totalSize, totalUnit);
+
+  y += 50;
+  M5.Display.setCursor(50, y);
+  M5.Display.printf("Used: %.2f %s (Free: %.2f %s)", usedSize, usedUnit,
+                    freeSize, freeUnit);
+
+  // Usage Bar
+  y += 60;
+  M5.Display.drawRect(50, y, 860, 40, COLOR_BLACK);
+  if (info.totalBytes > 0) {
+    // Use raw bytes for accurate percentage, casting to double for precision
+    double ratio = (double)info.usedBytes / (double)info.totalBytes;
+    int usedWidth = (int)(ratio * 860);
+
+    // Ensure at least 1px visible if there is ANY data
+    if (usedWidth == 0 && info.usedBytes > 0)
+      usedWidth = 1;
+
+    M5.Display.fillRect(50, y, usedWidth, 40, COLOR_GRAY);
+  }
+
+  // Benchmark Section
+  y += 80;
+  drawButton(50, y, 300, 80, "RUN TEST");
+
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(380, y + 15);
+  M5.Display.print("Test read/write speeds.");
+  M5.Display.setCursor(380, y + 45);
+  M5.Display.print("(Writes ISOLATED temp file)");
+}
+
+void UIManager::handleSDDiagTouch(int x, int y) {
+  // Back Button (Top Right)
+  if (x > SCREEN_WIDTH - 140 && y < 60) {
+    Buzzer::click();
+    navigateTo(ScreenID::SETTINGS);
+    return;
+  }
+
+  // Run Test Button
+  if (x >= 50 && x <= 350 && y >= 340 && y <= 420) {
+    Buzzer::click();
+
+    // Draw "Running..."
+    M5.Display.fillRect(380, 340, 500, 80, COLOR_WHITE);
+    M5.Display.setTextSize(3);
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setCursor(380, 360);
+    M5.Display.print("Running Benchmark...");
+    // M5.Display.display();
+
+    // Run Benchmark
+    extern SDManager *sdManager;
+    if (sdManager) {
+      float writeSpeed, readSpeed;
+      // Force power cycle before test for best stability
+      bool reinitSuccess = sdManager->powerCycleAndReinit();
+      if (!reinitSuccess) {
+        Serial.println("Warning: Power cycle failed before benchmark");
+      }
+
+      bool success = sdManager->runBenchmark(writeSpeed, readSpeed);
+
+      // Clear area
+      M5.Display.fillRect(50, 340, 860, 150, COLOR_WHITE);
+      M5.Display.setTextColor(COLOR_BLACK);
+
+      if (success) {
+        // Show Results
+        M5.Display.setTextSize(3);
+        M5.Display.setCursor(50, 350);
+        M5.Display.print("Result:");
+        M5.Display.setTextSize(4);
+        M5.Display.setCursor(50, 400);
+        M5.Display.printf("Write: %.2f MB/s", writeSpeed);
+        M5.Display.setCursor(50, 460);
+        M5.Display.printf("Read:  %.2f MB/s", readSpeed);
+      } else {
+        M5.Display.setTextSize(3);
+        M5.Display.setCursor(50, 360);
+        M5.Display.print("Benchmark Failed!");
+        M5.Display.setCursor(50, 400);
+        M5.Display.setTextSize(2);
+        M5.Display.print("Check serial log. Re-insert card?");
+      }
+    }
+  }
+}
+
+// ============================================================================
+// ALARM & TIMER & HOME SCREEN IMPLEMENTATIONS
+// ============================================================================
+
+void UIManager::drawAlarmContent(int x, int y, int w, int h) {
+  // 1. Header
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(3);
+  const char *title = "Alarm Time";
+  int titleW = M5.Display.textWidth(title);
+  M5.Display.setCursor(x + (w - titleW) / 2, y + 40);
+  M5.Display.print(title);
+
+  // 2. Prepare Data
+  extern Config *config;
+  int ah = config ? config->getAlarmHour() : 7;
+  int am = config ? config->getAlarmMinute() : 0;
+  char hourStr[4], minStr[4];
+  snprintf(hourStr, sizeof(hourStr), "%02d", ah);
+  snprintf(minStr, sizeof(minStr), "%02d", am);
+
+  // 3. Calculate Layout for Inline Controls: [ - ] HH [ + ] : [ - ] MM [ + ]
+  // Reduced time size for better proportions
+  int timeSize = 5; // Reduced from 7 to fit better
+
+  M5.Display.setTextSize(timeSize);
+  int digitW = M5.Display.textWidth("00"); // Approx width of 2 digits
+
+  int btnW = 90;         // Slightly larger buttons
+  int btnH = 80;         // Taller for better touch
+  int spacing = 20;      // More spacing
+  int groupSpacing = 50; // More space for colon
+
+  // Group = Btn + Sp + Digits + Sp + Btn
+  int groupW = btnW + spacing + digitW + spacing + btnW;
+  int totalW = groupW * 2 + groupSpacing;
+
+  int startX = x + (w - totalW) / 2;
+  int rowY = y + 120;
+
+  // --- HOUR GROUP ---
+  int curX = startX;
+
+  // Hour Minus
+  drawButton(curX, rowY, btnW, btnH, "-");
+  curX += btnW + spacing;
+
+  // Hour Digits
+  M5.Display.setTextSize(timeSize);
+  M5.Display.setCursor(curX, rowY + (btnH - 40) / 2); // Better centering
+  M5.Display.print(hourStr);
+  curX += digitW + spacing;
+
+  // Hour Plus
+  drawButton(curX, rowY, btnW, btnH, "+");
+  curX += btnW + groupSpacing / 2;
+
+  // --- COLON ---
+  M5.Display.setTextSize(timeSize);
+  M5.Display.setCursor(curX - 10, rowY + (btnH - 40) / 2);
+  M5.Display.print(":");
+  curX += groupSpacing / 2;
+
+  // --- MINUTE GROUP ---
+  // Min Minus
+  drawButton(curX, rowY, btnW, btnH, "-");
+  curX += btnW + spacing;
+
+  // Min Digits
+  M5.Display.setTextSize(timeSize);
+  M5.Display.setCursor(curX, rowY + (btnH - 40) / 2);
+  M5.Display.print(minStr);
+  curX += digitW + spacing;
+
+  // Min Plus
+  drawButton(curX, rowY, btnW, btnH, "+");
+
+  // 4. Toggle (Centered)
+  bool enabled = config ? config->getAlarmEnabled() : false;
+  const char *toggleLabel = "Enable";
+  int toggleW = 200;
+  int toggleX = x + (w - toggleW) / 2 + 30;
+  drawToggle(toggleX, y + 300, toggleLabel, enabled);
+}
+
+void UIManager::drawTimerContent(int x, int y, int w, int h) {
+  // 1. Header
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(3);
+  const char *title = "Countdown Timer";
+  int titleW = M5.Display.textWidth(title);
+  M5.Display.setCursor(x + (w - titleW) / 2, y + 40);
+  M5.Display.print(title);
+
+  // 2. Timer Display
+  int min = _timerRemainingSeconds / 60;
+  int sec = _timerRemainingSeconds % 60;
+  char timeStr[32];
+  snprintf(timeStr, sizeof(timeStr), "%02d:%02d", min, sec);
+
+  // Large, readable timer display
+  M5.Display.setTextSize(6);
+  int timeW = M5.Display.textWidth(timeStr);
+  M5.Display.setCursor(x + (w - timeW) / 2, y + 100);
+  M5.Display.print(timeStr);
+
+  // 3. Controls (Centered Row) - Better sized and positioned
+  int btnY = y + 230;
+  int btnW = 140; // Wider to fit text better
+  int btnH = 60;  // Taller for easier touch
+  int spacing = 40;
+  int totalBtnW = btnW * 2 + spacing;
+  int startX = x + (w - totalBtnW) / 2;
+
+  // Reset text size for buttons (was 6)
+  M5.Display.setTextSize(3);
+
+  drawButton(startX, btnY, btnW, btnH, _timerRunning ? "PAUSE" : "START");
+  drawButton(startX + btnW + spacing, btnY, btnW, btnH, "RESET");
+
+  // 4. Adjustments (Centered Row below) - 4 buttons
+  int adjY = y + 320;
+  int adjBtnW = 75; // Narrower to fit 4 buttons
+  int adjBtnH = 50;
+  int adjSpacing = 20;
+  int totalAdjW = adjBtnW * 4 + adjSpacing * 3;
+  int adjX = x + (w - totalAdjW) / 2;
+
+  drawButton(adjX, adjY, adjBtnW, adjBtnH, "-5m");
+  drawButton(adjX + adjBtnW + adjSpacing, adjY, adjBtnW, adjBtnH, "-1m");
+  drawButton(adjX + (adjBtnW + adjSpacing) * 2, adjY, adjBtnW, adjBtnH, "+1m");
+  drawButton(adjX + (adjBtnW + adjSpacing) * 3, adjY, adjBtnW, adjBtnH, "+5m");
+}
+
+void UIManager::checkAlarm() {
+  unsigned long now = millis();
+
+  // Timer Logic
+  if (_timerRunning && (now - _timerLastTick >= 1000)) {
+    _timerLastTick = now;
+    if (_timerRemainingSeconds > 0) {
+      _timerRemainingSeconds--;
+      // Update UI if valid
+      if (_currentScreen == ScreenID::CLOCK && _clockMode == ClockMode::TIMER) {
+        // We might want to force partial redraw, but for now just mark dirty
+        // _needsRefresh = true; // Don't spam refresh on eInk every second
+        // unless fast mode
+      }
+    } else {
+      _timerRunning = false;
+      _timerRinging = true;
+      _timerRingStart = now;
+      _lastActivityTime = now; // Wake up logic
+      forceRefresh();
+    }
+  }
+
+  // Alarm Logic
+  extern Config *config;
+  if (config && config->getAlarmEnabled()) {
+    int h, m, s;
+    RTC::getTime(h, m, s);
+    // Trigger at 00 seconds
+    if (h == config->getAlarmHour() && m == config->getAlarmMinute() &&
+        s == 0) {
+      // Debounce: ensure we haven't already started ringing clearly recently
+      if (!_alarmRinging && (now - _alarmRingStart > 65000)) {
+        _alarmRinging = true;
+        _alarmRingStart = now;
+        _lastActivityTime = now;
+        forceRefresh();
+      }
+    }
+  }
+
+  // Ringing Processing
+  if (_alarmRinging || _timerRinging) {
+    // Beep every 1 sec
+    if (now % 1000 < 100)
+      Buzzer::click();
+
+    const char *label = _alarmRinging ? "ALARM!" : "TIME UP!";
+    drawAlertScreen(label);
+
+    // Auto Dismiss after 60s
+    unsigned long start = _alarmRinging ? _alarmRingStart : _timerRingStart;
+    if (now - start > 60000) {
+      _alarmRinging = false;
+      _timerRinging = false;
+      forceRefresh(); // Clear alert
+    }
+  }
+}
+
+void UIManager::drawAlertScreen(const char *label) {
+  // Simple Modal Overlay
+  // We draw directly to framebuffer to override whatever is there
+  // Center Box
+  int boxW = 500;
+  int boxH = 300;
+  int x = (SCREEN_WIDTH - boxW) / 2;
+  int y = (SCREEN_HEIGHT - boxH) / 2;
+
+  M5.Display.fillRect(x, y, boxW, boxH, COLOR_WHITE);
+  M5.Display.drawRect(x, y, boxW, boxH, COLOR_BLACK);
+  M5.Display.drawRect(x + 5, y + 5, boxW - 10, boxH - 10, COLOR_BLACK);
+
+  M5.Display.setTextSize(5);
+  M5.Display.setTextColor(COLOR_BLACK);
+
+  int textW = strlen(label) * 30; // Approx
+  M5.Display.setCursor(x + (boxW - textW) / 2, y + 80);
+  M5.Display.print(label);
+
+  M5.Display.setTextSize(3);
+  const char *sub = "Tap to Dismiss";
+  int subW = strlen(sub) * 18;
+  M5.Display.setCursor(x + (boxW - subW) / 2, y + 200);
+  M5.Display.print(sub);
+  M5.Display.display(); // Force update
+}
+
+void UIManager::handleClockTouch(int x, int y, TouchEvent event) {
+  // Handle RELEASE events for reliable tap detection
+  if (event != TouchEvent::RELEASE) {
+    return;
+  }
+
+  Serial.printf("CLOCK TOUCH: %d, %d\n", x, y);
+
+  // 1. Sidebar Handling (Left 160px)
+  if (x < 160) {
+    if (y > 60 && y < 130)
+      _clockMode = ClockMode::CLOCK;
+    else if (y > 140 && y < 210)
+      _clockMode = ClockMode::ALARM;
+    else if (y > 220 && y < 290)
+      _clockMode = ClockMode::POMODORO;
+    else if (y > 300 && y < 370)
+      _clockMode = ClockMode::TIMER;
+
+    Buzzer::click();
+    _needsRefresh = true;
+    _lastRefresh = 0; // Force immediate refresh
+    return;
+  }
+
+  // 2. Exit Button (Top Right) area check - handled by global if mapped, but
+  // safety:
+  if (x > SCREEN_WIDTH - 80 && y < 60) {
+    navigateTo(ScreenID::HOME);
+    return;
+  }
+
+  // 3. Content Handling
+  if (_clockMode == ClockMode::ALARM) {
+    extern Config *config;
+    if (!config)
+      return;
+    int ah = config->getAlarmHour();
+    int am = config->getAlarmMinute();
+
+    // Inline Layout Logic matches drawAlarmContent
+    // Approx StartX = 265
+    // Hit zones centered on buttons (80x70) at RowY=120
+
+    int rowY = 120;
+    int hitH = 90; // Generous
+
+    if (y > rowY - 10 && y < rowY + hitH) {
+      int startX = 265;
+      // Hour Minus
+      if (x > startX && x < startX + 90) {
+        ah = (ah - 1 + 24) % 24;
+        Buzzer::click();
+      }
+      // Hour Plus (approx +195px offset)
+      if (x > startX + 180 && x < startX + 280) {
+        ah = (ah + 1) % 24;
+        Buzzer::click();
+      }
+
+      int minStartX = 580;
+      // Min Minus
+      if (x > minStartX && x < minStartX + 90) {
+        am = (am - 1 + 60) % 60;
+        Buzzer::click();
+      }
+      // Min Plus
+      if (x > minStartX + 180 && x < minStartX + 280) {
+        am = (am + 1) % 60;
+        Buzzer::click();
+      }
+
+      Serial.printf("Alarm Touch: New Time %02d:%02d\n", ah, am);
+    }
+
+    // Toggle
+    if (y > 280 && y < 380) {
+      // Center X approx 560. Width 200.
+      if (x > 460 && x < 660) {
+        config->setAlarmEnabled(!config->getAlarmEnabled());
+        Buzzer::click();
+        Serial.println("Alarm Touch: Toggle");
+      }
+    }
+
+    config->setAlarmHour(ah);
+    config->setAlarmMinute(am);
+    config->save("/config/settings.json");
+    _needsRefresh = true;
+    _lastRefresh = 0; // Force immediate refresh
+
+  } else if (_clockMode == ClockMode::TIMER) {
+    // Timer Controls - Match drawTimerContent layout exactly
+    // Content area starts at x=160
+    int contentX = 160;
+    int contentW = SCREEN_WIDTH - 160;
+
+    // Main control buttons (START/PAUSE and RESET)
+    int btnY = 230;
+    int btnW = 140;
+    int btnH = 60;
+    int spacing = 40;
+    int totalBtnW = btnW * 2 + spacing;
+    int startX = contentX + (contentW - totalBtnW) / 2;
+
+    // START/PAUSE button zone
+    if (y >= btnY && y < btnY + btnH) {
+      if (x >= startX && x < startX + btnW) {
+        _timerRunning = !_timerRunning;
+        if (_timerRunning)
+          _timerLastTick = millis();
+        Buzzer::click();
+      }
+      // RESET button zone
+      else if (x >= startX + btnW + spacing &&
+               x < startX + btnW + spacing + btnW) {
+        _timerRunning = false;
+        _timerRemainingSeconds = _timerDurationSeconds;
+        Buzzer::click();
+      }
+    }
+
+    // Adjustment buttons (-5m, -1m, +1m, +5m) - 4 buttons
+    int adjY = 320;
+    int adjBtnW = 75;
+    int adjBtnH = 50;
+    int adjSpacing = 20;
+    int totalAdjW = adjBtnW * 4 + adjSpacing * 3;
+    int adjX = contentX + (contentW - totalAdjW) / 2;
+
+    if (y >= adjY && y < adjY + adjBtnH) {
+      // -5m button
+      if (x >= adjX && x < adjX + adjBtnW) {
+        _timerRemainingSeconds -= 300;
+        Buzzer::click();
+      }
+      // -1m button
+      else if (x >= adjX + adjBtnW + adjSpacing &&
+               x < adjX + (adjBtnW + adjSpacing) * 2) {
+        _timerRemainingSeconds -= 60;
+        Buzzer::click();
+      }
+      // +1m button
+      else if (x >= adjX + (adjBtnW + adjSpacing) * 2 &&
+               x < adjX + (adjBtnW + adjSpacing) * 3) {
+        _timerRemainingSeconds += 60;
+        Buzzer::click();
+      }
+      // +5m button
+      else if (x >= adjX + (adjBtnW + adjSpacing) * 3 && x < adjX + totalAdjW) {
+        _timerRemainingSeconds += 300;
+        Buzzer::click();
+      }
+
+      if (_timerRemainingSeconds < 0)
+        _timerRemainingSeconds = 0;
+      _timerDurationSeconds = _timerRemainingSeconds;
+    }
+    _needsRefresh = true;
+    _lastRefresh = 0; // Force immediate refresh
+  } else if (_clockMode == ClockMode::POMODORO) {
+    // Pomodoro Full Logic
+    int contentX = 160;
+    int contentW = SCREEN_WIDTH - 160;
+
+    // Control buttons
+    int btnW = 150;
+    int btnH = 60;
+    int btnY = 250;
+    int btnSpacing = 40;
+
+    // Start/Pause button
+    int startBtnX = contentX + (contentW / 2) - btnW - (btnSpacing / 2);
+    if (x >= startBtnX && x < startBtnX + btnW && y >= btnY &&
+        y < btnY + btnH) {
+      if (_pomodoroState == PomodoroState::RUNNING) {
+        _pomodoroState = PomodoroState::PAUSED;
+      } else if (_pomodoroState == PomodoroState::PAUSED ||
+                 _pomodoroState == PomodoroState::STOPPED) {
+        _pomodoroState = PomodoroState::RUNNING;
+        _pomodoroLastTick = millis();
+        Buzzer::click();
+      } else if (_pomodoroState == PomodoroState::COMPLETED) {
+        _pomodoroState = PomodoroState::RUNNING;
+        _pomodoroRemainingSeconds = POMODORO_WORK_SECONDS;
+        _pomodoroSession = PomodoroSession::WORK;
+        _pomodoroLastTick = millis();
+      }
+      _needsRefresh = true;
+      _lastRefresh = 0; // Force immediate refresh
+      return;
+    }
+
+    // Reset button
+    int resetBtnX = contentX + (contentW / 2) + (btnSpacing / 2);
+    if (x >= resetBtnX && x < resetBtnX + btnW && y >= btnY &&
+        y < btnY + btnH) {
+      _pomodoroState = PomodoroState::STOPPED;
+      switch (_pomodoroSession) {
+      case PomodoroSession::WORK:
+        _pomodoroRemainingSeconds = POMODORO_WORK_SECONDS;
+        break;
+      case PomodoroSession::SHORT_BREAK:
+        _pomodoroRemainingSeconds = POMODORO_SHORT_BREAK_SECONDS;
+        break;
+      case PomodoroSession::LONG_BREAK:
+        _pomodoroRemainingSeconds = POMODORO_LONG_BREAK_SECONDS;
+        break;
+      }
+      _needsRefresh = true;
+      _lastRefresh = 0; // Force immediate refresh
+      return;
+    }
+
+    // Session type selection buttons
+    int modeY = 350;
+    int modeBtnW = 100;
+    int modeSpacing = 20;
+    int modeStartX =
+        contentX + (contentW - (3 * modeBtnW + 2 * modeSpacing)) / 2;
+
+    if (y >= modeY && y < modeY + 50) {
+      // WORK
+      if (x >= modeStartX && x < modeStartX + modeBtnW) {
+        _pomodoroSession = PomodoroSession::WORK;
+        _pomodoroRemainingSeconds = POMODORO_WORK_SECONDS;
+        _pomodoroState = PomodoroState::STOPPED;
+        Buzzer::click();
+        _needsRefresh = true;
+        return;
+      }
+      // SHORT
+      int shortBtnX = modeStartX + modeBtnW + modeSpacing;
+      if (x >= shortBtnX && x < shortBtnX + modeBtnW) {
+        _pomodoroSession = PomodoroSession::SHORT_BREAK;
+        _pomodoroRemainingSeconds = POMODORO_SHORT_BREAK_SECONDS;
+        _pomodoroState = PomodoroState::STOPPED;
+        Buzzer::click();
+        _needsRefresh = true;
+        _lastRefresh = 0; // Force immediate refresh
+        return;
+      }
+      // LONG
+      int longBtnX = modeStartX + 2 * (modeBtnW + modeSpacing);
+      if (x >= longBtnX && x < longBtnX + modeBtnW) {
+        _pomodoroSession = PomodoroSession::LONG_BREAK;
+        _pomodoroRemainingSeconds = POMODORO_LONG_BREAK_SECONDS;
+        _pomodoroState = PomodoroState::STOPPED;
+        Buzzer::click();
+        _needsRefresh = true;
+        _lastRefresh = 0; // Force immediate refresh
+        return;
+      }
+    }
+  }
+}
+// ============================================================================
+// Games Menu
+// ============================================================================
+
+void UIManager::drawGamesMenu() {
+  M5.Display.fillScreen(COLOR_WHITE);
+  drawMenuBar();
+
+  // Title
+  M5.Display.setTextSize(4);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(SCREEN_WIDTH / 2 - 80, 30);
+  M5.Display.print("GAMES");
+
+  // Game grid (2x2 for now)
+  int gridX = 200;
+  int gridY = 120;
+  int btnW = 240;
+  int btnH = 150;
+  int gap = 80;
+
+  // 2048 Button
+  drawButton(gridX, gridY, btnW, btnH, "2048", true);
+
+  // Placeholder buttons
+  M5.Display.setTextSize(2);
+  M5.Display.setTextColor(COLOR_GRAY);
+
+  // SUDOKU Button - NOW ENABLED!
+  M5.Display.setTextSize(3);
+  drawButton(gridX + btnW + gap, gridY, btnW, btnH, "SUDOKU");
+
+  drawButton(gridX, gridY + btnH + 50, btnW, btnH, "WORDLE");
+  M5.Display.setCursor(gridX + 50, gridY + btnH + 50 + 90);
+  M5.Display.print("(Coming Soon)");
+}
+
+void UIManager::handleGamesMenuTouch(int x, int y) {
+  // 2048 button (200-440, 120-270)
+  if (x >= 200 && x < 440 && y >= 120 && y < 270) {
+    Buzzer::click();
+    game2048Load(); // Load saved game or init new
+    navigateTo(ScreenID::GAME_2048);
+  }
+
+  // SUDOKU button (520-760, 120-270)
+  if (x >= 520 && x < 760 && y >= 120 && y < 270) {
+    Buzzer::click();
+    sudokuLoadPuzzle(0, 1); // Start with easy puzzle #1
+    navigateTo(ScreenID::GAME_SUDOKU);
+  }
+}
+
+// ============================================================================
+// 2048 Game
+// ============================================================================
+
+void UIManager::drawGame2048() {
+  // Use fast EPD mode for smooth updates (like Notes)
+  M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+
+  M5.Display.fillScreen(COLOR_WHITE);
+
+  // Header
+  M5.Display.setTextSize(3);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(20, 15);
+  M5.Display.print("2048");
+
+  // Score display
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(SCREEN_WIDTH - 350, 20);
+  M5.Display.printf("Score: %d", _game2048Score);
+  M5.Display.setCursor(SCREEN_WIDTH - 180, 20);
+  M5.Display.printf("Best: %d", _game2048HighScore);
+
+  // Draw grid (4x4)
+  int gridSize = 400;
+  int gridX = (SCREEN_WIDTH - gridSize) / 2;
+  int gridY = 80;
+  int tileSize = 95;
+  int gap = 5;
+
+  for (int row = 0; row < 4; row++) {
+    for (int col = 0; col < 4; col++) {
+      int x = gridX + col * (tileSize + gap);
+      int y = gridY + row * (tileSize + gap);
+      int value = _game2048Grid[row][col];
+
+      // Tile background (different shades for different values)
+      uint16_t bgColor;
+      if (value == 0)
+        bgColor = COLOR_LIGHT_GRAY;
+      else if (value == 2)
+        bgColor = COLOR_WHITE;
+      else if (value == 4)
+        bgColor = 0xEF7D; // Very light gray
+      else if (value <= 16)
+        bgColor = 0xDEFB;
+      else if (value <= 64)
+        bgColor = 0xCE79;
+      else
+        bgColor = COLOR_GRAY;
+
+      M5.Display.fillRect(x, y, tileSize, tileSize, bgColor);
+      M5.Display.drawRect(x, y, tileSize, tileSize, COLOR_BLACK);
+
+      // Tile value
+      if (value > 0) {
+        M5.Display.setTextSize(value >= 1000 ? 3 : 4); // Larger font (was 3/2)
+        M5.Display.setTextColor(COLOR_BLACK); // All numbers black for e-ink
+
+        char valueStr[8];
+        snprintf(valueStr, sizeof(valueStr), "%d", value);
+        int textW = M5.Display.textWidth(valueStr);
+        M5.Display.setCursor(x + (tileSize - textW) / 2,
+                             y + (value >= 1000 ? 35 : 28)); // Adjusted Y
+        M5.Display.print(valueStr);
+      }
+    }
+  }
+
+  // Buttons (above menu bar)
+  int btnY = SCREEN_HEIGHT - 140;
+  drawButton(60, btnY, 180, 50, "NEW GAME"); // Wider button
+  drawButton(SCREEN_WIDTH - 210, btnY, 150, 50, "HOME");
+
+  // Game over overlay
+  if (_game2048GameOver) {
+    int boxW = 400;
+    int boxH = 200;
+    int boxX = (SCREEN_WIDTH - boxW) / 2;
+    int boxY = (SCREEN_HEIGHT - boxH) / 2;
+
+    M5.Display.fillRect(boxX, boxY, boxW, boxH, COLOR_WHITE);
+    M5.Display.drawRect(boxX, boxY, boxW, boxH, COLOR_BLACK);
+    M5.Display.drawRect(boxX + 5, boxY + 5, boxW - 10, boxH - 10, COLOR_BLACK);
+
+    M5.Display.setTextSize(_game2048Won ? 4 : 3);
+    M5.Display.setTextColor(COLOR_BLACK);
+    const char *msg = _game2048Won ? "YOU WON!" : "GAME OVER!";
+    int msgW = M5.Display.textWidth(msg);
+    M5.Display.setCursor(boxX + (boxW - msgW) / 2, boxY + 60);
+    M5.Display.print(msg);
+
+    M5.Display.setTextSize(2);
+    M5.Display.setCursor(boxX + 80, boxY + 130);
+    M5.Display.print("Tap to continue");
+  }
+}
+
+void UIManager::handleGame2048Touch(int x, int y, TouchEvent event) {
+  if (event == TouchEvent::PRESS) {
+    _touchStartX = x;
+    _touchStartY = y;
+    return;
+  }
+
+  if (event != TouchEvent::RELEASE)
+    return;
+
+  // Game over - any tap restarts
+  if (_game2048GameOver) {
+    game2048Init();
+    _needsRefresh = true;
+    _lastRefresh = 0;
+    return;
+  }
+
+  // Check buttons (above menu bar)
+  int btnY = SCREEN_HEIGHT - 140;
+  if (y >= btnY && y < btnY + 50) {
+    if (x >= 60 && x < 240) { // Wider touch zone for NEW GAME
+      // New Game - do full quality refresh to clear ghosting
+      Buzzer::click();
+      M5.Display.setEpdMode(epd_mode_t::epd_quality);
+      game2048Init();
+      _needsRefresh = true;
+      _lastRefresh = 0;
+      return;
+    }
+    if (x >= SCREEN_WIDTH - 210 && x < SCREEN_WIDTH - 60) {
+      // Home
+      Buzzer::click();
+      game2048Save();
+      navigateTo(ScreenID::HOME);
+      return;
+    }
+  }
+
+  // Detect swipe
+  int dx = x - _touchStartX;
+  int dy = y - _touchStartY;
+
+  if (abs(dx) < 50 && abs(dy) < 50)
+    return; // Not a swipe
+
+  int direction;
+  if (abs(dx) > abs(dy)) {
+    direction = (dx > 0) ? 1 : 3; // Right or Left
+  } else {
+    direction = (dy > 0) ? 2 : 0; // Down or Up
+  }
+
+  bool moved = game2048Slide(direction);
+  if (moved) {
+    game2048AddRandomTile();
+    game2048Save();
+
+    if (_game2048Score > _game2048HighScore) {
+      _game2048HighScore = _game2048Score;
+    }
+
+    // Check win/lose
+    if (!_game2048Won) {
+      for (int r = 0; r < 4; r++) {
+        for (int c = 0; c < 4; c++) {
+          if (_game2048Grid[r][c] >= 2048) {
+            _game2048Won = true;
+            _game2048GameOver = true;
+          }
+        }
+      }
+    }
+
+    if (game2048IsGameOver()) {
+      _game2048GameOver = true;
+    }
+
+    Buzzer::click();
+    _needsRefresh = true;
+    _lastRefresh = 0;
+  }
+}
+
+// ============================================================================
+// 2048 Game Logic
+// ============================================================================
+
+void UIManager::game2048Init() {
+  // Clear grid
+  for (int r = 0; r < 4; r++) {
+    for (int c = 0; c < 4; c++) {
+      _game2048Grid[r][c] = 0;
+    }
+  }
+
+  _game2048Score = 0;
+  _game2048GameOver = false;
+  _game2048Won = false;
+
+  // Add 2 starting tiles
+  game2048AddRandomTile();
+  game2048AddRandomTile();
+}
+
+void UIManager::game2048AddRandomTile() {
+  // Find empty cells
+  int emptyCount = 0;
+  for (int r = 0; r < 4; r++) {
+    for (int c = 0; c < 4; c++) {
+      if (_game2048Grid[r][c] == 0)
+        emptyCount++;
+    }
+  }
+
+  if (emptyCount == 0)
+    return;
+
+  // Pick random empty cell
+  int targetIndex = random(emptyCount);
+  int currentIndex = 0;
+
+  for (int r = 0; r < 4; r++) {
+    for (int c = 0; c < 4; c++) {
+      if (_game2048Grid[r][c] == 0) {
+        if (currentIndex == targetIndex) {
+          // 90% chance of 2, 10% chance of 4
+          _game2048Grid[r][c] = (random(10) < 9) ? 2 : 4;
+          return;
+        }
+        currentIndex++;
+      }
+    }
+  }
+}
+
+bool UIManager::game2048Slide(int direction) {
+  bool moved = false;
+
+  // Correct compress and merge algorithm
+  auto compressAndMerge = [&](int values[4]) -> bool {
+    bool changed = false;
+    int result[4] = {0, 0, 0, 0};
+    int pos = 0;
+
+    // Process tiles from start to end
+    for (int i = 0; i < 4; i++) {
+      if (values[i] == 0)
+        continue; // Skip empty tiles
+
+      if (pos > 0 && result[pos - 1] == values[i] && result[pos - 1] > 0) {
+        // Can merge with previous tile (and it hasn't been merged yet this
+        // turn)
+        result[pos - 1] *= 2;
+        _game2048Score += result[pos - 1];
+        result[pos - 1] = -result[pos - 1]; // Mark as merged (negative)
+        changed = true;
+      } else {
+        // Can't merge, add as new tile
+        result[pos] = values[i];
+        pos++;
+      }
+    }
+
+    // Convert negative (merged) values back to positive
+    for (int i = 0; i < 4; i++) {
+      if (result[i] < 0)
+        result[i] = -result[i];
+      if (values[i] != result[i])
+        changed = true;
+      values[i] = result[i];
+    }
+
+    return changed;
+  };
+
+  if (direction == 0 || direction == 2) { // Up or Down
+    for (int c = 0; c < 4; c++) {
+      int column[4];
+
+      // Extract column
+      if (direction == 0) { // Up
+        for (int r = 0; r < 4; r++)
+          column[r] = _game2048Grid[r][c];
+      } else { // Down
+        for (int r = 0; r < 4; r++)
+          column[r] = _game2048Grid[3 - r][c];
+      }
+
+      if (compressAndMerge(column))
+        moved = true;
+
+      // Write back
+      if (direction == 0) {
+        for (int r = 0; r < 4; r++)
+          _game2048Grid[r][c] = column[r];
+      } else {
+        for (int r = 0; r < 4; r++)
+          _game2048Grid[3 - r][c] = column[r];
+      }
+    }
+  } else { // Left or Right
+    for (int r = 0; r < 4; r++) {
+      int row[4];
+
+      // Extract row
+      if (direction == 3) { // Left
+        for (int c = 0; c < 4; c++)
+          row[c] = _game2048Grid[r][c];
+      } else { // Right
+        for (int c = 0; c < 4; c++)
+          row[c] = _game2048Grid[r][3 - c];
+      }
+
+      if (compressAndMerge(row))
+        moved = true;
+
+      // Write back
+      if (direction == 3) {
+        for (int c = 0; c < 4; c++)
+          _game2048Grid[r][c] = row[c];
+      } else {
+        for (int c = 0; c < 4; c++)
+          _game2048Grid[r][3 - c] = row[c];
+      }
+    }
+  }
+
+  return moved;
+}
+
+bool UIManager::game2048IsGameOver() {
+  // Check for empty cells
+  for (int r = 0; r < 4; r++) {
+    for (int c = 0; c < 4; c++) {
+      if (_game2048Grid[r][c] == 0)
+        return false;
+    }
+  }
+
+  // Check for possible merges
+  for (int r = 0; r < 4; r++) {
+    for (int c = 0; c < 4; c++) {
+      int val = _game2048Grid[r][c];
+      if (c < 3 && _game2048Grid[r][c + 1] == val)
+        return false;
+      if (r < 3 && _game2048Grid[r + 1][c] == val)
+        return false;
+    }
+  }
+
+  return true;
+}
+
+void UIManager::game2048Save() {
+  extern SDManager *sdManager;
+  if (!sdManager || !sdManager->isAvailable())
+    return;
+
+  File file = SD.open("/games/2048_save.txt", FILE_WRITE);
+  if (!file) {
+    Serial.println("Failed to open 2048 save file");
+    return;
+  }
+
+  // Write grid
+  for (int r = 0; r < 4; r++) {
+    for (int c = 0; c < 4; c++) {
+      file.printf("%d", _game2048Grid[r][c]);
+      if (c < 3)
+        file.print(",");
+    }
+    file.println();
+  }
+
+  file.printf("%d\n", _game2048Score);
+  file.printf("%d\n", _game2048HighScore);
+  file.printf("%d\n", _game2048GameOver ? 1 : 0);
+  file.printf("%d\n", _game2048Won ? 1 : 0);
+
+  file.close();
+  Serial.println("2048 game saved");
+}
+
+void UIManager::game2048Load() {
+  extern SDManager *sdManager;
+  if (!sdManager || !sdManager->isAvailable()) {
+    game2048Init();
+    return;
+  }
+
+  File file = SD.open("/games/2048_save.txt", FILE_READ);
+  if (!file) {
+    Serial.println("No save file, starting new game");
+    game2048Init();
+    return;
+  }
+
+  // Read grid
+  for (int r = 0; r < 4; r++) {
+    String line = file.readStringUntil('\n');
+    int colIdx = 0;
+    int startIdx = 0;
+    for (int c = 0; c < 4; c++) {
+      int commaIdx = line.indexOf(',', startIdx);
+      if (commaIdx == -1)
+        commaIdx = line.length();
+      String valStr = line.substring(startIdx, commaIdx);
+      _game2048Grid[r][c] = valStr.toInt();
+      startIdx = commaIdx + 1;
+    }
+  }
+
+  _game2048Score = file.readStringUntil('\n').toInt();
+  _game2048HighScore = file.readStringUntil('\n').toInt();
+  _game2048GameOver = file.readStringUntil('\n').toInt() == 1;
+  _game2048Won = file.readStringUntil('\n').toInt() == 1;
+
+  file.close();
+  Serial.println("2048 game loaded");
+}
+// ============================================================================
+// SUDOKU GAME (6x6) - Optimized for M5Paper S3
+// ============================================================================
+
+// Hardcoded 6x6 Sudoku Puzzles (3 per difficulty = 9 total)
+// Format: 0 = empty, 1-6 = given numbers
+
+// EASY PUZZLES
+const byte sudoku_easy_puzzles[3][6][6] = {
+    // Easy #1
+    {{3, 0, 5, 2, 0, 0},
+     {0, 4, 0, 0, 6, 1},
+     {6, 0, 0, 0, 0, 2},
+     {1, 0, 0, 0, 0, 6},
+     {4, 1, 0, 0, 2, 0},
+     {0, 0, 3, 5, 0, 4}},
+
+    // Easy #2
+    {{0, 6, 0, 4, 0, 0},
+     {4, 0, 0, 0, 6, 0},
+     {0, 0, 3, 0, 0, 5},
+     {2, 0, 0, 6, 0, 0},
+     {0, 3, 0, 0, 0, 2},
+     {0, 0, 5, 0, 4, 0}},
+
+    // Easy #3
+    {{5, 0, 0, 0, 3, 0},
+     {0, 3, 0, 5, 0, 0},
+     {0, 0, 6, 0, 0, 4},
+     {4, 0, 0, 3, 0, 0},
+     {0, 0, 2, 0, 5, 0},
+     {0, 6, 0, 0, 0, 1}}};
+
+const byte sudoku_easy_solutions[3][6][6] = {{{3, 6, 5, 2, 1, 4},
+                                              {2, 4, 1, 3, 6, 5},
+                                              {6, 5, 4, 1, 3, 2},
+                                              {1, 3, 2, 4, 5, 6},
+                                              {4, 1, 6, 5, 2, 3},
+                                              {5, 2, 3, 6, 4, 1}},
+
+                                             {{1, 6, 2, 4, 5, 3},
+                                              {4, 5, 1, 3, 6, 2},
+                                              {3, 2, 3, 1, 2, 5},
+                                              {2, 1, 4, 6, 3, 5},
+                                              {5, 3, 6, 2, 1, 4},
+                                              {6, 4, 5, 5, 4, 1}},
+
+                                             {{5, 4, 1, 2, 3, 6},
+                                              {2, 3, 4, 5, 6, 1},
+                                              {1, 5, 6, 3, 2, 4},
+                                              {4, 1, 5, 3, 4, 2},
+                                              {3, 2, 2, 4, 5, 3},
+                                              {6, 6, 3, 1, 1, 1}}};
+
+// MEDIUM PUZZLES
+const byte sudoku_medium_puzzles[3][6][6] = {
+    // Medium #1
+    {{0, 0, 5, 0, 0, 0},
+     {0, 4, 0, 0, 0, 1},
+     {6, 0, 0, 0, 0, 0},
+     {0, 0, 0, 0, 0, 6},
+     {4, 0, 0, 0, 2, 0},
+     {0, 0, 3, 5, 0, 0}},
+
+    // Medium #2
+    {{0, 6, 0, 0, 0, 0},
+     {0, 0, 0, 0, 6, 0},
+     {0, 0, 3, 0, 0, 5},
+     {2, 0, 0, 0, 0, 0},
+     {0, 3, 0, 0, 0, 0},
+     {0, 0, 5, 0, 4, 0}},
+
+    // Medium #3
+    {{5, 0, 0, 0, 0, 0},
+     {0, 3, 0, 0, 0, 0},
+     {0, 0, 6, 0, 0, 4},
+     {0, 0, 0, 3, 0, 0},
+     {0, 0, 2, 0, 5, 0},
+     {0, 0, 0, 0, 0, 1}}};
+
+const byte sudoku_medium_solutions[3][6][6] = {{{3, 6, 5, 2, 1, 4},
+                                                {2, 4, 1, 3, 6, 5},
+                                                {6, 5, 4, 1, 3, 2},
+                                                {1, 3, 2, 4, 5, 6},
+                                                {4, 1, 6, 5, 2, 3},
+                                                {5, 2, 3, 6, 4, 1}},
+
+                                               {{1, 6, 2, 4, 5, 3},
+                                                {4, 5, 1, 3, 6, 2},
+                                                {3, 2, 3, 1, 2, 5},
+                                                {2, 1, 4, 6, 3, 5},
+                                                {5, 3, 6, 2, 1, 4},
+                                                {6, 4, 5, 5, 4, 1}},
+
+                                               {{5, 4, 1, 2, 3, 6},
+                                                {2, 3, 4, 5, 6, 1},
+                                                {1, 5, 6, 3, 2, 4},
+                                                {4, 1, 5, 3, 4, 2},
+                                                {3, 2, 2, 4, 5, 3},
+                                                {6, 6, 3, 1, 1, 1}}};
+
+// HARD PUZZLES
+const byte sudoku_hard_puzzles[3][6][6] = {
+    // Hard #1
+    {{0, 0, 5, 0, 0, 0},
+     {0, 0, 0, 0, 0, 1},
+     {6, 0, 0, 0, 0, 0},
+     {0, 0, 0, 0, 0, 6},
+     {4, 0, 0, 0, 0, 0},
+     {0, 0, 3, 0, 0, 0}},
+
+    // Hard #2
+    {{0, 6, 0, 0, 0, 0},
+     {0, 0, 0, 0, 6, 0},
+     {0, 0, 3, 0, 0, 0},
+     {2, 0, 0, 0, 0, 0},
+     {0, 3, 0, 0, 0, 0},
+     {0, 0, 0, 0, 4, 0}},
+
+    // Hard #3
+    {{5, 0, 0, 0, 0, 0},
+     {0, 0, 0, 0, 0, 0},
+     {0, 0, 6, 0, 0, 4},
+     {0, 0, 0, 3, 0, 0},
+     {0, 0, 0, 0, 5, 0},
+     {0, 0, 0, 0, 0, 1}}};
+
+const byte sudoku_hard_solutions[3][6][6] = {{{3, 6, 5, 2, 1, 4},
+                                              {2, 4, 1, 3, 6, 5},
+                                              {6, 5, 4, 1, 3, 2},
+                                              {1, 3, 2, 4, 5, 6},
+                                              {4, 1, 6, 5, 2, 3},
+                                              {5, 2, 3, 6, 4, 1}},
+
+                                             {{1, 6, 2, 4, 5, 3},
+                                              {4, 5, 1, 3, 6, 2},
+                                              {3, 2, 3, 1, 2, 5},
+                                              {2, 1, 4, 6, 3, 5},
+                                              {5, 3, 6, 2, 1, 4},
+                                              {6, 4, 5, 5, 4, 1}},
+
+                                             {{5, 4, 1, 2, 3, 6},
+                                              {2, 3, 4, 5, 6, 1},
+                                              {1, 5, 6, 3, 2, 4},
+                                              {4, 1, 5, 3, 4, 2},
+                                              {3, 2, 2, 4, 5, 3},
+                                              {6, 6, 3, 1, 1, 1}}};
+
+// Load a puzzle
+void UIManager::sudokuLoadPuzzle(byte difficulty, byte num) {
+  _sudokuDifficulty = difficulty;
+  _sudokuPuzzleNum = num;
+
+  const byte(*puzzle)[6][6];
+  const byte(*solution)[6][6];
+
+  // Select difficulty
+  if (difficulty == 0) { // Easy
+    puzzle = &sudoku_easy_puzzles[num - 1];
+    solution = &sudoku_easy_solutions[num - 1];
+  } else if (difficulty == 1) { // Medium
+    puzzle = &sudoku_medium_puzzles[num - 1];
+    solution = &sudoku_medium_solutions[num - 1];
+  } else { // Hard
+    puzzle = &sudoku_hard_puzzles[num - 1];
+    solution = &sudoku_hard_solutions[num - 1];
+  }
+
+  // Copy to grids
+  for (int r = 0; r < 6; r++) {
+    for (int c = 0; c < 6; c++) {
+      _sudokuGrid[r][c] = (*puzzle)[r][c];
+      _sudokuSolution[r][c] = (*solution)[r][c];
+      _sudokuGiven[r][c] = ((*puzzle)[r][c] != 0);
+    }
+  }
+
+  _sudokuSelectedRow = -1;
+  _sudokuSelectedCol = -1;
+}
+
+// Validate a cell (check row/col/block for duplicates)
+bool UIManager::sudokuValidateCell(byte row, byte col) {
+  byte val = _sudokuGrid[row][col];
+  if (val == 0)
+    return true; //  Empty is valid
+
+  // Check row
+  for (int c = 0; c < 6; c++) {
+    if (c != col && _sudokuGrid[row][c] == val)
+      return false;
+  }
+
+  // Check column
+  for (int r = 0; r < 6; r++) {
+    if (r != row && _sudokuGrid[r][col] == val)
+      return false;
+  }
+
+  // Check 2x3 block
+  int blockRow = (row / 2) * 2;
+  int blockCol = (col / 3) * 3;
+  for (int r = blockRow; r < blockRow + 2; r++) {
+    for (int c = blockCol; c < blockCol + 3; c++) {
+      if (r != row || c != col) {
+        if (_sudokuGrid[r][c] == val)
+          return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+// Check if puzzle is solved
+bool UIManager::sudokuCheckWin() {
+  for (int r = 0; r < 6; r++) {
+    for (int c = 0; c < 6; c++) {
+      if (_sudokuGrid[r][c] == 0)
+        return false; // Empty cell
+      if (!sudokuValidateCell(r, c))
+        return false; // Invalid
+    }
+  }
+  return true;
+}
+
+// Clear selected cell
+void UIManager::sudokuClearCell() {
+  if (_sudokuSelectedRow >= 0 && _sudokuSelectedCol >= 0) {
+    if (!_sudokuGiven[_sudokuSelectedRow][_sudokuSelectedCol]) {
+      _sudokuGrid[_sudokuSelectedRow][_sudokuSelectedCol] = 0;
+    }
+  }
+}
+
+// Draw Sudoku game
+void UIManager::drawSudokuGame() {
+  M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+  M5.Display.fillScreen(COLOR_WHITE);
+
+  // Title
+  M5.Display.setTextSize(2);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(30, 20);
+  M5.Display.print("SUDOKU");
+
+  // Puzzle info
+  M5.Display.setCursor(300, 20);
+  const char *diff = (_sudokuDifficulty == 0)   ? "Easy"
+                     : (_sudokuDifficulty == 1) ? "Medium"
+                                                : "Hard";
+  M5.Display.printf("Puzzle %d/3 (%s)", _sudokuPuzzleNum, diff);
+
+  // Draw grid (6x6, 85px cells, starts at x=30, y=60)
+  for (int i = 0; i <= 6; i++) {
+    int thickness = (i % 3 == 0) ? 3 : 1; // Thicker for 2x3 blocks
+
+    // Horizontal lines
+    for (int t = 0; t < thickness; t++) {
+      M5.Display.drawLine(30, 60 + i * 85 + t, 540, 60 + i * 85 + t,
+                          COLOR_BLACK);
+    }
+
+    // Vertical lines
+    for (int t = 0; t < thickness; t++) {
+      M5.Display.drawLine(30 + i * 85 + t, 60, 30 + i * 85 + t, 570,
+                          COLOR_BLACK);
+    }
+  }
+
+  // Draw numbers
+  M5.Display.setTextSize(4);
+  for (int r = 0; r < 6; r++) {
+    for (int c = 0; c < 6; c++) {
+      if (_sudokuGrid[r][c] != 0) {
+        // Color: given=black, user=green, error=red
+        int color = _sudokuGiven[r][c] ? COLOR_BLACK : GREEN;
+        if (!sudokuValidateCell(r, c))
+          color = RED;
+
+        M5.Display.setTextColor(color);
+        int x = 30 + c * 85 + 28; // Center in cell
+        int y = 60 + r * 85 + 22;
+        M5.Display.setCursor(x, y);
+        M5.Display.print(_sudokuGrid[r][c]);
+      }
+    }
+  }
+
+  // Highlight selected cell
+  if (_sudokuSelectedRow >= 0) {
+    int x = 30 + _sudokuSelectedCol * 85;
+    int y = 60 + _sudokuSelectedRow * 85;
+    M5.Display.drawRect(x + 2, y + 2, 81, 81, BLUE);
+    M5.Display.drawRect(x + 3, y + 3, 79, 79, BLUE);
+  }
+
+  // Number buttons (1-6) at Y=520
+  M5.Display.setTextSize(3);
+  for (int i = 0; i < 6; i++) {
+    char num[2] = {(char)('1' + i), 0};
+    drawButton(30 + i * 75, 520, 70, 50, num);
+  }
+
+  // Control buttons
+  drawButton(510, 520, 80, 50, "CLR");
+  drawButton(600, 520, 90, 50, "CHECK");
+  drawButton(700, 520, 80, 50, "NEW");
+
+  // HOME button (top right)
+  M5.Display.setTextSize(2);
+  drawButton(880, 10, 70, 40, "HOME");
+}
+
+// Handle Sudoku touch
+void UIManager::handleSudokuTouch(int x, int y, TouchEvent event) {
+  if (event != TouchEvent::PRESS)
+    return;
+
+  Buzzer::click();
+
+  // Grid cell selection (30-540 x, 60-570 y)
+  if (x >= 30 && x < 540 && y >= 60 && y < 570) {
+    int row = (y - 60) / 85;
+    int col = (x - 30) / 85;
+
+    if (row >= 0 && row < 6 && col >= 0 && col < 6) {
+      if (!_sudokuGiven[row][col]) {
+        _sudokuSelectedRow = row;
+        _sudokuSelectedCol = col;
+        _needsRefresh = true;
+        _lastRefresh = 0;
+      }
+    }
+    return;
+  }
+
+  // Number buttons (1-6) at Y=520-570
+  if (y >= 520 && y < 570 && x >= 30 && x < 480) {
+    int num = ((x - 30) / 75) + 1; // 1-6
+    if (_sudokuSelectedRow >= 0 && num >= 1 && num <= 6) {
+      _sudokuGrid[_sudokuSelectedRow][_sudokuSelectedCol] = num;
+      _needsRefresh = true;
+      _lastRefresh = 0;
+    }
+    return;
+  }
+
+  // CLR button (510-590, 520-570)
+  if (x >= 510 && x < 590 && y >= 520 && y < 570) {
+    sudokuClearCell();
+    _needsRefresh = true;
+    _lastRefresh = 0;
+    return;
+  }
+
+  // CHECK button (600-690, 520-570)
+  if (x >= 600 && x < 690 && y >= 520 && y < 570) {
+    if (sudokuCheckWin()) {
+      // Show win message
+      M5.Display.fillRect(200, 250, 560, 100, COLOR_WHITE);
+      M5.Display.drawRect(200, 250, 560, 100, COLOR_BLACK);
+      M5.Display.setTextSize(3);
+      M5.Display.setTextColor(GREEN);
+      M5.Display.setCursor(300, 280);
+      M5.Display.print("PUZZLE SOLVED!");
+      delay(2000);
+    }
+    _needsRefresh = true;
+    _lastRefresh = 0;
+    return;
+  }
+
+  // NEW button (700-780, 520-570)
+  if (x >= 700 && x < 780 && y >= 520 && y < 570) {
+    // Cycle to next puzzle
+    _sudokuPuzzleNum++;
+    if (_sudokuPuzzleNum > 3) {
+      _sudokuPuzzleNum = 1;
+      _sudokuDifficulty = (_sudokuDifficulty + 1) % 3; // Cycle difficulty
+    }
+    sudokuLoadPuzzle(_sudokuDifficulty, _sudokuPuzzleNum);
+    _needsRefresh = true;
+    _lastRefresh = 0;
+    return;
+  }
+
+  // HOME button (880-950, 10-50)
+  if (x >= 880 && x < 950 && y >= 10 && y < 50) {
+    navigateTo(ScreenID::HOME);
+    return;
+  }
 }

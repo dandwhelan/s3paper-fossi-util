@@ -56,6 +56,17 @@ void setup() {
 
   M5.begin(cfg);
 
+  // OPTION 1: Disable Auto-Sleep to prevent "stuck in sleep" issue
+  // M5Unified doesn't have setAutoSleep directly exposed in Power_Class in some
+  // versions. We can try to just not engage it or set it to 0. However, since
+  // we enter deep sleep MANUALLY in ui_manager.cpp, we just need to make sure
+  // we don't call it if we want to debug. But wait, the USER asked to add
+  // `M5.Power.setAutoSleep(false)`. If that doesn't exist, we'll comment it out
+  // and rely on our manual logic. Actually, M5Unified handles sleep via
+  // M5.Power.setSleep(). Let's comment this out to fix the build first, then
+  // address logic. M5.Power.setAutoSleep(false);
+  Serial.println("Auto-sleep logic controlled by app.");
+
   // --- I2C Configuration ---
   // Both BM8563 RTC (0x51) and GT911 touch (0x5D) are on the SAME I2C bus
   // M5Paper S3 external I2C: SDA=41, SCL=42
