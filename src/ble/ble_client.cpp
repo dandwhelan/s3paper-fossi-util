@@ -80,7 +80,8 @@ bool FossibotBLE::connectToDevice() {
     // Connection parameters (Strict for performance/compat)
     _client->setConnectionParams(12, 12, 0,
                                  150); // min, max interval, latency, timeout
-    _client->setConnectTimeout(10);    // 10 seconds
+    _client->setConnectTimeout(
+        5); // 5 seconds (reduced from 10 to minimize UI freeze)
   }
 
   // Connect
@@ -162,9 +163,29 @@ void FossibotBLE::update() {
   // Try to reconnect if disconnected
   if (!_connected) {
     static unsigned long lastReconnectAttempt = 0;
-    if (millis() - lastReconnectAttempt > 15000) { // Try every 15s
+    static int consecutiveFailures = 0;
+    const int MAX_FAILURES = 5; // Stop trying after 5 failures
+
+    // Exponential backoff: 60s, 120s, 240s, then stop
+    unsigned long retryInterval = 60000 * (1 << min(consecutiveFailures, 2));
+
+    if (consecutiveFailures >= MAX_FAILURES) {
+      // Give up after max failures - user can restart device to retry
+      return;
+    }
+
+    if (millis() - lastReconnectAttempt > retryInterval) {
       lastReconnectAttempt = millis();
-      connectToDevice();
+      Serial.printf("BLE: Retry attempt %d/%d\n", consecutiveFailures + 1,
+                    MAX_FAILURES);
+
+      if (!connectToDevice()) {
+        consecutiveFailures++;
+        Serial.printf("BLE: Failed. Next retry in %lu seconds\n",
+                      retryInterval / 1000);
+      } else {
+        consecutiveFailures = 0; // Reset on success
+      }
     }
     return;
   }

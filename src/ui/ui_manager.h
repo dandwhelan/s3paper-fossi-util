@@ -10,6 +10,7 @@
 #include "../ble/fossibot_protocol.h"
 #include <Arduino.h>
 #include <M5Unified.h>
+#include <vector>
 
 // Touch event types
 enum class TouchEvent { PRESS, RELEASE, DRAG };
@@ -26,7 +27,9 @@ enum class ScreenID {
   CALCULATOR,
   NOTES,
   WEATHER,
-  SETTINGS
+  SETTINGS,
+  SD_DIAG,
+  NOTES_BROWSE
 };
 
 // Clock screen sub-modes (Side-Dock navigation)
@@ -222,12 +225,41 @@ private:
 
   M5Canvas *_notesCanvas = nullptr; // Pointer to dynamic canvas
 
+  // Note file browsing state
+  std::vector<String> _noteFileList; // List of note files
+  int _noteFileIndex = -1;      // Currently selected file index (-1 = none)
+  String _currentNoteFile = ""; // Current note filename
+
   // Notes methods
   void drawNotesScreen();
   void handleNotesTouch(int x, int y);
   void updateNotes();
   void notesSave();
   void notesLoad();
+  void notesScanFiles();   // Scan /notes/ directory for available files
+  void notesLoadByIndex(); // Load file at _noteFileIndex
+  void notesPrevFile();    // Navigate to previous file
+  void notesNextFile();    // Navigate to next file
+
+  // Notes file browser methods
+  void drawNotesBrowseScreen();
+  void handleNotesBrowseTouch(int x, int y);
+  void notesDeleteFile(int index); // Delete file at index
+  void loadNotePreview(int index); // Load note as preview thumbnail
+  int _notesBrowseScroll = 0;      // Scroll offset for file list
+  int _selectedFileIndex = 0;      // Currently selected file for preview
+  int _previewFileIndex = -1;      // Which file's preview is currently loaded
+  int _deleteConfirmIndex =
+      -1; // Index of file to delete (-1 = no confirmation)
+  M5Canvas *_previewCanvas = nullptr; // Preview thumbnail canvas
+
+  // SD Diagnostics methods
+  void drawSDDiagScreen();
+  void handleSDDiagTouch(int x, int y);
+  void runSDMountTest();
+  void runSDWriteTest();
+  void runSDReadTest();
+  char _sdDiagResult[256] = ""; // Stores test result text
 };
 
 #endif // UI_MANAGER_H

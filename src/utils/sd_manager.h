@@ -8,10 +8,11 @@
 #define SD_MANAGER_H
 
 #include <Arduino.h>
+#undef min
+#undef max
 #include <FS.h>
 #include <SD.h>
 #include <vector>
-
 
 class SDManager {
 public:
@@ -23,6 +24,13 @@ public:
    * @return true if successful
    */
   bool init();
+
+  /**
+   * Power cycle the SD card and reinitialize
+   * Use before critical read/write operations to avoid SPI conflicts
+   * @return true if reinitialization successful
+   */
+  bool powerCycleAndReinit();
 
   /**
    * Check if SD card is available

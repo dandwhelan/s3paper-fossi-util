@@ -9,6 +9,7 @@
 #include "../hardware/battery.h"
 #include "../hardware/buzzer.h"
 #include "../hardware/rtc.h"
+#include "../utils/sd_manager.h"
 #include <FS.h>
 #include <SD.h>
 
@@ -98,6 +99,12 @@ void UIManager::update() {
   case ScreenID::NOTES:
     drawNotesScreen();
     break;
+  case ScreenID::SD_DIAG:
+    drawSDDiagScreen();
+    break;
+  case ScreenID::NOTES_BROWSE:
+    drawNotesBrowseScreen();
+    break;
   // Other screens will be implemented later
   default:
     drawHomeScreen(); // Fallback to home
@@ -140,10 +147,15 @@ void UIManager::handleTouch(int x, int y, TouchEvent event) {
           handleCalculatorTouch(x, y);
         } else if (_currentScreen == ScreenID::NOTES) {
           handleNotesTouch(x, y);
+        } else if (_currentScreen == ScreenID::SD_DIAG) {
+          handleSDDiagTouch(x, y);
+        } else if (_currentScreen == ScreenID::NOTES_BROWSE) {
+          handleNotesBrowseTouch(x, y);
         }
 
-        // Check menu buttons (excluding Notes screen which has own toolbar)
-        if (_currentScreen != ScreenID::NOTES) {
+        // Check menu buttons (excluding Notes screens which have own toolbars)
+        if (_currentScreen != ScreenID::NOTES &&
+            _currentScreen != ScreenID::NOTES_BROWSE) {
           int menuHit = hitTestMenuButton(x, y);
           if (menuHit >= 0) {
             executeMenuButton(menuHit);
@@ -665,6 +677,7 @@ void UIManager::drawSettingsScreen() {
   // --- Actions ---
   // Moved to right side and up to avoid menu overlap
   y = 400;
+  drawButton(320, y, 200, 70, "SD Diag");
   drawButton(540, y, 200, 70, "SAVE", true);
   drawButton(750, y, 200, 70, "CANCEL");
 }
@@ -750,6 +763,12 @@ void UIManager::handleSettingsTouch(int x, int y) {
   }
 
   int row4 = 400;
+  // SD Diag
+  if (isHit(320, row4, 200, 70)) {
+    Serial.println("Settings: Opening SD Diagnostics");
+    navigateTo(ScreenID::SD_DIAG);
+    return;
+  }
   // Save
   if (isHit(540, row4, 200, 70)) {
     // Save to RTC via direct Wire access
@@ -1397,10 +1416,30 @@ void UIManager::drawNotesScreen() {
   y += 10; // Extra gap
   drawButton(btnX, y, btnW, btnH, "SAVE");
   y += (btnH + gap);
-  drawButton(btnX, y, btnW, btnH, "LOAD");
+
+  // File browser button
+  drawButton(btnX, y, btnW, btnH, "FILES");
+  y += (btnH + gap);
+
+  // Navigation buttons
+  drawButton(btnX, y, btnW, btnH, "< PREV");
+  y += (btnH + gap);
+  drawButton(btnX, y, btnW, btnH, "> NEXT");
   y += (btnH + gap);
 
   drawButton(btnX, y, btnW, btnH, "CLR");
+
+  // File count indicator (if files exist)
+  if (!_noteFileList.empty() && _noteFileIndex >= 0) {
+    y += (btnH + gap + 5);
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(COLOR_BLACK);
+    char fileInfo[16];
+    snprintf(fileInfo, sizeof(fileInfo), "%d/%d", _noteFileIndex + 1,
+             _noteFileList.size());
+    M5.Display.setCursor(btnX + 25, y);
+    M5.Display.print(fileInfo);
+  }
 
   // "X" Exit (Top Left)
   drawButton(10, 10, 60, 50, "X");
@@ -1418,6 +1457,11 @@ void UIManager::drawNotesScreen() {
   if (_penSize == 0)
     _penSize = 2;
   _penColor = 0; // Black
+
+  // Initial scan for files if list is empty
+  if (_noteFileList.empty()) {
+    notesScanFiles();
+  }
 }
 
 void UIManager::handleNotesTouch(int x, int y) {
@@ -1472,10 +1516,35 @@ void UIManager::handleNotesTouch(int x, int y) {
     else if (checkBtn(4)) {
       Buzzer::click();
       notesSave();
-    } else if (checkBtn(5)) {
+    } // SAVE
+    else if (checkBtn(5)) {
+      // FILES button - open file browser
       Buzzer::click();
-      notesLoad();
+
+      // Power cycle SD card before scanning
+      extern SDManager *sdManager;
+      if (sdManager) {
+        Serial.println("FILES: Power cycling SD before scan...");
+        if (sdManager->powerCycleAndReinit()) {
+          notesScanFiles(); // Refresh file list
+          navigateTo(ScreenID::NOTES_BROWSE);
+        } else {
+          Serial.println("FILES: SD power cycle failed");
+        }
+      } else {
+        // Fallback without power cycle (shouldn't happen)
+        notesScanFiles();
+        navigateTo(ScreenID::NOTES_BROWSE);
+      }
     } else if (checkBtn(6)) {
+      // PREV button
+      Buzzer::click();
+      notesPrevFile();
+    } else if (checkBtn(7)) {
+      // NEXT button
+      Buzzer::click();
+      notesNextFile();
+    } else if (checkBtn(8)) {
       // Clear Button
       Buzzer::click();
       if (_notesCanvas)
@@ -1550,21 +1619,92 @@ void UIManager::notesSave() {
   if (!_notesCanvas)
     return;
 
+  Serial.println("\n=== NOTES SAVE START ===");
+  Buzzer::click();
+
   // Show saving status
   M5.Display.setEpdMode(epd_mode_t::epd_fast);
   M5.Display.fillRect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 - 30, 200, 60,
                       COLOR_BLACK);
   M5.Display.setTextColor(COLOR_WHITE);
   M5.Display.setTextSize(2);
+  M5.Display.setCursor(SCREEN_WIDTH / 2 - 60, SCREEN_HEIGHT / 2 - 10);
+  M5.Display.print("Saving...");
+  M5.Display.display();
+
+  // === POWER CYCLE SD CARD ===
+  Serial.println("Stopping display for SD operations...");
+  M5.Display.waitDisplay();
+  M5.Display.endWrite();
+
+  // Use global SDManager if available, otherwise do manual power cycle
+  extern SDManager *sdManager;
+  bool sdOk = false;
+  if (sdManager) {
+    sdOk = sdManager->powerCycleAndReinit();
+  } else {
+    Serial.println("No SDManager, using direct power cycle...");
+    SD.end();
+    M5.Power.setExtOutput(false);
+    delay(500);
+    M5.Power.setExtOutput(true);
+    delay(500);
+    sdOk = SD.begin(47);
+  }
+
+  if (!sdOk) {
+    Serial.println("ERROR: SD power cycle failed!");
+    M5.Display.fillRect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 - 30, 200, 60,
+                        COLOR_WHITE);
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setCursor(SCREEN_WIDTH / 2 - 60, SCREEN_HEIGHT / 2 - 10);
+    M5.Display.print("SD Failed!");
+    M5.Display.display();
+    delay(2000);
+    _needsRefresh = true;
+    _lastRefresh = 0;
+    Serial.println("=== NOTES SAVE END (FAILED) ===\n");
+    return;
+  }
+
+  // Update status
+  M5.Display.fillRect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 - 30, 200, 60,
+                      COLOR_BLACK);
+  M5.Display.setTextColor(COLOR_WHITE);
   M5.Display.setCursor(SCREEN_WIDTH / 2 - 40, SCREEN_HEIGHT / 2 - 10);
   M5.Display.print("Saving...");
   M5.Display.display();
 
-  File f = SD.open("/note.bin", FILE_WRITE);
+  // Ensure /notes directory exists
+  Serial.println("Checking /notes directory...");
+  if (!SD.exists("/notes")) {
+    Serial.println("Creating /notes directory...");
+    SD.mkdir("/notes");
+  } else {
+    Serial.println("/notes directory exists");
+  }
+
+  // Get timestamp from RTC
+  int year, month, day, weekday;
+  int hours, minutes, seconds;
+  RTC::getDate(year, month, day, weekday);
+  RTC::getTime(hours, minutes, seconds);
+
+  // Generate timestamped filename: /notes/note_YYYYMMDD_HHMMSS.bin
+  char filename[50];
+  snprintf(filename, sizeof(filename),
+           "/notes/note_%04d%02d%02d_%02d%02d%02d.bin", year, month, day, hours,
+           minutes, seconds);
+
+  Serial.printf("Opening file for write: %s\n", filename);
+
+  File f = SD.open(filename, FILE_WRITE);
   if (f) {
     uint16_t w = _notesCanvas->width();
     uint16_t h = _notesCanvas->height();
     uint8_t d = _notesCanvas->getColorDepth();
+
+    Serial.printf("Canvas: %dx%d, depth=%d\n", w, h, d);
 
     // Header
     f.write((uint8_t *)"M5NOTE", 6);
@@ -1572,66 +1712,688 @@ void UIManager::notesSave() {
     f.write((uint8_t *)&h, 2);
     f.write(&d, 1);
 
-    // Data
-    // Calculate size in bytes
+    // Data - calculate size in bytes
     size_t len = (w * h * d) / 8;
     if (d < 8 && (w * h * d) % 8 != 0)
       len++; // Round up bits
 
-    f.write((uint8_t *)_notesCanvas->getBuffer(), len);
+    Serial.printf("Writing %d bytes of pixel data...\n", len);
+    size_t written = f.write((uint8_t *)_notesCanvas->getBuffer(), len);
+    f.flush();
     f.close();
+
+    Serial.printf("Write complete: %d/%d bytes\n", written, len);
+
+    if (written == len) {
+      // Store as current file and rescan
+      _currentNoteFile = String(filename);
+      notesScanFiles();
+      Serial.println("Note saved successfully!");
+
+      // Show success
+      M5.Display.fillRect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 - 30, 200,
+                          60, COLOR_WHITE);
+      M5.Display.setTextColor(COLOR_BLACK);
+      M5.Display.setCursor(SCREEN_WIDTH / 2 - 40, SCREEN_HEIGHT / 2 - 10);
+      M5.Display.print("Saved!");
+      M5.Display.display();
+      delay(1000);
+    } else {
+      Serial.println("ERROR: Incomplete write!");
+    }
   } else {
-    Serial.println("Failed to open file for writing");
+    Serial.println("ERROR: Failed to open file for writing");
   }
 
   // Restore UI
+  M5.Display.setEpdMode(epd_mode_t::epd_fastest);
   _needsRefresh = true;
   _lastRefresh = 0;
+  Serial.println("=== NOTES SAVE END ===\n");
 }
 
 void UIManager::notesLoad() {
-  if (!_notesCanvas)
-    return;
+  // Scan for files if list is empty
+  if (_noteFileList.empty()) {
+    notesScanFiles();
+  }
 
-  // Show loading status
-  M5.Display.setEpdMode(epd_mode_t::epd_fast);
-  M5.Display.fillRect(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT / 2 - 30, 200, 60,
-                      COLOR_BLACK);
-  M5.Display.setTextColor(COLOR_WHITE);
+  // Load the file at current index
+  if (!_noteFileList.empty()) {
+    notesLoadByIndex();
+  } else {
+    Serial.println("Notes: No saved notes found");
+  }
+}
+
+// ============================================================================
+// SD Card Diagnostics Screen
+// ============================================================================
+
+void UIManager::drawSDDiagScreen() {
+  M5.Display.fillScreen(COLOR_WHITE);
+
+  // Title
+  M5.Display.setTextSize(4);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(SCREEN_WIDTH / 2 - 150, 20);
+  M5.Display.print("SD Card Diagnostics");
+
+  // Button layout
+  int btnW = 200;
+  int btnH = 70;
+  int y = 120;
+  int gap = 20;
+
+  drawButton(100, y, btnW, btnH, "Mount Test");
+  drawButton(320, y, btnW, btnH, "Write Test");
+  drawButton(540, y, btnW, btnH, "Read Test");
+
+  // Exit button
+  drawButton(760, y, btnW, btnH, "Exit");
+
+  // Results area
+  y = 220;
+  M5.Display.drawRect(50, y, SCREEN_WIDTH - 100, 250, COLOR_BLACK);
   M5.Display.setTextSize(2);
-  M5.Display.setCursor(SCREEN_WIDTH / 2 - 40, SCREEN_HEIGHT / 2 - 10);
-  M5.Display.print("Loading...");
-  M5.Display.display();
+  M5.Display.setCursor(60, y + 10);
+  M5.Display.print("Results:");
 
-  if (SD.exists("/note.bin")) {
-    File f = SD.open("/note.bin", FILE_READ);
-    if (f) {
-      char header[7];
-      f.read((uint8_t *)header, 6);
-      header[6] = 0;
-
-      if (strcmp(header, "M5NOTE") == 0) {
-        uint16_t w, h;
-        uint8_t d;
-        f.read((uint8_t *)&w, 2);
-        f.read((uint8_t *)&h, 2);
-        f.read(&d, 1);
-
-        if (w == _notesCanvas->width() && h == _notesCanvas->height() &&
-            d == _notesCanvas->getColorDepth()) {
-          size_t len = (w * h * d) / 8;
-          if (d < 8 && (w * h * d) % 8 != 0)
-            len++;
-
-          f.read((uint8_t *)_notesCanvas->getBuffer(), len);
-          // Push to display immediately handled by refresh below
-        }
+  // Display stored result
+  if (strlen(_sdDiagResult) > 0) {
+    M5.Display.setCursor(60, y + 40);
+    M5.Display.setTextSize(2);
+    // Print result line by line
+    char *line = _sdDiagResult;
+    int lineY = y + 40;
+    while (*line && lineY < y + 230) {
+      char *next = strchr(line, '\n');
+      if (next) {
+        *next = '\0';
+        M5.Display.setCursor(60, lineY);
+        M5.Display.print(line);
+        *next = '\n';
+        line = next + 1;
+        lineY += 25;
+      } else {
+        M5.Display.setCursor(60, lineY);
+        M5.Display.print(line);
+        break;
       }
-      f.close();
+    }
+  }
+}
+
+void UIManager::handleSDDiagTouch(int x, int y) {
+  int btnW = 200;
+  int btnH = 70;
+  int btnY = 120;
+
+  auto isHit = [&](int bx, int by, int bw, int bh) {
+    if (x >= bx && x < bx + bw && y >= by && y < by + bh) {
+      Buzzer::click();
+      return true;
+    }
+    return false;
+  };
+
+  // Mount Test
+  if (isHit(100, btnY, btnW, btnH)) {
+    runSDMountTest();
+    _needsRefresh = true;
+    _lastRefresh = 0;
+  }
+
+  // Write Test
+  if (isHit(320, btnY, btnW, btnH)) {
+    runSDWriteTest();
+    _needsRefresh = true;
+    _lastRefresh = 0;
+  }
+
+  // Read Test
+  if (isHit(540, btnY, btnW, btnH)) {
+    runSDReadTest();
+    _needsRefresh = true;
+    _lastRefresh = 0;
+  }
+
+  // Exit
+  if (isHit(760, btnY, btnW, btnH)) {
+    _sdDiagResult[0] = '\0'; // Clear results
+    navigateTo(ScreenID::SETTINGS);
+  }
+}
+
+void UIManager::runSDMountTest() {
+  Serial.println("\n=== SD MOUNT TEST START ===");
+  snprintf(_sdDiagResult, sizeof(_sdDiagResult), "Running mount test...");
+  _needsRefresh = true;
+  update();
+
+  extern SDManager *sdManager;
+  bool success = false;
+
+  if (sdManager) {
+    success = sdManager->powerCycleAndReinit();
+    if (success) {
+      uint8_t cardType = SD.cardType();
+      uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+      snprintf(_sdDiagResult, sizeof(_sdDiagResult),
+               "MOUNT: PASS\nCard Type: %s\nCard Size: %llu MB\nTotal: %llu "
+               "bytes\nUsed: %llu bytes",
+               cardType == CARD_MMC    ? "MMC"
+               : cardType == CARD_SD   ? "SDSC"
+               : cardType == CARD_SDHC ? "SDHC"
+                                       : "UNKNOWN",
+               cardSize, SD.totalBytes(), SD.usedBytes());
+    } else {
+      snprintf(_sdDiagResult, sizeof(_sdDiagResult),
+               "MOUNT: FAIL\nPower cycle failed");
+    }
+  } else {
+    snprintf(_sdDiagResult, sizeof(_sdDiagResult),
+             "MOUNT: FAIL\nNo SDManager available");
+  }
+
+  Serial.println(_sdDiagResult);
+  Serial.println("=== SD MOUNT TEST END ===\n");
+}
+
+void UIManager::runSDWriteTest() {
+  Serial.println("\n=== SD WRITE TEST START ===");
+  snprintf(_sdDiagResult, sizeof(_sdDiagResult), "Running write test...");
+  _needsRefresh = true;
+  update();
+
+  extern SDManager *sdManager;
+  if (sdManager && !sdManager->isAvailable()) {
+    sdManager->powerCycleAndReinit();
+  }
+
+  const char *testFile = "/sd_test.bin";
+  const char *testData = "SD Card Write Test - 0123456789ABCDEF";
+  size_t dataLen = strlen(testData);
+
+  Serial.printf("Opening %s for write...\n", testFile);
+  File f = SD.open(testFile, FILE_WRITE);
+  if (f) {
+    size_t written = f.write((uint8_t *)testData, dataLen);
+    f.flush();
+    f.close();
+
+    Serial.printf("Wrote %d/%d bytes\n", written, dataLen);
+    if (written == dataLen) {
+      snprintf(_sdDiagResult, sizeof(_sdDiagResult),
+               "WRITE: PASS\nFile: %s\nBytes written: %d/%d", testFile, written,
+               dataLen);
+    } else {
+      snprintf(_sdDiagResult, sizeof(_sdDiagResult),
+               "WRITE: PARTIAL\nFile: %s\nBytes: %d/%d (incomplete)", testFile,
+               written, dataLen);
+    }
+  } else {
+    Serial.println("Failed to open file for writing");
+    snprintf(_sdDiagResult, sizeof(_sdDiagResult),
+             "WRITE: FAIL\nCould not open %s", testFile);
+  }
+
+  Serial.println(_sdDiagResult);
+  Serial.println("=== SD WRITE TEST END ===\n");
+}
+
+void UIManager::runSDReadTest() {
+  Serial.println("\n=== SD READ TEST START ===");
+  snprintf(_sdDiagResult, sizeof(_sdDiagResult), "Running read test...");
+  _needsRefresh = true;
+  update();
+
+  extern SDManager *sdManager;
+  if (sdManager && !sdManager->isAvailable()) {
+    sdManager->powerCycleAndReinit();
+  }
+
+  const char *testFile = "/sd_test.bin";
+  const char *expectedData = "SD Card Write Test - 0123456789ABCDEF";
+  size_t expectedLen = strlen(expectedData);
+
+  Serial.printf("Opening %s for read...\n", testFile);
+  File f = SD.open(testFile, FILE_READ);
+  if (f) {
+    size_t fileSize = f.size();
+    char readBuf[64] = {0};
+    size_t bytesRead = f.read((uint8_t *)readBuf, sizeof(readBuf) - 1);
+    f.close();
+
+    Serial.printf("Read %d bytes, file size=%d\n", bytesRead, fileSize);
+    Serial.printf("Content: %s\n", readBuf);
+
+    if (bytesRead == expectedLen && strcmp(readBuf, expectedData) == 0) {
+      snprintf(_sdDiagResult, sizeof(_sdDiagResult),
+               "READ: PASS\nFile: %s\nBytes read: %d\nContent verified OK",
+               testFile, bytesRead);
+    } else if (bytesRead > 0) {
+      snprintf(_sdDiagResult, sizeof(_sdDiagResult),
+               "READ: MISMATCH\nBytes: %d, Expected: %d\nData: %.30s...",
+               bytesRead, expectedLen, readBuf);
+    } else {
+      snprintf(_sdDiagResult, sizeof(_sdDiagResult),
+               "READ: FAIL\nNo data read");
+    }
+  } else {
+    Serial.println("Failed to open file for reading");
+    snprintf(_sdDiagResult, sizeof(_sdDiagResult),
+             "READ: FAIL\nCould not open %s\n(Run Write Test first)", testFile);
+  }
+
+  Serial.println(_sdDiagResult);
+  Serial.println("=== SD READ TEST END ===\n");
+}
+// ============================================================================
+// Notes File Browser Screen
+// ============================================================================
+
+void UIManager::drawNotesBrowseScreen() {
+  M5.Display.fillScreen(COLOR_WHITE);
+
+  // === HEADER ===
+  M5.Display.setTextSize(3);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(20, 15);
+  M5.Display.print("Notes File Browser");
+
+  // Close button
+  drawButton(SCREEN_WIDTH - 80, 10, 70, 40, "X");
+
+  // Divider under header
+  M5.Display.drawLine(0, 60, SCREEN_WIDTH, 60, COLOR_BLACK);
+
+  // === LAYOUT CONSTANTS ===
+  const int LEFT_PANEL_X = 0;
+  const int LEFT_PANEL_W = 400;
+  const int RIGHT_PANEL_X = LEFT_PANEL_W;
+  const int RIGHT_PANEL_W = SCREEN_WIDTH - LEFT_PANEL_W;
+  const int CONTENT_Y = 70;
+  const int CONTENT_H =
+      SCREEN_HEIGHT - CONTENT_Y - 80; // Leave space for buttons
+
+  // Vertical divider between panels
+  M5.Display.drawLine(LEFT_PANEL_W, 60, LEFT_PANEL_W, SCREEN_HEIGHT - 80,
+                      COLOR_BLACK);
+
+  // === LEFT PANEL: FILE LIST ===
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(10, CONTENT_Y);
+  M5.Display.printf("Files (%d)", _noteFileList.size());
+
+  int listY = CONTENT_Y + 30;
+  int fileEntryH = 60;
+  int maxVisible = 6;
+
+  for (int i = 0; i < min((int)_noteFileList.size(), maxVisible); i++) {
+    int fileIdx = i + _notesBrowseScroll;
+    if (fileIdx >= (int)_noteFileList.size())
+      break;
+
+    String filename = _noteFileList[fileIdx];
+    bool isSelected = (fileIdx == _selectedFileIndex);
+
+    // Highlight selected file
+    if (isSelected) {
+      M5.Display.fillRect(5, listY, LEFT_PANEL_W - 10, fileEntryH,
+                          COLOR_LIGHT_GRAY);
+    }
+
+    M5.Display.drawRect(5, listY, LEFT_PANEL_W - 10, fileEntryH, COLOR_BLACK);
+
+    // Parse time from filename
+    String timeStr = "??:??";
+    if (filename.startsWith("note_") && filename.length() >= 24) {
+      String t = filename.substring(14, 20); // HHMMSS
+      timeStr = String(t[0]) + t[1] + ":" + t[2] + t[3];
+    }
+
+    M5.Display.setTextSize(2);
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setCursor(15, listY + 10);
+    M5.Display.printf("Note #%d", fileIdx + 1);
+    M5.Display.setTextSize(1);
+    M5.Display.setCursor(15, listY + 35);
+    M5.Display.print(timeStr);
+
+    listY += fileEntryH + 5;
+  }
+
+  // Scroll indicators
+  if (_notesBrowseScroll > 0) {
+    M5.Display.fillTriangle(LEFT_PANEL_W / 2 - 10, CONTENT_Y + 35,
+                            LEFT_PANEL_W / 2 + 10, CONTENT_Y + 35,
+                            LEFT_PANEL_W / 2, CONTENT_Y + 25,
+                            COLOR_BLACK); // Up arrow
+  }
+  if (_notesBrowseScroll + maxVisible < (int)_noteFileList.size()) {
+    M5.Display.fillTriangle(LEFT_PANEL_W / 2 - 10, listY + 5,
+                            LEFT_PANEL_W / 2 + 10, listY + 5, LEFT_PANEL_W / 2,
+                            listY + 15, COLOR_BLACK); // Down arrow
+  }
+
+  // === RIGHT PANEL: PREVIEW & METADATA ===
+  if (_selectedFileIndex >= 0 &&
+      _selectedFileIndex < (int)_noteFileList.size()) {
+    String selectedFile = _noteFileList[_selectedFileIndex];
+
+    // Preview thumbnail area
+    int thumbX = RIGHT_PANEL_X + 80;
+    int thumbY = CONTENT_Y + 20;
+    int thumbW = 400;
+    int thumbH = 250;
+
+    M5.Display.drawRect(thumbX, thumbY, thumbW, thumbH, COLOR_BLACK);
+
+    // Show preview canvas if loaded, otherwise placeholder
+    if (_previewCanvas != nullptr && _previewFileIndex == _selectedFileIndex) {
+      _previewCanvas->pushSprite(thumbX + 1, thumbY + 1);
+    } else {
+      M5.Display.fillRect(thumbX + 1, thumbY + 1, thumbW - 2, thumbH - 2,
+                          COLOR_LIGHT_GRAY);
+      M5.Display.setTextSize(2);
+      M5.Display.setTextColor(COLOR_BLACK);
+      M5.Display.setCursor(thumbX + 100, thumbY + 110);
+      M5.Display.print("Tap file to preview");
+    }
+
+    // Metadata section
+    int metaY = thumbY + thumbH + 20;
+
+    // Parse filename for metadata
+    if (selectedFile.startsWith("note_") && selectedFile.length() >= 24) {
+      String dateStr = selectedFile.substring(5, 13);  // YYYYMMDD
+      String timeStr = selectedFile.substring(14, 20); // HHMMSS
+
+      M5.Display.setTextSize(2);
+      M5.Display.setCursor(RIGHT_PANEL_X + 20, metaY);
+      M5.Display.print("Created:");
+
+      M5.Display.setTextSize(2); // Increased from 1 to 2
+      M5.Display.setCursor(RIGHT_PANEL_X + 20, metaY + 30);
+      M5.Display.printf("%c%c%c%c-%c%c-%c%c  %c%c:%c%c", dateStr[0], dateStr[1],
+                        dateStr[2], dateStr[3], dateStr[4], dateStr[5],
+                        dateStr[6], dateStr[7], timeStr[0], timeStr[1],
+                        timeStr[2], timeStr[3]);
     }
   }
 
-  // Restore UI
-  _needsRefresh = true;
-  _lastRefresh = 0;
+  // === BOTTOM: ACTION BUTTONS ===
+  int btnY = SCREEN_HEIGHT - 70;
+  int btnW = (SCREEN_WIDTH - 30) / 2;
+  int btnH = 60;
+
+  M5.Display.drawLine(0, btnY - 10, SCREEN_WIDTH, btnY - 10, COLOR_BLACK);
+
+  drawButton(10, btnY, btnW, btnH, "LOAD", true);
+  drawButton(20 + btnW, btnY, btnW, btnH, "DELETE");
+
+  // Delete confirmation popup
+  if (_deleteConfirmIndex >= 0) {
+    M5.Display.fillRect(200, 200, 560, 200, COLOR_WHITE);
+    M5.Display.drawRect(200, 200, 560, 200, COLOR_BLACK);
+    M5.Display.setTextSize(3);
+    M5.Display.setCursor(250, 230);
+    M5.Display.print("Delete this note?");
+    drawButton(260, 290, 200, 60, "YES");
+    drawButton(500, 290, 200, 60, "NO");
+  }
+}
+
+void UIManager::handleNotesBrowseTouch(int x, int y) {
+  auto isHit = [&](int bx, int by, int bw, int bh) {
+    if (x >= bx && x < bx + bw && y >= by && y < by + bh) {
+      Buzzer::click();
+      return true;
+    }
+    return false;
+  };
+
+  // Handle delete confirmation popup
+  if (_deleteConfirmIndex >= 0) {
+    if (isHit(260, 290, 200, 60)) {
+      // YES - delete file
+      notesDeleteFile(_deleteConfirmIndex);
+      _deleteConfirmIndex = -1;
+      _needsRefresh = true;
+      _lastRefresh = 0;
+    } else if (isHit(500, 290, 200, 60)) {
+      // NO - cancel
+      _deleteConfirmIndex = -1;
+      _needsRefresh = true;
+      _lastRefresh = 0;
+    }
+    return;
+  }
+
+  // Close button
+  if (isHit(SCREEN_WIDTH - 80, 10, 70, 40)) {
+    navigateTo(ScreenID::NOTES);
+    return;
+  }
+
+  // === LEFT PANEL: FILE LIST SELECTION ===
+  const int LEFT_PANEL_W = 400;
+  const int CONTENT_Y = 70;
+  int listY = CONTENT_Y + 30;
+  int fileEntryH = 60;
+  int maxVisible = 6;
+
+  for (int i = 0; i < min((int)_noteFileList.size(), maxVisible); i++) {
+    int fileIdx = i + _notesBrowseScroll;
+    if (fileIdx >= (int)_noteFileList.size())
+      break;
+
+    // Check if file entry was clicked
+    if (isHit(5, listY, LEFT_PANEL_W - 10, fileEntryH)) {
+      _selectedFileIndex = fileIdx;
+      // Load preview for selected file
+      loadNotePreview(fileIdx);
+      _needsRefresh = true;
+      _lastRefresh = 0;
+      return;
+    }
+
+    listY += fileEntryH + 5;
+  }
+
+  // Scroll arrows
+  if (_notesBrowseScroll > 0) {
+    // Up arrow area
+    if (isHit(LEFT_PANEL_W / 2 - 20, CONTENT_Y + 20, 40, 20)) {
+      _notesBrowseScroll--;
+      _needsRefresh = true;
+      _lastRefresh = 0;
+      return;
+    }
+  }
+  if (_notesBrowseScroll + maxVisible < (int)_noteFileList.size()) {
+    // Down arrow area
+    if (isHit(LEFT_PANEL_W / 2 - 20, listY, 40, 20)) {
+      _notesBrowseScroll++;
+      _needsRefresh = true;
+      _lastRefresh = 0;
+      return;
+    }
+  }
+
+  // === BOTTOM: ACTION BUTTONS ===
+  int btnY = SCREEN_HEIGHT - 70;
+  int btnW = (SCREEN_WIDTH - 30) / 2;
+  int btnH = 60;
+
+  // LOAD button
+  if (isHit(10, btnY, btnW, btnH)) {
+    _noteFileIndex = _selectedFileIndex;
+    notesLoadByIndex();
+    navigateTo(ScreenID::NOTES);
+    return;
+  }
+
+  // DELETE button
+  if (isHit(20 + btnW, btnY, btnW, btnH)) {
+    Serial.printf("DELETE button pressed for file index %d\n",
+                  _selectedFileIndex);
+    _deleteConfirmIndex = _selectedFileIndex;
+    // Force immediate redraw to show confirmation popup
+    M5.Display.setEpdMode(epd_mode_t::epd_fast);
+    drawNotesBrowseScreen();
+    M5.Display.display();
+    Serial.println("Delete confirmation shown");
+    return;
+  }
+}
+
+void UIManager::notesDeleteFile(int index) {
+  if (index < 0 || index >= (int)_noteFileList.size()) {
+    Serial.println("Invalid file index for deletion");
+    return;
+  }
+
+  String filename = _noteFileList[index];
+  String fullPath = "/notes/" + filename;
+
+  Serial.printf("Deleting file: %s\n", fullPath.c_str());
+
+  // Power cycle SD card before delete operation
+  extern SDManager *sdManager;
+  bool sdOk = false;
+  if (sdManager) {
+    Serial.println("DELETE: Power cycling SD before delete...");
+    sdOk = sdManager->powerCycleAndReinit();
+  } else {
+    Serial.println("DELETE: No SDManager, attempting direct delete...");
+    sdOk = true; // Try anyway
+  }
+
+  if (!sdOk) {
+    Serial.println("DELETE: SD power cycle failed");
+    return;
+  }
+
+  if (SD.remove(fullPath)) {
+    Serial.println("File deleted successfully");
+
+    // Refresh file list
+    notesScanFiles();
+
+    // Adjust current index if needed
+    if (_noteFileIndex >= (int)_noteFileList.size() && _noteFileIndex > 0) {
+      _noteFileIndex--;
+    }
+  } else {
+    Serial.println("Failed to delete file");
+  }
+}
+
+// ============================================================================
+// Load Note Preview Thumbnail
+// ============================================================================
+void UIManager::loadNotePreview(int index) {
+  if (index < 0 || index >= (int)_noteFileList.size()) {
+    Serial.println("Invalid preview index");
+    return;
+  }
+
+  // Skip if already loaded
+  if (index == _previewFileIndex && _previewCanvas != nullptr) {
+    return;
+  }
+
+  Serial.printf("Loading preview for file %d\n", index);
+
+  // Create preview canvas if needed (400x250 scaled preview)
+  if (_previewCanvas == nullptr) {
+    _previewCanvas = new M5Canvas(&M5.Display);
+    _previewCanvas->setColorDepth(4);
+    if (!_previewCanvas->createSprite(400, 250)) {
+      Serial.println("Failed to create preview canvas");
+      delete _previewCanvas;
+      _previewCanvas = nullptr;
+      return;
+    }
+  }
+
+  // Power cycle SD and load
+  extern SDManager *sdManager;
+  if (sdManager && !sdManager->powerCycleAndReinit()) {
+    Serial.println("Preview: SD power cycle failed");
+    return;
+  }
+
+  String filename = _noteFileList[index];
+  String fullPath = "/notes/" + filename;
+
+  File file = SD.open(fullPath, FILE_READ);
+  if (!file) {
+    Serial.println("Cannot open file for preview");
+    _previewCanvas->fillSprite(COLOR_WHITE);
+    _previewCanvas->setTextSize(2);
+    _previewCanvas->setCursor(100, 100);
+    _previewCanvas->print("Cannot load");
+    _previewFileIndex = index;
+    return;
+  }
+
+  // Read header
+  char header[7] = {0};
+  file.read((uint8_t *)header, 6);
+
+  if (strcmp(header, "M5NOTE") != 0) {
+    Serial.println("Invalid note format");
+    file.close();
+    _previewCanvas->fillSprite(COLOR_WHITE);
+    _previewCanvas->setTextSize(2);
+    _previewCanvas->setCursor(80, 100);
+    _previewCanvas->print("Invalid format");
+    _previewFileIndex = index;
+    return;
+  }
+
+  // Read dimensions
+  uint16_t origW, origH;
+  uint8_t origDepth;
+  file.read((uint8_t *)&origW, 2);
+  file.read((uint8_t *)&origH, 2);
+  file.read(&origDepth, 1);
+
+  Serial.printf("Preview: Original %dx%d depth=%d\n", origW, origH, origDepth);
+
+  // Create temporary canvas to load original data
+  M5Canvas tempCanvas(&M5.Display);
+  tempCanvas.setColorDepth(4);
+  if (!tempCanvas.createSprite(origW, origH)) {
+    Serial.println("Cannot create temp canvas for preview");
+    file.close();
+    _previewFileIndex = index;
+    return;
+  }
+
+  // Read pixel data
+  size_t dataSize = (origW * origH * 4) / 8;
+  file.read((uint8_t *)tempCanvas.getBuffer(), dataSize);
+  file.close();
+
+  // Scale down to preview size (simple nearest-neighbor)
+  float scaleX = (float)origW / 400.0f;
+  float scaleY = (float)origH / 250.0f;
+
+  _previewCanvas->fillSprite(COLOR_WHITE);
+  for (int py = 0; py < 250; py++) {
+    for (int px = 0; px < 400; px++) {
+      int sx = (int)(px * scaleX);
+      int sy = (int)(py * scaleY);
+      uint16_t color = tempCanvas.readPixel(sx, sy);
+      _previewCanvas->drawPixel(px, py, color);
+    }
+  }
+
+  tempCanvas.deleteSprite();
+  _previewFileIndex = index;
+  Serial.println("Preview loaded successfully");
 }

@@ -3,8 +3,10 @@
  */
 
 #include "sd_manager.h"
+#include <Arduino.h>
 #include <M5Unified.h>
 #include <SPI.h>
+#include <vector>
 
 SDManager::SDManager() : _available(false) {}
 
@@ -14,58 +16,153 @@ SDManager::~SDManager() {
   }
 }
 
+// Create dedicated SPI instance for SD card (FSPI - recommended for SD on S3)
+static SPIClass sdSPI(FSPI);
+
 bool SDManager::init() {
-  // Hardcoded pins from user verification
-  int8_t sck = 39;
-  int8_t miso = 40;
-  int8_t mosi = 38;
-  int8_t cs = 47;
+  // Hardcoded pins from M5Paper S3 documentation
+  const int8_t SD_SCK = 39;
+  const int8_t SD_MISO = 40;
+  const int8_t SD_MOSI = 38;
+  const int8_t SD_CS = 47;
 
-  Serial.printf("SD SPI Pins: SCK=%d, MISO=%d, MOSI=%d, CS=%d\n", sck, miso,
-                mosi, cs);
+  Serial.printf("SD SPI Pins: SCK=%d, MISO=%d, MOSI=%d, CS=%d\n", SD_SCK,
+                SD_MISO, SD_MOSI, SD_CS);
 
-  // If pins are invalid, try standard ESP32/S3 defaults or simple fallback
-  if (sck == -1 || miso == -1 || mosi == -1 || cs == -1) {
-    Serial.println(
-        "SD: M5Unified did not report valid pins, trying defaults (VSPI)...");
-    // Fallback for standard VSPI if M5Unified doesn't know the board
-    // On S3 we might need to be specific if we are not using standard pins
-  } else {
-    // Initialize SPI with specific pins
-    SPI.begin(sck, miso, mosi, cs);
+  // End any existing SPI to release pins
+  sdSPI.end();
+  delay(50);
+
+  // Configure CS pin - must be HIGH before SPI init
+  pinMode(SD_CS, OUTPUT);
+  digitalWrite(SD_CS, HIGH);
+  delay(100);
+
+  // Send 80 dummy clocks with CS high to put card in SPI mode
+  // This is required per SD card spec
+  sdSPI.begin(SD_SCK, SD_MISO, SD_MOSI, -1);
+  sdSPI.beginTransaction(SPISettings(400000, MSBFIRST, SPI_MODE0));
+  for (int i = 0; i < 10; i++) {
+    sdSPI.transfer(0xFF);
+  }
+  sdSPI.endTransaction();
+  delay(10);
+
+  // Now try SD.begin with the SPI bus
+
+  // Try multiple frequencies, starting low
+  uint32_t frequencies[] = {1000000, 4000000, 10000000}; // 1MHz, 4MHz, 10MHz
+
+  for (int i = 0; i < 3; i++) {
+    Serial.printf("SD: Trying frequency %lu Hz...\n", frequencies[i]);
+
+    if (SD.begin(SD_CS, sdSPI, frequencies[i])) {
+      uint8_t cardType = SD.cardType();
+      if (cardType != CARD_NONE) {
+        Serial.printf("SD Card: Mounted at %lu Hz!\n", frequencies[i]);
+
+        Serial.print("SD Card Type: ");
+        if (cardType == CARD_MMC) {
+          Serial.println("MMC");
+        } else if (cardType == CARD_SD) {
+          Serial.println("SDSC");
+        } else if (cardType == CARD_SDHC) {
+          Serial.println("SDHC");
+        } else {
+          Serial.println("UNKNOWN");
+        }
+
+        uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+        Serial.printf("SD Card Size: %lluMB\n", cardSize);
+
+        _available = true;
+        return true;
+      }
+    }
+
+    SD.end(); // Clean up before retry
+    delay(100);
   }
 
-  // Try to mount
-  // Note: SD.begin(CS, SPI, FREQ)
-  if (!SD.begin(cs != -1 ? cs : SS, SPI, 25000000)) {
-    Serial.println("SD Card: Mount failed");
-    _available = false;
-    return false;
+  Serial.println("SD Card: Mount failed at all frequencies");
+  _available = false;
+  return false;
+}
+
+bool SDManager::powerCycleAndReinit() {
+  // Hardcoded pins from M5Paper S3 documentation
+  const int8_t SD_SCK = 39;
+  const int8_t SD_MISO = 40;
+  const int8_t SD_MOSI = 38;
+  const int8_t SD_CS = 47;
+
+  Serial.println("=== SD Power Cycle START ===");
+
+  // Step 1: Unmount SD card
+  Serial.println("[1/6] Unmounting SD card...");
+  SD.end();
+  _available = false;
+  delay(50);
+
+  // Step 2: Cut power to SD card (and other peripherals)
+  Serial.println("[2/6] Cutting external power (setExtOutput=false)...");
+  M5.Power.setExtOutput(false);
+  delay(300); // Hold power off for 300ms (reduced from 500ms)
+
+  // Step 3: Restore power
+  Serial.println("[3/6] Restoring external power (setExtOutput=true)...");
+  M5.Power.setExtOutput(true);
+  delay(300); // Wait for SD card to stabilize (reduced from 500ms)
+
+  // Step 4: Reset SPI bus
+  Serial.println("[4/6] Resetting SPI bus...");
+  sdSPI.end();
+  delay(50);
+
+  // Configure CS pin
+  pinMode(SD_CS, OUTPUT);
+  digitalWrite(SD_CS, HIGH);
+  delay(100);
+
+  // Send dummy clocks to put card in SPI mode
+  sdSPI.begin(SD_SCK, SD_MISO, SD_MOSI, -1);
+  sdSPI.beginTransaction(SPISettings(400000, MSBFIRST, SPI_MODE0));
+  for (int i = 0; i < 10; i++) {
+    sdSPI.transfer(0xFF);
+  }
+  sdSPI.endTransaction();
+  delay(10);
+
+  // Step 5: Reinitialize SD card
+  Serial.println("[5/6] Reinitializing SD card...");
+  uint32_t frequencies[] = {1000000, 4000000, 10000000};
+
+  for (int i = 0; i < 3; i++) {
+    Serial.printf("  Trying frequency %lu Hz...\n", frequencies[i]);
+
+    if (SD.begin(SD_CS, sdSPI, frequencies[i])) {
+      uint8_t cardType = SD.cardType();
+      if (cardType != CARD_NONE) {
+        Serial.printf("[6/6] SUCCESS! SD mounted at %lu Hz\n", frequencies[i]);
+        Serial.printf("  Card Type: %s\n", cardType == CARD_MMC    ? "MMC"
+                                           : cardType == CARD_SD   ? "SDSC"
+                                           : cardType == CARD_SDHC ? "SDHC"
+                                                                   : "UNKNOWN");
+        Serial.printf("  Card Size: %llu MB\n", SD.cardSize() / (1024 * 1024));
+        Serial.println("=== SD Power Cycle END (SUCCESS) ===");
+        _available = true;
+        return true;
+      }
+    }
+
+    SD.end();
+    delay(50);
   }
 
-  uint8_t cardType = SD.cardType();
-  if (cardType == CARD_NONE) {
-    Serial.println("SD Card: No card attached");
-    _available = false;
-    return false;
-  }
-
-  Serial.print("SD Card Type: ");
-  if (cardType == CARD_MMC) {
-    Serial.println("MMC");
-  } else if (cardType == CARD_SD) {
-    Serial.println("SDSC");
-  } else if (cardType == CARD_SDHC) {
-    Serial.println("SDHC");
-  } else {
-    Serial.println("UNKNOWN");
-  }
-
-  uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-  Serial.printf("SD Card Size: %lluMB\n", cardSize);
-
-  _available = true;
-  return true;
+  Serial.println("[6/6] FAILED - SD mount failed at all frequencies");
+  Serial.println("=== SD Power Cycle END (FAILED) ===");
+  _available = false;
+  return false;
 }
 
 bool SDManager::ensureDirectory(const char *path) {
