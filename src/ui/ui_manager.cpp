@@ -45,6 +45,9 @@ void UIManager::init() {
   Serial.printf("UI: Display size %dx%d\n", M5.Display.width(),
                 M5.Display.height());
 
+  // Initialize Power History
+  _powerHistory.init();
+
   _needsRefresh = true;
   _lastActivityTime = millis();
 }
@@ -78,6 +81,20 @@ void UIManager::update() {
 
   // Check Alarm/Timer globally (regardless of screen)
   checkAlarm();
+
+  // Power History: Sample every 1 minute and flush every 5 minutes
+  if (millis() - _lastHistorySample >= 60000) { // 1 minute
+    _lastHistorySample = millis();
+    // Sample current power data (cast floats to uint16 for storage)
+    _powerHistory.addSample((uint8_t)_powerData.batteryPercent,
+                            (uint16_t)_powerData.inputPower,
+                            (uint16_t)_powerData.outputPower);
+
+    // Check if we should flush to SD
+    if (_powerHistory.shouldFlush()) {
+      _powerHistory.flushToSD();
+    }
+  }
 
   // Always update notes logic for continuous drawing
   if (_currentScreen == ScreenID::NOTES) {
@@ -126,6 +143,9 @@ void UIManager::update() {
   case ScreenID::GAME_SUDOKU:
     drawSudokuGame();
     break;
+  case ScreenID::HISTORY:
+    drawHistoryScreen();
+    break;
   // Other screens will be implemented later
   default:
     drawHomeScreen(); // Fallback to home
@@ -143,6 +163,15 @@ void UIManager::update() {
 // Dispatcher
 void UIManager::handleTouch(int x, int y, TouchEvent event) {
   _lastActivityTime = millis(); // Reset idle timer
+
+  // TAP TO DISMISS ALARM/TIMER (Any touch dismisses)
+  if ((_alarmRinging || _timerRinging) && event == TouchEvent::RELEASE) {
+    _alarmRinging = false;
+    _timerRinging = false;
+    Buzzer::stop(); // STOP the sound immediately
+    forceRefresh();
+    return; // Don't process other touches
+  }
 
   // Clock Mode handles its own events for better responsiveness
   if (_currentScreen == ScreenID::CLOCK) {
@@ -187,6 +216,8 @@ void UIManager::handleTouch(int x, int y, TouchEvent event) {
           handleNotesBrowseTouch(x, y);
         } else if (_currentScreen == ScreenID::GAMES_MENU) {
           handleGamesMenuTouch(x, y);
+        } else if (_currentScreen == ScreenID::HISTORY) {
+          handleHistoryTouch(x, y, event);
         }
       }
 
@@ -204,7 +235,8 @@ void UIManager::handleTouch(int x, int y, TouchEvent event) {
       if (_currentScreen != ScreenID::NOTES &&
           _currentScreen != ScreenID::NOTES_BROWSE &&
           _currentScreen != ScreenID::GAME_2048 &&
-          _currentScreen != ScreenID::GAMES_MENU &&
+          _currentScreen != ScreenID::HISTORY &&
+          // Games Menu should support main menu bar
           _currentScreen != ScreenID::GAME_SUDOKU) {
         int menuHit = hitTestMenuButton(x, y);
         if (menuHit >= 0) {
@@ -246,6 +278,10 @@ void UIManager::navigateTo(ScreenID screen) {
   _lastRefresh = 0; // Force immediate refresh on navigation
   Serial.printf("UI: Navigate to screen %d\n", (int)screen);
 
+  // GHOSTING FIX: Force full EPD quality refresh on screen transition
+  M5.Display.setEpdMode(epd_mode_t::epd_quality);
+  M5.Display.fillScreen(COLOR_WHITE);
+
   if (screen == ScreenID::SETTINGS) {
     // Load current time from RTC for editing
     int hours, minutes, seconds;
@@ -285,6 +321,9 @@ void UIManager::updatePowerBankData(const Fossibot::PowerBankData &data) {
     _lastRenderedData = data;
     _lastDashboardUpdate = millis();
   }
+
+  // Note: Power History sampling happens in update() on a 1-minute timer,
+  // not here (to avoid sampling on every BLE update)
 }
 
 void UIManager::forceRefresh() {
@@ -314,12 +353,12 @@ void UIManager::drawHomeScreen() {
 
   // 2. Power panels (top row)
   int topRowY = contentY;
-  drawPowerPanel(PANEL_MARGIN, topRowY, panelWidth, panelHeight, "INPUT",
+  drawPowerPanel(PANEL_MARGIN, topRowY, panelWidth, panelHeight, "IN",
                  _powerData.inputPower, 1100.0f, "to full",
                  _powerData.minutesToFull, true);
 
   drawPowerPanel(PANEL_MARGIN * 2 + panelWidth, topRowY, panelWidth,
-                 panelHeight, "OUTPUT", _powerData.outputPower, 3000.0f,
+                 panelHeight, "OUT", _powerData.outputPower, 3000.0f,
                  "remaining", _powerData.minutesToEmpty, false);
 
   // 3. Status panels (bottom row)
@@ -459,11 +498,11 @@ void UIManager::drawClockWeatherPanel(int x, int y, int w, int h) {
   M5.Display.setCursor(x + 20, y + 15);
   M5.Display.print(timeStr);
 
-  // Draw date below (size 3)
+  // Draw date below (size 2)
   char dateStr[32];
   snprintf(dateStr, sizeof(dateStr), "%s %d %s %d", dayNames[displayDow],
            displayDay, monthNames[mon], displayYear);
-  M5.Display.setTextSize(3);
+  M5.Display.setTextSize(2);
   M5.Display.setCursor(x + 20, y + 75);
   M5.Display.print(dateStr);
 }
@@ -651,10 +690,27 @@ void UIManager::handleHomeTouch(int x, int y, TouchEvent event) {
       } else {
         Serial.println("UI: BLE not connected - toggle ignored");
       }
-    } else {
+    }
+
+    if (y < toggleY || y >= toggleBottom) {
       Serial.printf("UI: Missed Y zone (need %d-%d, got %d)\n", toggleY,
                     toggleBottom, y);
     }
+  }
+
+  // Clock/Weather Panel is Bottom-Right (where HISTORY button now lives)
+  int clockX = PANEL_MARGIN * 2 + panelWidth;
+  int clockY = contentY + panelHeight + PANEL_MARGIN;
+
+  // HISTORY button (bottom-left corner of clock panel)
+  int histBtnX = clockX + 10;
+  int histBtnY = clockY + panelHeight - 45;
+  if (x >= histBtnX && x < histBtnX + 90 && y >= histBtnY &&
+      y < histBtnY + 35) {
+    Serial.println("UI: HISTORY button pressed!");
+    Buzzer::click();
+    navigateTo(ScreenID::HISTORY);
+    return;
   }
 }
 
@@ -745,6 +801,7 @@ void UIManager::drawSettingsScreen() {
 
   // --- Actions ---
   y = 400;
+  drawButton(100, y, 200, 70, "History"); // Next to SD Diag
   drawButton(320, y, 200, 70, "SD Diag");
   drawButton(540, y, 200, 70, "SAVE", true);
   drawButton(750, y, 200, 70, "CANCEL");
@@ -868,6 +925,11 @@ void UIManager::handleSettingsTouch(int x, int y) {
   }
 
   int row4 = 400;
+  // History
+  if (isHit(100, row4, 200, 70)) {
+    navigateTo(ScreenID::HISTORY);
+    return;
+  }
   // SD Diag
   if (isHit(320, row4, 200, 70)) {
     Serial.println("Settings: Opening SD Diagnostics");
@@ -908,6 +970,14 @@ void UIManager::handleSettingsTouch(int x, int y) {
 
 void UIManager::drawClockScreen() {
   Serial.println("UI: Drawing Clock screen");
+
+  // SMART EPD MODE: Use Quality for full refreshes (tabs, entry), Fastest for
+  // updates (timer)
+  if (_lastRefresh == 0) {
+    M5.Display.setEpdMode(epd_mode_t::epd_quality);
+  } else {
+    M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+  }
 
   M5.Display.fillScreen(COLOR_WHITE);
   drawMenuBar();
@@ -1110,12 +1180,8 @@ void UIManager::updatePomodoro() {
     if (_pomodoroRemainingSeconds > secondsToSubtract) {
       _pomodoroRemainingSeconds -= secondsToSubtract;
 
-      // Only refresh display once per minute to save E-Ink
-      int oldMinutes = (_pomodoroRemainingSeconds + secondsToSubtract) / 60;
-      int newMinutes = _pomodoroRemainingSeconds / 60;
-      if (oldMinutes != newMinutes || _pomodoroRemainingSeconds <= 10) {
-        _needsRefresh = true;
-      }
+      // Refresh every second so user sees the timer counting down
+      _needsRefresh = true;
     } else {
       // Timer completed!
       _pomodoroRemainingSeconds = 0;
@@ -2217,31 +2283,31 @@ bool UIManager::shouldUpdateDashboard(const Fossibot::PowerBankData &newData) {
 }
 
 void UIManager::checkPowerManagement() {
-  // USER REQUEST: Disable Deep Sleep (Option 1)
-  // To fix "stuck in sleep" issue, we disable the auto-sleep logic entirely.
-  return;
-
-  // 0. Pomodoro Lock (User Request)
-  // Don't sleep if timer is ticking!
-  if (_pomodoroState == PomodoroState::RUNNING) {
+  // 1. BLE Connection Lock (User Request: Never sleep if connected)
+  if (bleClient && bleClient->isConnected()) {
     _lastActivityTime = millis(); // Keep resetting idle timer
     return;
   }
 
-  // 1. Check for Auto Sleep
+  // 2. Auto Sleep Logic
+  // User Request: "deep sleep ... once the device has not connected to
+  // bluetooth for 30 mins" and "never deep sleep ... when inactive for 30 mins
+  // while connected" (handled above)
+
+  // Use config or default to 30 mins if config is weird, but user said "30
+  // mins", so let's enforce 30 mins or use config if > 30? Let's stick to the
+  // 30 min requirement if idle.
+
+  unsigned long timeout = 30 * 60 * 1000UL; // 30 minutes fixed
+  // Check config just in case user set it to 0 (disabled)
   extern Config *config;
-  if (!config)
-    return;
+  if (config && config->getAutoSleepMinutes() == 0) {
+    timeout = 0; // Disabled
+  }
 
-  int sleepMin = config->getAutoSleepMinutes();
-  if (sleepMin > 0) {
-    unsigned long elapsed = millis() - _lastActivityTime;
-    unsigned long timeout = sleepMin * 60 * 1000UL;
-
-    if (elapsed > timeout) {
-      Serial.printf("Idle for %d min, entering deep sleep...\n", sleepMin);
-      enterDeepSleep();
-    }
+  if (timeout > 0 && (millis() - _lastActivityTime > timeout)) {
+    Serial.println("Idle for 30 min (no BLE), entering deep sleep...");
+    enterDeepSleep();
   }
 
   // 2. CPU Frequency Scaling (DFS)
@@ -2669,9 +2735,13 @@ void UIManager::checkAlarm() {
 
   // Ringing Processing
   if (_alarmRinging || _timerRinging) {
-    // Beep every 1 sec
-    if (now % 1000 < 100)
-      Buzzer::click();
+    // BEEP MORE FREQUENTLY AND LOUDER - Make it annoying!
+    // Beep 3 times per second instead of once
+    unsigned long beepCycle = now % 1000;
+    if (beepCycle < 100 || (beepCycle >= 250 && beepCycle < 350) ||
+        (beepCycle >= 500 && beepCycle < 600)) {
+      Buzzer::alarm(); // Use louder alarm() instead of click()
+    }
 
     const char *label = _alarmRinging ? "ALARM!" : "TIME UP!";
     drawAlertScreen(label);
@@ -3999,5 +4069,211 @@ void UIManager::handleSudokuTouch(int x, int y, TouchEvent event) {
     _needsRefresh = true;
     _lastRefresh = 0;
     return;
+  }
+}
+
+// ============================================================================
+// Power History Screen (Design C - Multi-Line 24H Graph)
+// ============================================================================
+
+void UIManager::drawHistoryScreen() {
+  M5.Display.setEpdMode(epd_mode_t::epd_quality);
+  M5.Display.fillScreen(COLOR_WHITE);
+
+  // --- Header ---
+  M5.Display.fillRect(0, 0, SCREEN_WIDTH, 60, COLOR_BLACK);
+  M5.Display.setTextColor(COLOR_WHITE);
+  M5.Display.setTextSize(3);
+
+  // Get date string for viewing day
+  time_t now = time(nullptr);
+  time_t viewDay = now - (_historyViewDay * 86400);
+  struct tm ti;
+  localtime_r(&viewDay, &ti);
+  char dateStr[32];
+  strftime(dateStr, sizeof(dateStr), "HISTORY - %b %d, %Y", &ti);
+  M5.Display.setCursor(20, 18);
+  M5.Display.print(dateStr);
+
+  // EXIT button (top right)
+  drawButton(SCREEN_WIDTH - 90, 10, 80, 40, "EXIT", false);
+
+  // --- Graph Area (expanded) ---
+  const int graphX = 80;
+  const int graphY = 100; // Moved down 20px
+  const int graphW = SCREEN_WIDTH - 120;
+  const int graphH = 300; // Reduced from 420 to prevent overlap
+
+  // Draw axes
+  M5.Display.drawRect(graphX, graphY, graphW, graphH, COLOR_BLACK);
+
+  // Y-axis labels (larger, black text)
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(2);
+  for (int i = 0; i <= 4; i++) {
+    int yPos = graphY + graphH - (i * graphH / 4);
+    int val = i * 25;
+    M5.Display.setCursor(graphX - 50, yPos - 8);
+    M5.Display.printf("%d", val);
+    // Grid line
+    if (i > 0 && i < 4) {
+      for (int x = graphX; x < graphX + graphW; x += 10) {
+        M5.Display.drawPixel(x, yPos, COLOR_LIGHT_GRAY);
+      }
+    }
+  }
+
+  // X-axis labels (larger, black text)
+  const char *timeLabels[] = {"00", "04", "08", "12", "16", "20", "24"};
+  for (int i = 0; i <= 6; i++) {
+    int xPos = graphX + (i * graphW / 6);
+    M5.Display.setCursor(xPos - 10, graphY + graphH + 8);
+    M5.Display.print(timeLabels[i]);
+    // Vertical grid line
+    if (i > 0 && i < 6) {
+      for (int y = graphY; y < graphY + graphH; y += 10) {
+        M5.Display.drawPixel(xPos, y, COLOR_LIGHT_GRAY);
+      }
+    }
+  }
+
+  // --- Draw Data Lines (THICK 3x, all BLACK) ---
+  uint16_t sampleCount = _powerHistory.getSampleCount(_historyViewDay);
+
+  if (sampleCount == 0) {
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setTextSize(3);
+    M5.Display.setCursor(graphX + graphW / 2 - 140, graphY + graphH / 2 - 15);
+    M5.Display.print("No data for this day");
+  } else {
+    // Plot each metric if filter is enabled
+    int prevX = -1, prevYBatt = -1, prevYIn = -1, prevYOut = -1;
+
+    // Optimization: Stride by 4 to reduce draw calls (1440 -> 360 points)
+    for (uint16_t i = 0; i < sampleCount; i += 4) {
+      PowerSample sample = _powerHistory.getSample(_historyViewDay, i);
+      if (sample.timestamp == 0)
+        continue;
+
+      // Calculate X position based on time of day
+      struct tm st;
+      time_t ts = sample.timestamp;
+      localtime_r(&ts, &st);
+      int minuteOfDay = st.tm_hour * 60 + st.tm_min;
+      int x = graphX + (minuteOfDay * graphW / 1440);
+
+      // Calculate Y positions (scaled to 0-100 range)
+      int yBatt = graphY + graphH - (sample.batteryPct * graphH / 100);
+      int yIn =
+          graphY + graphH - (min((int)sample.inputW, 1000) * graphH / 1000);
+      int yOut =
+          graphY + graphH - (min((int)sample.outputW, 1000) * graphH / 1000);
+
+      // Draw THICK lines (3x) - all BLACK
+      if (prevX >= 0) {
+        // Battery % line (3px thick)
+        if (_historyFilter & 0x01) {
+          M5.Display.drawLine(prevX, prevYBatt, x, yBatt, COLOR_BLACK);
+          M5.Display.drawLine(prevX, prevYBatt + 1, x, yBatt + 1, COLOR_BLACK);
+          M5.Display.drawLine(prevX, prevYBatt - 1, x, yBatt - 1, COLOR_BLACK);
+        }
+        // Input W line (3px thick)
+        if (_historyFilter & 0x02) {
+          M5.Display.drawLine(prevX, prevYIn, x, yIn, COLOR_BLACK);
+          M5.Display.drawLine(prevX, prevYIn + 1, x, yIn + 1, COLOR_BLACK);
+          M5.Display.drawLine(prevX, prevYIn - 1, x, yIn - 1, COLOR_BLACK);
+        }
+        // Output W line (3px thick)
+        if (_historyFilter & 0x04) {
+          M5.Display.drawLine(prevX, prevYOut, x, yOut, COLOR_BLACK);
+          M5.Display.drawLine(prevX, prevYOut + 1, x, yOut + 1, COLOR_BLACK);
+          M5.Display.drawLine(prevX, prevYOut - 1, x, yOut - 1, COLOR_BLACK);
+        }
+      }
+
+      prevX = x;
+      prevYBatt = yBatt;
+      prevYIn = yIn;
+      prevYOut = yOut;
+    }
+  }
+
+  // --- Filter Buttons (bottom bar - replaces menu bar) ---
+  int btnY = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
+  int btnW = SCREEN_WIDTH / 6; // 6 buttons across
+
+  // BATT button
+  bool battOn = (_historyFilter & 0x01) != 0;
+  drawButton(0, btnY, btnW, MENU_BAR_HEIGHT, "BATT", battOn);
+
+  // INPUT button
+  bool inputOn = (_historyFilter & 0x02) != 0;
+  drawButton(btnW, btnY, btnW, MENU_BAR_HEIGHT, "INPUT", inputOn);
+
+  // OUTPUT button
+  bool outputOn = (_historyFilter & 0x04) != 0;
+  drawButton(btnW * 2, btnY, btnW, MENU_BAR_HEIGHT, "OUTPUT", outputOn);
+
+  // ALL button
+  bool allOn = (_historyFilter == 0x07);
+  drawButton(btnW * 3, btnY, btnW, MENU_BAR_HEIGHT, "ALL", allOn);
+
+  // PREV DAY button
+  drawButton(btnW * 4, btnY, btnW, MENU_BAR_HEIGHT, "< PREV");
+
+  // NEXT DAY button
+  drawButton(btnW * 5, btnY, btnW, MENU_BAR_HEIGHT, "NEXT >");
+}
+
+void UIManager::handleHistoryTouch(int x, int y, TouchEvent event) {
+  if (event != TouchEvent::RELEASE)
+    return;
+
+  // --- Filter Buttons (bottom bar layout) ---
+  int btnY = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
+  int btnW = SCREEN_WIDTH / 6;
+
+  // Check if touch is in the bottom bar area
+  if (y >= btnY) {
+    if (x >= 0 && x < btnW) { // BATT
+      Buzzer::click();
+      _historyFilter ^= 0x01;
+      forceRefresh();
+    } else if (x >= btnW && x < btnW * 2) { // INPUT
+      Buzzer::click();
+      _historyFilter ^= 0x02;
+      forceRefresh();
+    } else if (x >= btnW * 2 && x < btnW * 3) { // OUTPUT
+      Buzzer::click();
+      _historyFilter ^= 0x04;
+      forceRefresh();
+    } else if (x >= btnW * 3 && x < btnW * 4) { // ALL
+      Buzzer::click();
+      _historyFilter = 0x07;
+      forceRefresh();
+    } else if (x >= btnW * 4 && x < btnW * 5) { // PREV DAY
+      Buzzer::click();
+      if (_historyViewDay < 6) { // Max 7 days back
+        _historyViewDay++;
+        forceRefresh();
+      }
+    } else if (x >= btnW * 5 && x < SCREEN_WIDTH) { // NEXT DAY
+      Buzzer::click();
+      if (_historyViewDay > 0) {
+        _historyViewDay--;
+        forceRefresh();
+      }
+    }
+  }
+
+  // HOME button (top right - invisible touch zone if drawn in header,
+  // currently we are NOT drawing a home button to give more space,
+  // but user might want a way back?
+  // User said "disable the nav bar as sometimes i go back to the homepage".
+  // This implies accidental touches. I'll add a specific HOME button
+  // in the top Header area just in case they get stuck).
+  if (y < 50 && x > SCREEN_WIDTH - 100) {
+    Buzzer::click();
+    navigateTo(ScreenID::HOME);
   }
 }

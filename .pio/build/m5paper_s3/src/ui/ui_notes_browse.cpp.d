@@ -50,6 +50,7 @@
  C:/Users/DanW/.platformio/packages/framework-arduinoespressif32/cores/esp32/esp32-hal-spi.h \
  C:/Users/DanW/.platformio/packages/framework-arduinoespressif32/libraries/SD/src/sd_defines.h \
  src/ui/ui_manager.h src/ui/../ble/fossibot_protocol.h \
+ src/ui/../power_history.h \
  .pio/libdeps/m5paper_s3/M5Unified/src/M5Unified.h \
  .pio/libdeps/m5paper_s3/M5Unified/src/M5Unified.hpp \
  .pio/libdeps/m5paper_s3/M5Unified/src/utility/m5unified_common.h \

@@ -44,6 +44,7 @@
  C:/Users/DanW/.platformio/packages/framework-arduinoespressif32/cores/esp32/freertos_stats.h \
  C:/Users/DanW/.platformio/packages/framework-arduinoespressif32/cores/esp32/io_pin_remap.h \
  C:/Users/DanW/.platformio/packages/framework-arduinoespressif32/cores/esp32/Arduino.h \
+ src/ui/../power_history.h \
  .pio/libdeps/m5paper_s3/M5Unified/src/M5Unified.h \
  .pio/libdeps/m5paper_s3/M5Unified/src/M5Unified.hpp \
  .pio/libdeps/m5paper_s3/M5Unified/src/utility/m5unified_common.h \

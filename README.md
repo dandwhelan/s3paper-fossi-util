@@ -12,6 +12,12 @@ A "retro dashboard" interface for M5Paper S3 that displays and controls Fossibot
 - **Wireless Control**: Toggle USB, DC, and AC outlets remotely via BLE.
 - **Smart Refresh**: Configurable E-Ink refresh rates to save power.
 
+### 📊 Power History
+- **7-Day Tracking**: Detailed history of Battery %, Input Watts, and Output Watts.
+- **Interactive Graph**: Multi-metric visualization with pinch-to-zoom (future) / easy navigation.
+- **Data Persistence**: Data saved to SD card continuously.
+- **Optimized UI**: Fast loading, high-contrast black/white design, and configurable filters.
+
 ### 📝 Notes (Scribble Pad)
 
 *New in v2.0!*
@@ -92,21 +98,25 @@ Power on your Fossibot and the M5Paper S3 will automatically scan and connect.
 
 ## Development Plan & Roadmap
 
-### Completed (v2.0) ✅
+### Completed (v2.0 - v2.2) ✅
 
 - [x] **I2C Conflict Fix**: Separated Touch (Wire1) and RTC (Wire).
 - [x] **Pomodoro Timer**: Functional timer with background tracking.
 - [x] **Calculator**: Basic UI and logic implementation.
+- [x] **Sudoku**: Full game implementation with difficulty levels.
+- [x] **2048**: Classic puzzle game with auto-save.
 - [x] **Notes App**:
   - [x] Smooth Scribbling (Fast EPD mode).
   - [x] Canvas Persistence.
-  - [x] Layout Optimizations (Centered Text, logical button flow).
-  - [x] Ghost Touch Fixes.
+  - [x] Save to SD Card (as BMP).
+  - [x] File Browser for past notes.
+- [x] **History Graph**:
+  - [x] 7-Day Power History.
+  - [x] Multi-metric visualization.
+  - [x] Persistent Storage.
 
 ### Upcoming 🚧
 
-- [ ] **Notes Saving**: Save scribbles to SD Card (BMP/PNG).
-- [ ] **History Graph**: Plot power usage over time.
 - [ ] **Wifi MQTT**: Publish stats to Home Assistant.
 
 ## Project Structure

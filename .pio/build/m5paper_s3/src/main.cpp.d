@@ -181,8 +181,8 @@
  .pio/libdeps/m5paper_s3/M5Unified/src/utility/imu/IMU_Base.hpp \
  .pio/libdeps/m5paper_s3/M5Unified/src/utility/imu/../I2C_Class.hpp \
  src/hardware/rtc.h src/hardware/touch.h src/ui/ui_manager.h \
- src/ui/../ble/fossibot_protocol.h src/utils/config.h \
- .pio/libdeps/m5paper_s3/ArduinoJson/src/ArduinoJson.h \
+ src/ui/../ble/fossibot_protocol.h src/ui/../power_history.h \
+ src/utils/config.h .pio/libdeps/m5paper_s3/ArduinoJson/src/ArduinoJson.h \
  .pio/libdeps/m5paper_s3/ArduinoJson/src/ArduinoJson.hpp \
  .pio/libdeps/m5paper_s3/ArduinoJson/src/ArduinoJson/Configuration.hpp \
  .pio/libdeps/m5paper_s3/ArduinoJson/src/ArduinoJson/Array/JsonArray.hpp \

@@ -8,6 +8,7 @@
 #define UI_MANAGER_H
 
 #include "../ble/fossibot_protocol.h"
+#include "../power_history.h"
 #include <Arduino.h>
 #include <M5Unified.h>
 #include <vector>
@@ -29,7 +30,8 @@ enum class ScreenID {
   WEATHER,
   SETTINGS,
   SD_DIAG,
-  NOTES_BROWSE
+  NOTES_BROWSE,
+  HISTORY
 };
 
 // Clock screen sub-modes (Side-Dock navigation)
@@ -328,6 +330,16 @@ private:
   bool sudokuValidateCell(byte row, byte col);
   bool sudokuCheckWin();
   void sudokuClearCell();
+
+  // Power History (data collection active, UI Phase 3)
+  PowerHistory _powerHistory;
+  void drawHistoryScreen();
+  void handleHistoryTouch(int x, int y, TouchEvent event);
+
+  // History UI state
+  unsigned long _lastHistorySample = 0;
+  uint8_t _historyViewDay = 0;   // 0=today, 1=yesterday, etc.
+  uint8_t _historyFilter = 0x00; // Bitfield: 0=None (default for speed)
 };
 
 #endif // UI_MANAGER_H

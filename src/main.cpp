@@ -23,6 +23,8 @@
 #include "utils/sd_manager.h"
 #include <M5Unified.h>
 #include <SD.h>
+#include <sys/time.h>
+#include <time.h>
 
 // Forward declarations
 void initHardware();
@@ -131,10 +133,46 @@ void setup() {
   }
 
   // RTC time is battery-backed - use existing time
-  auto rtcTime = M5.Rtc.getDateTime();
-  Serial.printf("RTC time: %04d-%02d-%02d %02d:%02d:%02d\n", rtcTime.date.year,
-                rtcTime.date.month, rtcTime.date.date, rtcTime.time.hours,
-                rtcTime.time.minutes, rtcTime.time.seconds);
+  int year = 0, month = 0, day = 0, dow = 0;
+  int hour = 0, min = 0, sec = 0;
+
+  // Try reading multiple times if it returns 0 (bus might be busy)
+  for (int retry = 0; retry < 3; retry++) {
+    RTC::getDate(year, month, day, dow);
+    RTC::getTime(hour, min, sec);
+    if (year >= 2000 && month >= 1 && day >= 1)
+      break;
+    delay(100);
+  }
+
+  Serial.printf("RTC time (Direct): %04d-%02d-%02d %02d:%02d:%02d\n", year,
+                month, day, hour, min, sec);
+
+  // Sync system time from RTC
+  // CRITICAL: Only sync if we have a valid date!
+  // (Month/Day = 0 causes mktime to underflow to 1999)
+  if (year >= 2000 && year < 2100 && month >= 1 && day >= 1) {
+    struct tm tm;
+    tm.tm_year = year - 1900;
+    tm.tm_mon = month - 1;
+    tm.tm_mday = day;
+    tm.tm_hour = hour;
+    tm.tm_min = min;
+    tm.tm_sec = sec;
+    tm.tm_isdst = -1;
+    time_t t = mktime(&tm);
+    if (t != (time_t)-1) {
+      struct timeval now_tv = {.tv_sec = t, .tv_usec = 0};
+      settimeofday(&now_tv, NULL);
+      Serial.printf("System time synced from RTC: %ld\n", (long)t);
+    } else {
+      Serial.println("Error: mktime failed!");
+    }
+  } else {
+    Serial.printf("Warning: RTC date invalid or not set yet: %d-%d-%d\n", year,
+                  month, day);
+    Serial.println("System time NOT synced. Using epoch.");
+  }
 
   // Initialize hardware components
   initHardware();
