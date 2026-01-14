@@ -307,19 +307,24 @@ private:
   void game2048Save();
   void game2048Load();
 
-  // Sudoku Game state (6x6 for better fit!)
+  // Sudoku Game state (6x6 grid)
   byte _sudokuGrid[6][6];     // Current values (0-6, 0 = empty)
   byte _sudokuSolution[6][6]; // Correct solution
   bool _sudokuGiven[6][6];    // true = locked given number
   int8_t _sudokuSelectedRow;  // Currently selected cell (-1 = none)
   int8_t _sudokuSelectedCol;
-  byte _sudokuPuzzleNum;  // Current puzzle number (1-based)
-  byte _sudokuDifficulty; // 0=easy, 1=medium, 2=hard
+  byte _sudokuPuzzleNum;   // Current puzzle number (1-based)
+  byte _sudokuDifficulty;  // 0=easy, 1=medium, 2=hard
+  bool _sudokuShowConfirm; // Show "New puzzle?" confirmation
+  static const byte SUDOKU_PUZZLES_PER_DIFFICULTY =
+      10; // Start with 10, can expand via SD
 
   // Sudoku Game methods
   void drawSudokuGame();
   void handleSudokuTouch(int x, int y, TouchEvent event);
   void sudokuLoadPuzzle(byte difficulty, byte num);
+  void sudokuLoadRandomPuzzle(byte difficulty);
+  void sudokuInit();
   bool sudokuValidateCell(byte row, byte col);
   bool sudokuCheckWin();
   void sudokuClearCell();

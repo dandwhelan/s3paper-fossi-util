@@ -187,8 +187,6 @@ void UIManager::handleTouch(int x, int y, TouchEvent event) {
           handleNotesBrowseTouch(x, y);
         } else if (_currentScreen == ScreenID::GAMES_MENU) {
           handleGamesMenuTouch(x, y);
-        } else if (_currentScreen == ScreenID::GAME_SUDOKU) {
-          handleSudokuTouch(x, y, event);
         }
       }
 
@@ -197,12 +195,17 @@ void UIManager::handleTouch(int x, int y, TouchEvent event) {
         handleGame2048Touch(x, y, event);
       }
 
+      // GAME_SUDOKU touch handling
+      if (_currentScreen == ScreenID::GAME_SUDOKU) {
+        handleSudokuTouch(x, y, event);
+      }
+
       // Check menu buttons (excluding Notes and Games which have own controls)
       if (_currentScreen != ScreenID::NOTES &&
           _currentScreen != ScreenID::NOTES_BROWSE &&
           _currentScreen != ScreenID::GAME_2048 &&
-          _currentScreen != ScreenID::GAME_SUDOKU &&
-          _currentScreen != ScreenID::GAMES_MENU) {
+          _currentScreen != ScreenID::GAMES_MENU &&
+          _currentScreen != ScreenID::GAME_SUDOKU) {
         int menuHit = hitTestMenuButton(x, y);
         if (menuHit >= 0) {
           executeMenuButton(menuHit);
@@ -2995,9 +2998,8 @@ void UIManager::drawGamesMenu() {
   M5.Display.setTextSize(2);
   M5.Display.setTextColor(COLOR_GRAY);
 
-  // SUDOKU Button - NOW ENABLED!
-  M5.Display.setTextSize(3);
-  drawButton(gridX + btnW + gap, gridY, btnW, btnH, "SUDOKU");
+  // Sudoku Button (now enabled!)
+  drawButton(gridX + btnW + gap, gridY, btnW, btnH, "SUDOKU", true);
 
   drawButton(gridX, gridY + btnH + 50, btnW, btnH, "WORDLE");
   M5.Display.setCursor(gridX + 50, gridY + btnH + 50 + 90);
@@ -3005,18 +3007,35 @@ void UIManager::drawGamesMenu() {
 }
 
 void UIManager::handleGamesMenuTouch(int x, int y) {
-  // 2048 button (200-440, 120-270)
-  if (x >= 200 && x < 440 && y >= 120 && y < 270) {
+  int gridX = 200;
+  int gridY = 120;
+  int btnW = 240;
+  int btnH = 150;
+  int gap = 80;
+
+  // 2048 button
+  if (x >= gridX && x < gridX + btnW && y >= gridY && y < gridY + btnH) {
     Buzzer::click();
     game2048Load(); // Load saved game or init new
+    // Full quality clear to remove ghosting (like Notes)
+    M5.Display.setEpdMode(epd_mode_t::epd_quality);
+    M5.Display.fillScreen(COLOR_WHITE);
+    M5.Display.display();
     navigateTo(ScreenID::GAME_2048);
+    return;
   }
 
-  // SUDOKU button (520-760, 120-270)
-  if (x >= 520 && x < 760 && y >= 120 && y < 270) {
+  // Sudoku button
+  if (x >= gridX + btnW + gap && x < gridX + 2 * btnW + gap && y >= gridY &&
+      y < gridY + btnH) {
     Buzzer::click();
-    sudokuLoadPuzzle(0, 1); // Start with easy puzzle #1
+    sudokuInit();
+    // Full quality clear to remove ghosting (like Notes)
+    M5.Display.setEpdMode(epd_mode_t::epd_quality);
+    M5.Display.fillScreen(COLOR_WHITE);
+    M5.Display.display();
     navigateTo(ScreenID::GAME_SUDOKU);
+    return;
   }
 }
 
@@ -3446,146 +3465,156 @@ void UIManager::game2048Load() {
 // Hardcoded 6x6 Sudoku Puzzles (3 per difficulty = 9 total)
 // Format: 0 = empty, 1-6 = given numbers
 
-// EASY PUZZLES
+// EASY PUZZLES (More given numbers)
 const byte sudoku_easy_puzzles[3][6][6] = {
-    // Easy #1
-    {{3, 0, 5, 2, 0, 0},
-     {0, 4, 0, 0, 6, 1},
-     {6, 0, 0, 0, 0, 2},
-     {1, 0, 0, 0, 0, 6},
-     {4, 1, 0, 0, 2, 0},
-     {0, 0, 3, 5, 0, 4}},
+    // Easy #1 (Strictly Valid)
+    {{1, 2, 0, 4, 5, 0},
+     {0, 5, 6, 1, 0, 3},
+     {2, 0, 1, 5, 0, 4},
+     {5, 6, 4, 0, 3, 1},
+     {0, 1, 2, 6, 0, 0},
+     {6, 0, 5, 3, 1, 2}},
 
-    // Easy #2
-    {{0, 6, 0, 4, 0, 0},
-     {4, 0, 0, 0, 6, 0},
-     {0, 0, 3, 0, 0, 5},
-     {2, 0, 0, 6, 0, 0},
-     {0, 3, 0, 0, 0, 2},
-     {0, 0, 5, 0, 4, 0}},
+    // Easy #2 (Strictly Valid)
+    {{3, 0, 1, 6, 0, 4},
+     {6, 5, 0, 3, 2, 1},
+     {0, 3, 2, 0, 6, 0},
+     {4, 6, 0, 1, 3, 2},
+     {2, 1, 3, 0, 4, 6},
+     {5, 0, 6, 2, 0, 3}},
 
-    // Easy #3
-    {{5, 0, 0, 0, 3, 0},
-     {0, 3, 0, 5, 0, 0},
-     {0, 0, 6, 0, 0, 4},
-     {4, 0, 0, 3, 0, 0},
-     {0, 0, 2, 0, 5, 0},
-     {0, 6, 0, 0, 0, 1}}};
+    // Easy #3 (Strictly Valid)
+    {{1, 0, 3, 4, 0, 6},
+     {4, 5, 0, 0, 2, 3},
+     {3, 1, 2, 6, 4, 0},
+     {0, 4, 5, 3, 1, 2},
+     {2, 3, 0, 0, 6, 4},
+     {5, 0, 4, 2, 0, 1}}};
 
-const byte sudoku_easy_solutions[3][6][6] = {{{3, 6, 5, 2, 1, 4},
-                                              {2, 4, 1, 3, 6, 5},
-                                              {6, 5, 4, 1, 3, 2},
-                                              {1, 3, 2, 4, 5, 6},
-                                              {4, 1, 6, 5, 2, 3},
-                                              {5, 2, 3, 6, 4, 1}},
+const byte sudoku_easy_solutions[3][6][6] = {{{1, 2, 3, 4, 5, 6},
+                                              {4, 5, 6, 1, 2, 3},
+                                              {2, 3, 1, 5, 6, 4},
+                                              {5, 6, 4, 2, 3, 1},
+                                              {3, 1, 2, 6, 4, 5},
+                                              {6, 4, 5, 3, 1, 2}},
 
-                                             {{1, 6, 2, 4, 5, 3},
-                                              {4, 5, 1, 3, 6, 2},
-                                              {3, 2, 3, 1, 2, 5},
-                                              {2, 1, 4, 6, 3, 5},
-                                              {5, 3, 6, 2, 1, 4},
-                                              {6, 4, 5, 5, 4, 1}},
+                                             {{3, 2, 1, 6, 5, 4},
+                                              {6, 5, 4, 3, 2, 1},
+                                              {1, 3, 2, 4, 6, 5},
+                                              {4, 6, 5, 1, 3, 2},
+                                              {2, 1, 3, 5, 4, 6},
+                                              {5, 4, 6, 2, 1, 3}},
 
-                                             {{5, 4, 1, 2, 3, 6},
-                                              {2, 3, 4, 5, 6, 1},
-                                              {1, 5, 6, 3, 2, 4},
-                                              {4, 1, 5, 3, 4, 2},
-                                              {3, 2, 2, 4, 5, 3},
-                                              {6, 6, 3, 1, 1, 1}}};
+                                             {{1, 2, 3, 4, 5, 6},
+                                              {4, 5, 6, 1, 2, 3},
+                                              {3, 1, 2, 6, 4, 5},
+                                              {6, 4, 5, 3, 1, 2},
+                                              {2, 3, 1, 5, 6, 4},
+                                              {5, 6, 4, 2, 3, 1}}};
 
 // MEDIUM PUZZLES
 const byte sudoku_medium_puzzles[3][6][6] = {
     // Medium #1
-    {{0, 0, 5, 0, 0, 0},
-     {0, 4, 0, 0, 0, 1},
-     {6, 0, 0, 0, 0, 0},
-     {0, 0, 0, 0, 0, 6},
-     {4, 0, 0, 0, 2, 0},
-     {0, 0, 3, 5, 0, 0}},
+    {{0, 2, 0, 0, 5, 0},
+     {0, 0, 6, 1, 0, 0},
+     {2, 0, 0, 0, 0, 4},
+     {5, 0, 0, 0, 0, 1},
+     {0, 0, 2, 6, 0, 0},
+     {0, 4, 0, 0, 1, 0}},
 
     // Medium #2
-    {{0, 6, 0, 0, 0, 0},
-     {0, 0, 0, 0, 6, 0},
-     {0, 0, 3, 0, 0, 5},
-     {2, 0, 0, 0, 0, 0},
-     {0, 3, 0, 0, 0, 0},
-     {0, 0, 5, 0, 4, 0}},
+    {{0, 0, 1, 6, 0, 0},
+     {0, 5, 0, 0, 2, 0},
+     {1, 0, 0, 0, 0, 5},
+     {4, 0, 0, 0, 0, 2},
+     {0, 1, 0, 0, 4, 0},
+     {0, 0, 6, 2, 0, 0}},
 
     // Medium #3
-    {{5, 0, 0, 0, 0, 0},
-     {0, 3, 0, 0, 0, 0},
-     {0, 0, 6, 0, 0, 4},
-     {0, 0, 0, 3, 0, 0},
-     {0, 0, 2, 0, 5, 0},
-     {0, 0, 0, 0, 0, 1}}};
+    {{0, 0, 3, 4, 0, 0},
+     {4, 0, 0, 0, 0, 3},
+     {0, 1, 0, 0, 4, 0},
+     {0, 4, 0, 0, 1, 0},
+     {2, 0, 0, 0, 0, 4},
+     {0, 0, 4, 2, 0, 0}}};
 
-const byte sudoku_medium_solutions[3][6][6] = {{{3, 6, 5, 2, 1, 4},
-                                                {2, 4, 1, 3, 6, 5},
-                                                {6, 5, 4, 1, 3, 2},
-                                                {1, 3, 2, 4, 5, 6},
-                                                {4, 1, 6, 5, 2, 3},
-                                                {5, 2, 3, 6, 4, 1}},
+const byte sudoku_medium_solutions[3][6][6] = {{{1, 2, 3, 4, 5, 6},
+                                                {4, 5, 6, 1, 2, 3},
+                                                {2, 3, 1, 5, 6, 4},
+                                                {5, 6, 4, 2, 3, 1},
+                                                {3, 1, 2, 6, 4, 5},
+                                                {6, 4, 5, 3, 1, 2}},
 
-                                               {{1, 6, 2, 4, 5, 3},
-                                                {4, 5, 1, 3, 6, 2},
-                                                {3, 2, 3, 1, 2, 5},
-                                                {2, 1, 4, 6, 3, 5},
-                                                {5, 3, 6, 2, 1, 4},
-                                                {6, 4, 5, 5, 4, 1}},
+                                               {{3, 2, 1, 6, 5, 4},
+                                                {6, 5, 4, 3, 2, 1},
+                                                {1, 3, 2, 4, 6, 5},
+                                                {4, 6, 5, 1, 3, 2},
+                                                {2, 1, 3, 5, 4, 6},
+                                                {5, 4, 6, 2, 1, 3}},
 
-                                               {{5, 4, 1, 2, 3, 6},
-                                                {2, 3, 4, 5, 6, 1},
-                                                {1, 5, 6, 3, 2, 4},
-                                                {4, 1, 5, 3, 4, 2},
-                                                {3, 2, 2, 4, 5, 3},
-                                                {6, 6, 3, 1, 1, 1}}};
+                                               {{1, 2, 3, 4, 5, 6},
+                                                {4, 5, 6, 1, 2, 3},
+                                                {3, 1, 2, 6, 4, 5},
+                                                {6, 4, 5, 3, 1, 2},
+                                                {2, 3, 1, 5, 6, 4},
+                                                {5, 6, 4, 2, 3, 1}}};
 
 // HARD PUZZLES
 const byte sudoku_hard_puzzles[3][6][6] = {
     // Hard #1
-    {{0, 0, 5, 0, 0, 0},
-     {0, 0, 0, 0, 0, 1},
-     {6, 0, 0, 0, 0, 0},
-     {0, 0, 0, 0, 0, 6},
-     {4, 0, 0, 0, 0, 0},
-     {0, 0, 3, 0, 0, 0}},
+    {{0, 0, 0, 0, 5, 0},
+     {0, 5, 0, 0, 0, 0},
+     {0, 0, 0, 0, 0, 4},
+     {5, 0, 0, 0, 0, 0},
+     {0, 0, 0, 0, 4, 0},
+     {0, 4, 0, 0, 0, 0}},
 
     // Hard #2
-    {{0, 6, 0, 0, 0, 0},
-     {0, 0, 0, 0, 6, 0},
-     {0, 0, 3, 0, 0, 0},
-     {2, 0, 0, 0, 0, 0},
-     {0, 3, 0, 0, 0, 0},
-     {0, 0, 0, 0, 4, 0}},
+    {{0, 0, 0, 6, 0, 0},
+     {0, 5, 0, 0, 0, 0},
+     {0, 0, 0, 0, 0, 5},
+     {4, 0, 0, 0, 0, 0},
+     {0, 0, 0, 0, 4, 0},
+     {0, 0, 6, 0, 0, 0}},
 
     // Hard #3
-    {{5, 0, 0, 0, 0, 0},
+    {{0, 0, 0, 4, 0, 0},
+     {0, 5, 0, 0, 0, 0},
      {0, 0, 0, 0, 0, 0},
-     {0, 0, 6, 0, 0, 4},
-     {0, 0, 0, 3, 0, 0},
-     {0, 0, 0, 0, 5, 0},
-     {0, 0, 0, 0, 0, 1}}};
+     {0, 0, 0, 0, 0, 0},
+     {0, 0, 0, 0, 6, 0},
+     {0, 0, 4, 0, 0, 0}}};
 
-const byte sudoku_hard_solutions[3][6][6] = {{{3, 6, 5, 2, 1, 4},
-                                              {2, 4, 1, 3, 6, 5},
-                                              {6, 5, 4, 1, 3, 2},
-                                              {1, 3, 2, 4, 5, 6},
-                                              {4, 1, 6, 5, 2, 3},
-                                              {5, 2, 3, 6, 4, 1}},
+const byte sudoku_hard_solutions[3][6][6] = {{{1, 2, 3, 4, 5, 6},
+                                              {4, 5, 6, 1, 2, 3},
+                                              {2, 3, 1, 5, 6, 4},
+                                              {5, 6, 4, 2, 3, 1},
+                                              {3, 1, 2, 6, 4, 5},
+                                              {6, 4, 5, 3, 1, 2}},
 
-                                             {{1, 6, 2, 4, 5, 3},
-                                              {4, 5, 1, 3, 6, 2},
-                                              {3, 2, 3, 1, 2, 5},
-                                              {2, 1, 4, 6, 3, 5},
-                                              {5, 3, 6, 2, 1, 4},
-                                              {6, 4, 5, 5, 4, 1}},
+                                             {{3, 2, 1, 6, 5, 4},
+                                              {6, 5, 4, 3, 2, 1},
+                                              {1, 3, 2, 4, 6, 5},
+                                              {4, 6, 5, 1, 3, 2},
+                                              {2, 1, 3, 5, 4, 6},
+                                              {5, 4, 6, 2, 1, 3}},
 
-                                             {{5, 4, 1, 2, 3, 6},
-                                              {2, 3, 4, 5, 6, 1},
-                                              {1, 5, 6, 3, 2, 4},
-                                              {4, 1, 5, 3, 4, 2},
-                                              {3, 2, 2, 4, 5, 3},
-                                              {6, 6, 3, 1, 1, 1}}};
+                                             {{1, 2, 3, 4, 5, 6},
+                                              {4, 5, 6, 1, 2, 3},
+                                              {3, 1, 2, 6, 4, 5},
+                                              {6, 4, 5, 3, 1, 2},
+                                              {2, 3, 1, 5, 6, 4},
+                                              {5, 6, 4, 2, 3, 1}}};
+
+// Initialize Sudoku game
+void UIManager::sudokuInit() {
+  _sudokuSelectedRow = -1;
+  _sudokuSelectedCol = -1;
+  _sudokuPuzzleNum = 1;
+  _sudokuDifficulty = 0;      // Start with Easy
+  _sudokuShowConfirm = false; // No confirmation dialog
+  sudokuLoadPuzzle(_sudokuDifficulty, _sudokuPuzzleNum);
+}
 
 // Load a puzzle
 void UIManager::sudokuLoadPuzzle(byte difficulty, byte num) {
@@ -3618,6 +3647,13 @@ void UIManager::sudokuLoadPuzzle(byte difficulty, byte num) {
 
   _sudokuSelectedRow = -1;
   _sudokuSelectedCol = -1;
+}
+
+// Load a random puzzle for the given difficulty
+void UIManager::sudokuLoadRandomPuzzle(byte difficulty) {
+  // Generate random puzzle number (1 to 3 for now)
+  byte num = (random(3)) + 1; // random(3) gives 0-2, +1 for 1-3
+  sudokuLoadPuzzle(difficulty, num);
 }
 
 // Validate a cell (check row/col/block for duplicates)
@@ -3675,55 +3711,73 @@ void UIManager::sudokuClearCell() {
   }
 }
 
-// Draw Sudoku game
+// Draw Sudoku game - ENHANCED with difficulty selector and better layout
 void UIManager::drawSudokuGame() {
   M5.Display.setEpdMode(epd_mode_t::epd_fastest);
   M5.Display.fillScreen(COLOR_WHITE);
 
-  // Title
+  // Layout constants
+  const int GRID_X = 30;
+  const int GRID_Y = 80; // Moved down to make room for difficulty buttons
+  const int CELL_SIZE = 75;
+  const int BTN_X = 520;
+
+  // Title with puzzle number
   M5.Display.setTextSize(2);
   M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setCursor(30, 20);
-  M5.Display.print("SUDOKU");
-
-  // Puzzle info
-  M5.Display.setCursor(300, 20);
+  M5.Display.setCursor(30, 15);
   const char *diff = (_sudokuDifficulty == 0)   ? "Easy"
-                     : (_sudokuDifficulty == 1) ? "Medium"
+                     : (_sudokuDifficulty == 1) ? "Med"
                                                 : "Hard";
-  M5.Display.printf("Puzzle %d/3 (%s)", _sudokuPuzzleNum, diff);
+  M5.Display.printf("SUDOKU  #%d/3 (%s)", _sudokuPuzzleNum, diff);
 
-  // Draw grid (6x6, 85px cells, starts at x=30, y=60)
+  // HOME button (top right)
+  drawButton(850, 10, 100, 40, "HOME");
+
+  // ===== DIFFICULTY SELECTOR (top right, below title) =====
+  int diffY = 15;
+  int diffBtnW = 80;
+  int diffGap = 5;
+
+  // Draw difficulty buttons with highlight for current selection
+  bool isEasy = (_sudokuDifficulty == 0);
+  bool isMed = (_sudokuDifficulty == 1);
+  bool isHard = (_sudokuDifficulty == 2);
+
+  drawButton(BTN_X, diffY, diffBtnW, 40, "EASY", isEasy);
+  drawButton(BTN_X + diffBtnW + diffGap, diffY, diffBtnW, 40, "MED", isMed);
+  drawButton(BTN_X + 2 * (diffBtnW + diffGap), diffY, diffBtnW, 40, "HARD",
+             isHard);
+
+  // Draw grid (6x6, 75px cells)
   for (int i = 0; i <= 6; i++) {
-    int thickness = (i % 3 == 0) ? 3 : 1; // Thicker for 2x3 blocks
+    bool thickH = (i == 0 || i == 2 || i == 4 || i == 6);
+    bool thickV = (i == 0 || i == 3 || i == 6);
 
-    // Horizontal lines
-    for (int t = 0; t < thickness; t++) {
-      M5.Display.drawLine(30, 60 + i * 85 + t, 540, 60 + i * 85 + t,
+    for (int t = 0; t < (thickH ? 3 : 1); t++) {
+      M5.Display.drawLine(GRID_X, GRID_Y + i * CELL_SIZE + t,
+                          GRID_X + 6 * CELL_SIZE, GRID_Y + i * CELL_SIZE + t,
                           COLOR_BLACK);
     }
-
-    // Vertical lines
-    for (int t = 0; t < thickness; t++) {
-      M5.Display.drawLine(30 + i * 85 + t, 60, 30 + i * 85 + t, 570,
+    for (int t = 0; t < (thickV ? 3 : 1); t++) {
+      M5.Display.drawLine(GRID_X + i * CELL_SIZE + t, GRID_Y,
+                          GRID_X + i * CELL_SIZE + t, GRID_Y + 6 * CELL_SIZE,
                           COLOR_BLACK);
     }
   }
 
-  // Draw numbers
+  // Draw numbers - ALL BLACK for better e-ink visibility
   M5.Display.setTextSize(4);
   for (int r = 0; r < 6; r++) {
     for (int c = 0; c < 6; c++) {
       if (_sudokuGrid[r][c] != 0) {
-        // Color: given=black, user=green, error=red
-        int color = _sudokuGiven[r][c] ? COLOR_BLACK : GREEN;
+        int color = COLOR_BLACK; // All numbers black
         if (!sudokuValidateCell(r, c))
-          color = RED;
+          color = 0xF800; // RED for errors
 
         M5.Display.setTextColor(color);
-        int x = 30 + c * 85 + 28; // Center in cell
-        int y = 60 + r * 85 + 22;
-        M5.Display.setCursor(x, y);
+        M5.Display.setCursor(GRID_X + c * CELL_SIZE + 22,
+                             GRID_Y + r * CELL_SIZE + 18);
         M5.Display.print(_sudokuGrid[r][c]);
       }
     }
@@ -3731,81 +3785,205 @@ void UIManager::drawSudokuGame() {
 
   // Highlight selected cell
   if (_sudokuSelectedRow >= 0) {
-    int x = 30 + _sudokuSelectedCol * 85;
-    int y = 60 + _sudokuSelectedRow * 85;
-    M5.Display.drawRect(x + 2, y + 2, 81, 81, BLUE);
-    M5.Display.drawRect(x + 3, y + 3, 79, 79, BLUE);
+    int x = GRID_X + _sudokuSelectedCol * CELL_SIZE;
+    int y = GRID_Y + _sudokuSelectedRow * CELL_SIZE;
+    for (int t = 0; t < 3; t++) {
+      M5.Display.drawRect(x + 2 + t, y + 2 + t, CELL_SIZE - 4 - 2 * t,
+                          CELL_SIZE - 4 - 2 * t, 0x001F);
+    }
   }
 
-  // Number buttons (1-6) at Y=520
+  // ===== RIGHT SIDE CONTROLS =====
+
+  // Number buttons (1-6) in 2 rows of 3
+  int numY = 80;
+  int numBtnW = 85;
+  int numBtnH = 70;
+  int numGap = 5;
+
   M5.Display.setTextSize(3);
   for (int i = 0; i < 6; i++) {
-    char num[2] = {(char)('1' + i), 0};
-    drawButton(30 + i * 75, 520, 70, 50, num);
+    int row = i / 3;
+    int col = i % 3;
+    int bx = BTN_X + col * (numBtnW + numGap);
+    int by = numY + row * (numBtnH + numGap);
+    char label[2] = {(char)('1' + i), '\0'};
+    drawButton(bx, by, numBtnW, numBtnH, label);
   }
 
-  // Control buttons
-  drawButton(510, 520, 80, 50, "CLR");
-  drawButton(600, 520, 90, 50, "CHECK");
-  drawButton(700, 520, 80, 50, "NEW");
+  // Control buttons at BOTTOM of right panel (moved down significantly)
+  int ctrlY = 380; // Bottom of screen area
+  int ctrlBtnW = 130;
 
-  // HOME button (top right)
   M5.Display.setTextSize(2);
-  drawButton(880, 10, 70, 40, "HOME");
+  drawButton(BTN_X, ctrlY, ctrlBtnW, 50, "CLEAR");
+  drawButton(BTN_X + ctrlBtnW + 10, ctrlY, ctrlBtnW, 50, "CHECK");
+
+  // NEW PUZZLE button (full width) at very bottom
+  int newY = ctrlY + 65;
+  drawButton(BTN_X, newY, 2 * ctrlBtnW + 10, 50, "NEW PUZZLE");
+
+  // Confirmation dialog overlay (if active)
+  if (_sudokuShowConfirm) {
+    // Semi-transparent background effect (just a white box for e-ink)
+    M5.Display.fillRoundRect(150, 200, 350, 160, 10, COLOR_WHITE);
+    M5.Display.drawRoundRect(150, 200, 350, 160, 10, COLOR_BLACK);
+    M5.Display.drawRoundRect(152, 202, 346, 156, 10, COLOR_BLACK);
+
+    M5.Display.setTextSize(2);
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setCursor(180, 220);
+    M5.Display.print("Start new puzzle?");
+    M5.Display.setCursor(170, 250);
+    M5.Display.print("Progress will be lost");
+
+    // YES / NO buttons
+    drawButton(180, 300, 110, 45, "YES");
+    drawButton(310, 300, 110, 45, "NO");
+  }
 }
 
-// Handle Sudoku touch
+// Handle Sudoku touch - ENHANCED
 void UIManager::handleSudokuTouch(int x, int y, TouchEvent event) {
-  if (event != TouchEvent::PRESS)
+  if (event != TouchEvent::RELEASE)
     return;
+
+  const int GRID_X = 30;
+  const int GRID_Y = 80;
+  const int CELL_SIZE = 75;
+  const int BTN_X = 520;
 
   Buzzer::click();
 
-  // Grid cell selection (30-540 x, 60-570 y)
-  if (x >= 30 && x < 540 && y >= 60 && y < 570) {
-    int row = (y - 60) / 85;
-    int col = (x - 30) / 85;
-
-    if (row >= 0 && row < 6 && col >= 0 && col < 6) {
-      if (!_sudokuGiven[row][col]) {
-        _sudokuSelectedRow = row;
-        _sudokuSelectedCol = col;
-        _needsRefresh = true;
-        _lastRefresh = 0;
-      }
+  // Handle confirmation dialog FIRST (blocks all other input)
+  if (_sudokuShowConfirm) {
+    // YES button (180-290, 300-345)
+    if (x >= 180 && x < 290 && y >= 300 && y < 345) {
+      _sudokuShowConfirm = false;
+      sudokuLoadRandomPuzzle(
+          _sudokuDifficulty); // Load random puzzle of current difficulty
+      M5.Display.setEpdMode(epd_mode_t::epd_quality);
+      _needsRefresh = true;
+      _lastRefresh = 0;
+      return;
     }
+    // NO button (310-420, 300-345)
+    if (x >= 310 && x < 420 && y >= 300 && y < 345) {
+      _sudokuShowConfirm = false;
+      _needsRefresh = true;
+      _lastRefresh = 0;
+      return;
+    }
+    return; // Block all other touches when dialog is shown
+  }
+
+  // HOME button (850-950, 10-50)
+  if (x >= 850 && x < 950 && y >= 10 && y < 50) {
+    navigateTo(ScreenID::HOME);
     return;
   }
 
-  // Number buttons (1-6) at Y=520-570
-  if (y >= 520 && y < 570 && x >= 30 && x < 480) {
-    int num = ((x - 30) / 75) + 1; // 1-6
-    if (_sudokuSelectedRow >= 0 && num >= 1 && num <= 6) {
-      _sudokuGrid[_sudokuSelectedRow][_sudokuSelectedCol] = num;
+  // Difficulty selector buttons (top right, below title)
+  int diffY = 15;
+  int diffBtnW = 80;
+  int diffGap = 5;
+
+  if (y >= diffY && y < diffY + 40) {
+    // EASY button
+    if (x >= BTN_X && x < BTN_X + diffBtnW) {
+      if (_sudokuDifficulty != 0) { // Only reload if changing
+        _sudokuDifficulty = 0;
+        sudokuLoadRandomPuzzle(0);
+        M5.Display.setEpdMode(epd_mode_t::epd_quality);
+        _needsRefresh = true;
+        _lastRefresh = 0;
+      }
+      return;
+    }
+    // MED button
+    if (x >= BTN_X + diffBtnW + diffGap && x < BTN_X + 2 * diffBtnW + diffGap) {
+      if (_sudokuDifficulty != 1) {
+        _sudokuDifficulty = 1;
+        sudokuLoadRandomPuzzle(1);
+        M5.Display.setEpdMode(epd_mode_t::epd_quality);
+        _needsRefresh = true;
+        _lastRefresh = 0;
+      }
+      return;
+    }
+    // HARD button
+    if (x >= BTN_X + 2 * (diffBtnW + diffGap) &&
+        x < BTN_X + 3 * diffBtnW + 2 * diffGap) {
+      if (_sudokuDifficulty != 2) {
+        _sudokuDifficulty = 2;
+        sudokuLoadRandomPuzzle(2);
+        M5.Display.setEpdMode(epd_mode_t::epd_quality);
+        _needsRefresh = true;
+        _lastRefresh = 0;
+      }
+      return;
+    }
+  }
+
+  // Grid cell selection (30-480 x, 80-530 y)
+  if (x >= GRID_X && x < GRID_X + 6 * CELL_SIZE && y >= GRID_Y &&
+      y < GRID_Y + 6 * CELL_SIZE) {
+    int row = (y - GRID_Y) / CELL_SIZE;
+    int col = (x - GRID_X) / CELL_SIZE;
+    if (row >= 0 && row < 6 && col >= 0 && col < 6 && !_sudokuGiven[row][col]) {
+      _sudokuSelectedRow = row;
+      _sudokuSelectedCol = col;
       _needsRefresh = true;
       _lastRefresh = 0;
     }
     return;
   }
 
-  // CLR button (510-590, 520-570)
-  if (x >= 510 && x < 590 && y >= 520 && y < 570) {
+  // Number buttons (1-6) in 2 rows of 3
+  int numY = 80;
+  int numBtnW = 85;
+  int numBtnH = 70;
+  int numGap = 5;
+
+  for (int i = 0; i < 6; i++) {
+    int row = i / 3;
+    int col = i % 3;
+    int bx = BTN_X + col * (numBtnW + numGap);
+    int by = numY + row * (numBtnH + numGap);
+    if (x >= bx && x < bx + numBtnW && y >= by && y < by + numBtnH) {
+      if (_sudokuSelectedRow >= 0) {
+        _sudokuGrid[_sudokuSelectedRow][_sudokuSelectedCol] = i + 1;
+        _needsRefresh = true;
+        _lastRefresh = 0;
+      }
+      return;
+    }
+  }
+
+  // Control buttons at bottom
+  int ctrlY = 380;
+  int ctrlBtnW = 130;
+
+  // CLEAR button
+  if (x >= BTN_X && x < BTN_X + ctrlBtnW && y >= ctrlY && y < ctrlY + 50) {
     sudokuClearCell();
+    M5.Display.setEpdMode(epd_mode_t::epd_quality);
     _needsRefresh = true;
     _lastRefresh = 0;
     return;
   }
 
-  // CHECK button (600-690, 520-570)
-  if (x >= 600 && x < 690 && y >= 520 && y < 570) {
+  // CHECK button
+  if (x >= BTN_X + ctrlBtnW + 10 && x < BTN_X + 2 * ctrlBtnW + 10 &&
+      y >= ctrlY && y < ctrlY + 50) {
     if (sudokuCheckWin()) {
-      // Show win message
-      M5.Display.fillRect(200, 250, 560, 100, COLOR_WHITE);
-      M5.Display.drawRect(200, 250, 560, 100, COLOR_BLACK);
+      M5.Display.fillRoundRect(150, 220, 250, 80, 10, COLOR_WHITE);
+      M5.Display.drawRoundRect(150, 220, 250, 80, 10, COLOR_BLACK);
       M5.Display.setTextSize(3);
-      M5.Display.setTextColor(GREEN);
-      M5.Display.setCursor(300, 280);
-      M5.Display.print("PUZZLE SOLVED!");
+      M5.Display.setTextColor(0x07E0);
+      M5.Display.setCursor(180, 250);
+      M5.Display.print("SOLVED!");
+      M5.Display.display();
       delay(2000);
     }
     _needsRefresh = true;
@@ -3813,23 +3991,13 @@ void UIManager::handleSudokuTouch(int x, int y, TouchEvent event) {
     return;
   }
 
-  // NEW button (700-780, 520-570)
-  if (x >= 700 && x < 780 && y >= 520 && y < 570) {
-    // Cycle to next puzzle
-    _sudokuPuzzleNum++;
-    if (_sudokuPuzzleNum > 3) {
-      _sudokuPuzzleNum = 1;
-      _sudokuDifficulty = (_sudokuDifficulty + 1) % 3; // Cycle difficulty
-    }
-    sudokuLoadPuzzle(_sudokuDifficulty, _sudokuPuzzleNum);
+  // NEW PUZZLE button - show confirmation dialog
+  int newY = ctrlY + 65;
+  if (x >= BTN_X && x < BTN_X + 2 * ctrlBtnW + 10 && y >= newY &&
+      y < newY + 50) {
+    _sudokuShowConfirm = true; // Show confirmation dialog
     _needsRefresh = true;
     _lastRefresh = 0;
-    return;
-  }
-
-  // HOME button (880-950, 10-50)
-  if (x >= 880 && x < 950 && y >= 10 && y < 50) {
-    navigateTo(ScreenID::HOME);
     return;
   }
 }
