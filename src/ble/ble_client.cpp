@@ -77,19 +77,26 @@ bool FossibotBLE::connectToDevice() {
     _client->setClientCallbacks(this);
 
     // Connection parameters
-    // Connection parameters (Strict for performance/compat)
-    _client->setConnectionParams(12, 12, 0,
-                                 150); // min, max interval, latency, timeout
-    _client->setConnectTimeout(
-        5); // 5 seconds (reduced from 10 to minimize UI freeze)
+    // Connection parameters (Relaxed for stability)
+    _client->setConnectionParams(12, 48, 0, 500); // 15-60ms, 5s timeout
+    _client->setConnectTimeout(10);               // 10 seconds scanning timeout
   }
 
   // Connect
-  // User requested removal of Random logic. Using default Public Address.
-  Serial.println("BLE: Connecting with AddrType: PUBLIC (Default)");
+  // Try Public Address first
+  Serial.println("BLE: Connecting with AddrType: PUBLIC...");
+  bool connected = _client->connect(_targetAddress);
 
-  if (!_client->connect(_targetAddress)) {
-    Serial.println("BLE: Failed to connect");
+  // If failed, try Random Address
+  if (!connected) {
+    Serial.println("BLE: Public failed. Trying RANDOM address type...");
+    NimBLEAddress randomAddr(_targetAddress);
+    randomAddr = NimBLEAddress(_targetAddress.toString(), 1); // 1=Random
+    connected = _client->connect(randomAddr);
+  }
+
+  if (!connected) {
+    Serial.println("BLE: Failed to connect (Public & Random)");
     return false;
   }
 
@@ -303,9 +310,14 @@ void FossibotBLE::sendCommand(uint8_t reg, uint16_t value) {
   command[6] = (crc >> 8) & 0xFF; // CRC high byte first (Fossibot protocol)
   command[7] = crc & 0xFF;        // CRC low byte second
 
-  _writeChar->writeValue(command, sizeof(command), false);
-  Serial.printf("BLE: Sent command reg=%d value=%d (CRC=0x%04X)\n", reg, value,
-                crc);
+  bool success = _writeChar->writeValue(command, sizeof(command), false);
+  if (success) {
+    Serial.printf("BLE: Sent command reg=%d value=%d (CRC=0x%04X)\n", reg,
+                  value, crc);
+  } else {
+    Serial.printf("BLE: ERROR Failed to send command reg=%d value=%d\n", reg,
+                  value);
+  }
 }
 
 void FossibotBLE::toggleUSB() {
@@ -318,6 +330,99 @@ void FossibotBLE::toggleDC() {
 
 void FossibotBLE::toggleAC() {
   sendCommand(Fossibot::ControlReg::AC_TOGGLE, _data.acActive ? 0 : 1);
+}
+
+// ============================================================
+// Fossibot Settings Commands Implementation
+// ============================================================
+
+void FossibotBLE::setBuzzerEnabled(bool enabled) {
+  sendCommand(Fossibot::ControlReg::KEY_SOUND, enabled ? 1 : 0);
+  Serial.printf("BLE: Buzzer %s\n", enabled ? "enabled" : "disabled");
+}
+
+void FossibotBLE::setSilentCharging(bool enabled) {
+  sendCommand(Fossibot::ControlReg::SILENT_CHARGING, enabled ? 1 : 0);
+  Serial.printf("BLE: Silent charging %s\n", enabled ? "enabled" : "disabled");
+}
+
+void FossibotBLE::setLightMode(int mode) {
+  if (mode < 0)
+    mode = 0;
+  if (mode > 3)
+    mode = 3;
+  sendCommand(Fossibot::ControlReg::LIGHT_MODE, mode);
+  const char *modeNames[] = {"OFF", "ON", "FLASH", "SOS"};
+  Serial.printf("BLE: Light mode set to %s\n", modeNames[mode]);
+}
+
+void FossibotBLE::setDischargeLimit(int percent) {
+  if (percent < 0)
+    percent = 0;
+  if (percent > 30)
+    percent = 30;
+  // Value is in 0.1% units (e.g., 100 = 10%)
+  sendCommand(Fossibot::ControlReg::DISCHARGE_LIMIT, percent * 10);
+  Serial.printf("BLE: Discharge limit set to %d%%\n", percent);
+}
+
+void FossibotBLE::setChargeLimit(int percent) {
+  if (percent < 60)
+    percent = 60;
+  if (percent > 100)
+    percent = 100;
+  // Value is in 0.1% units (e.g., 1000 = 100%)
+  sendCommand(Fossibot::ControlReg::CHARGE_LIMIT, percent * 10);
+  Serial.printf("BLE: Charge limit set to %d%%\n", percent);
+}
+
+void FossibotBLE::setScreenTimeout(int minutes) {
+  if (minutes < 0)
+    minutes = 0;
+  sendCommand(Fossibot::ControlReg::SCREEN_TIMEOUT, minutes);
+  Serial.printf("BLE: Screen timeout set to %d minutes\n", minutes);
+}
+
+void FossibotBLE::setSysStandby(int minutes) {
+  if (minutes < 0)
+    minutes = 0;
+  sendCommand(Fossibot::ControlReg::SYS_STANDBY, minutes);
+  Serial.printf("BLE: System standby set to %d minutes\n", minutes);
+}
+
+void FossibotBLE::setACStandby(int minutes) {
+  if (minutes < 0)
+    minutes = 0;
+  sendCommand(Fossibot::ControlReg::AC_STANDBY, minutes);
+  Serial.printf("BLE: AC standby set to %d minutes\n", minutes);
+}
+
+void FossibotBLE::setDCStandby(int minutes) {
+  if (minutes < 0)
+    minutes = 0;
+  sendCommand(Fossibot::ControlReg::DC_STANDBY, minutes);
+  Serial.printf("BLE: DC standby set to %d minutes\n", minutes);
+}
+
+void FossibotBLE::setUSBStandby(int seconds) {
+  if (seconds < 0)
+    seconds = 0;
+  sendCommand(Fossibot::ControlReg::USB_STANDBY, seconds);
+  Serial.printf("BLE: USB standby set to %d seconds\n", seconds);
+}
+
+void FossibotBLE::powerOff() {
+  Serial.println("BLE: Sending Power OFF command (1)...");
+  sendCommand(Fossibot::ControlReg::POWER_OFF, 1);
+  delay(200); // Ensure command goes out before any state change
+  Serial.println("BLE: Power off command sent!");
+}
+
+void FossibotBLE::setScheduleCharge(int minutes) {
+  if (minutes < 0)
+    minutes = 0;
+  sendCommand(Fossibot::ControlReg::SCHEDULE_CHARGE, minutes);
+  Serial.printf("BLE: Schedule charge set to %d minutes from now\n", minutes);
 }
 
 void FossibotBLE::notifyCallback(NimBLERemoteCharacteristic *characteristic,
@@ -389,9 +494,36 @@ void FossibotBLE::parseStatusData(const uint8_t *data, size_t length) {
 }
 
 void FossibotBLE::parseSettingsData(const uint8_t *data, size_t length) {
-  // Settings data parsing - similar structure to status
-  // Currently just log it
-  Serial.printf("BLE: Settings data received (%d bytes)\n", length);
+  // Settings data parsing - same structure as status (0x1103)
+  if (length < 10)
+    return;
+
+  // Helper to extract register value
+  auto getRegValue = [data, length](uint16_t regIndex) -> uint16_t {
+    uint16_t offset = 6 + (regIndex * 2);
+    if (offset + 1 >= length)
+      return 0;
+    return (data[offset] << 8) | data[offset + 1];
+  };
+
+  // Parse Fossibot settings registers
+  _data.lightMode = getRegValue(27);
+  _data.buzzerEnabled = (getRegValue(56) == 1);
+  _data.silentCharging = (getRegValue(57) == 1);
+  _data.screenTimeout = getRegValue(59);
+  _data.acStandby = getRegValue(60);
+  _data.dcStandby = getRegValue(61);
+  _data.usbStandby = getRegValue(62);
+  _data.scheduleCharge = getRegValue(63);
+  _data.dischargeLimit = getRegValue(66) / 10; // Convert from 0.1% to %
+  _data.chargeLimit = getRegValue(67) / 10;    // Convert from 0.1% to %
+  _data.sysStandby = getRegValue(68);
+  _data.settingsReceived = true;
+
+  Serial.printf("BLE: Settings received - Buzzer:%d Silent:%d Light:%d "
+                "Charge:%d%% Discharge:%d%%\n",
+                _data.buzzerEnabled, _data.silentCharging, _data.lightMode,
+                _data.chargeLimit, _data.dischargeLimit);
 }
 
 // NimBLE callbacks

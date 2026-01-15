@@ -77,6 +77,70 @@ public:
    */
   void toggleAC();
 
+  // ============================================================
+  // Fossibot Settings Commands
+  // ============================================================
+
+  /**
+   * Enable/disable button beep sound on Fossibot
+   */
+  void setBuzzerEnabled(bool enabled);
+
+  /**
+   * Enable/disable silent (quiet) charging mode
+   */
+  void setSilentCharging(bool enabled);
+
+  /**
+   * Set LED light mode: 0=off, 1=on, 2=flash, 3=sos
+   */
+  void setLightMode(int mode);
+
+  /**
+   * Set discharge lower limit (0-30%)
+   */
+  void setDischargeLimit(int percent);
+
+  /**
+   * Set charge upper limit / EPS (60-100%)
+   */
+  void setChargeLimit(int percent);
+
+  /**
+   * Set screen timeout in minutes (0=never)
+   */
+  void setScreenTimeout(int minutes);
+
+  /**
+   * Set system idle shutdown timer in minutes (0=never)
+   */
+  void setSysStandby(int minutes);
+
+  /**
+   * Set AC standby timeout in minutes (0=never)
+   */
+  void setACStandby(int minutes);
+
+  /**
+   * Set DC standby timeout in minutes (0=never)
+   */
+  void setDCStandby(int minutes);
+
+  /**
+   * Set USB standby timeout in seconds (0=never)
+   */
+  void setUSBStandby(int seconds);
+
+  /**
+   * Power off the Fossibot device
+   */
+  void powerOff();
+
+  /**
+   * Set schedule charge - sends minutes from now until charge starts
+   */
+  void setScheduleCharge(int minutes);
+
   // NimBLE callbacks
   void onConnect(NimBLEClient *client) override;
   void onDisconnect(NimBLEClient *client) override;

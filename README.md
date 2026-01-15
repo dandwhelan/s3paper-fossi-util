@@ -18,6 +18,13 @@ A "retro dashboard" interface for M5Paper S3 that displays and controls Fossibot
 - **Data Persistence**: Data saved to SD card continuously.
 - **Optimized UI**: Fast loading, high-contrast black/white design, and configurable filters.
 
+### ⚙️ Device Settings & Timers
+
+- **Full Control**: Configure Screen Timeout, System Idle, AC/DC Standby (Minutes), and USB Standby (Seconds) with correct hardware units.
+- **Behavior Config**: Toggle Silent Charging, LED Light modes, and Buzzer.
+- **Charge Scheduling**: Set delayed charging targets.
+- **Smart Sync**: Bidirectional synchronization with device state.
+
 ### 📝 Notes (Scribble Pad)
 
 *New in v2.0!*
@@ -35,14 +42,12 @@ A "retro dashboard" interface for M5Paper S3 that displays and controls Fossibot
 - Standard arithmetic operations (+, -, *, /).
 - Clean Retro UI.
 
-### 🍅 Pomodoro Timer
+### ⏱️ Timer & Pomodoro
 
-*New in v2.0!*
-
-- Focus Timer (25 min) and Break Timer (5 min).
-- Visual Progress Bar.
-- Play/Pause/Reset controls.
-- Background operation (timer continues even if you switch screens).
+- **Timer**: Standard countdown timer with presets.
+- **Pomodoro**: Focus Timer (25 min) and Break Timer (5 min).
+- **Background operation**: Timers continue even if you switch screens.
+- *(Note: Alarm feature removed in v2.3 favored for Timer)*
 
 ### 🎮 Games Center
 
@@ -63,6 +68,7 @@ A "retro dashboard" interface for M5Paper S3 that displays and controls Fossibot
 - **Dual I2C Architecture**: Solved hardware conflict between Touch (GT911) and RTC (BM8563) by separating buses.
 - **Enhanced Stability**: Fixed crashes related to stack overflow and I2C collisions.
 - **Optimized UI**: Improved button responsiveness and layout.
+- **BLE Connection**: Relaxed parameters for reliable Fossibot pairing.
 
 ---
 
@@ -98,10 +104,10 @@ Power on your Fossibot and the M5Paper S3 will automatically scan and connect.
 
 ## Development Plan & Roadmap
 
-### Completed (v2.0 - v2.2) ✅
+### Completed (v2.0 - v2.3) ✅
 
 - [x] **I2C Conflict Fix**: Separated Touch (Wire1) and RTC (Wire).
-- [x] **Pomodoro Timer**: Functional timer with background tracking.
+- [x] **Pomodoro & Timer**: Functional timer with background tracking.
 - [x] **Calculator**: Basic UI and logic implementation.
 - [x] **Sudoku**: Full game implementation with difficulty levels.
 - [x] **2048**: Classic puzzle game with auto-save.
@@ -111,9 +117,13 @@ Power on your Fossibot and the M5Paper S3 will automatically scan and connect.
   - [x] Save to SD Card (as BMP).
   - [x] File Browser for past notes.
 - [x] **History Graph**:
-  - [x] 7-Day Power History.
+  - [x] 7-Day Power History with Dynamic Scaling.
   - [x] Multi-metric visualization.
   - [x] Persistent Storage.
+- [x] **Device Settings**:
+  - [x] Timer configuration (AC/DC/USB/Screen).
+  - [x] LED, Silent Charge, Buzzer control.
+  - [x] Fixed Protocol Units (Min vs Sec).
 
 ### Upcoming 🚧
 

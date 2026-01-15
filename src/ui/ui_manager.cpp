@@ -118,6 +118,15 @@ void UIManager::update() {
   case ScreenID::SETTINGS:
     drawSettingsScreen();
     break;
+  case ScreenID::SETTINGS_DEVICE:
+    drawDeviceSettingsScreen();
+    break;
+  case ScreenID::SETTINGS_FOSSIBOT:
+    drawFossibotSettingsScreen();
+    break;
+  case ScreenID::SETTINGS_FOSSIBOT_TIMERS:
+    drawFossibotTimersScreen();
+    break;
   case ScreenID::CLOCK:
     updatePomodoro(); // Update timer logic before drawing
     drawClockScreen();
@@ -218,6 +227,12 @@ void UIManager::handleTouch(int x, int y, TouchEvent event) {
           handleGamesMenuTouch(x, y);
         } else if (_currentScreen == ScreenID::HISTORY) {
           handleHistoryTouch(x, y, event);
+        } else if (_currentScreen == ScreenID::SETTINGS_DEVICE) {
+          handleDeviceSettingsTouch(x, y);
+        } else if (_currentScreen == ScreenID::SETTINGS_FOSSIBOT) {
+          handleFossibotSettingsTouch(x, y);
+        } else if (_currentScreen == ScreenID::SETTINGS_FOSSIBOT_TIMERS) {
+          handleFossibotTimersTouch(x, y);
         }
       }
 
@@ -309,6 +324,24 @@ void UIManager::goBack() { navigateTo(_previousScreen); }
 void UIManager::updatePowerBankData(const Fossibot::PowerBankData &data) {
   _powerData = data;
   _powerDataDirty = true;
+
+  // Sync Fossibot settings to local UI variables (for preset highlighting)
+  // Block sync if user recently interacted (5s) to prevent value bouncing
+  bool suppressSync = (millis() - _lastTimerSetTime < 5000);
+
+  if (data.settingsReceived && !suppressSync) {
+    _fossiBuzzerEnabled = data.buzzerEnabled;
+    _fossiSilentCharging = data.silentCharging;
+    _fossiLightMode = data.lightMode;
+    _fossiChargeLimit = data.chargeLimit;
+    _fossiDischargeLimit = data.dischargeLimit;
+    _fossiScreenTimeout = data.screenTimeout;
+    _fossiACStandby = data.acStandby;
+    _fossiDCStandby = data.dcStandby;
+    _fossiUSBStandby = data.usbStandby;
+    _fossiSysStandby = data.sysStandby;
+    _fossiScheduleChargeRemaining = data.scheduleCharge;
+  }
 
   // Block auto-refresh in Notes mode to prevent clearing scribbles
   if (_currentScreen == ScreenID::NOTES) {
@@ -421,8 +454,7 @@ void UIManager::drawPowerPanel(int x, int y, int w, int h, const char *title,
   M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setTextSize(3); // Increased from 2
   M5.Display.setCursor(x + 20, y + 15);
-  M5.Display.print(isInput ? "IN "
-                           : "OUT "); // Start with arrows when font supports
+  // Prefixes removed to avoid "IN IN" / "OUT OUT" duplication
   M5.Display.print(title);
 
   // Power value (large)
@@ -715,6 +747,7 @@ void UIManager::handleHomeTouch(int x, int y, TouchEvent event) {
 }
 
 void UIManager::drawSettingsScreen() {
+  // Main Settings Menu - tile navigation to sub-screens
   M5.Display.fillScreen(COLOR_WHITE);
   drawMenuBar();
 
@@ -724,8 +757,97 @@ void UIManager::drawSettingsScreen() {
   M5.Display.setCursor(SCREEN_WIDTH / 2 - 80, 20);
   M5.Display.print("Settings");
 
+  // Navigation tiles (using 200x70 buttons like SD Diag, History)
+  int btnW = 200;
+  int btnH = 70;
+  int startY = 100;
+  int spacing = 20;
+  int col1X = SCREEN_WIDTH / 2 - btnW - spacing / 2;
+  int col2X = SCREEN_WIDTH / 2 + spacing / 2;
+
+  // Row 1: Device Settings | Fossibot
+  drawButton(col1X, startY, btnW, btnH, "Device", true);
+  drawButton(col2X, startY, btnW, btnH, "Fossibot", true);
+
+  // Row 2: SD Diag | History
+  int row2Y = startY + btnH + spacing;
+  drawButton(col1X, row2Y, btnW, btnH, "SD Diag");
+  drawButton(col2X, row2Y, btnW, btnH, "History");
+
+  // Row 3: Back button centered
+  int row3Y = row2Y + btnH + spacing;
+  drawButton(SCREEN_WIDTH / 2 - btnW / 2, row3Y, btnW, btnH, "Back");
+
+  // --- Battery Status (Top Right) ---
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(SCREEN_WIDTH - 220, 15);
+  float voltage = Battery::getVoltage();
+  int percentage = Battery::getPercentage();
+  M5.Display.printf("Bat: %d%% (%.2fV)", percentage, voltage);
+}
+
+void UIManager::handleSettingsTouch(int x, int y) {
+  // Touch handler for main settings menu
+  auto isHit = [&](int bx, int by, int bw, int bh) {
+    if (x >= bx && x < bx + bw && y >= by && y < by + bh) {
+      Buzzer::click();
+      return true;
+    }
+    return false;
+  };
+
+  int btnW = 200;
+  int btnH = 70;
+  int startY = 100;
+  int spacing = 20;
+  int col1X = SCREEN_WIDTH / 2 - btnW - spacing / 2;
+  int col2X = SCREEN_WIDTH / 2 + spacing / 2;
+  int row2Y = startY + btnH + spacing;
+  int row3Y = row2Y + btnH + spacing;
+
+  // Device Settings
+  if (isHit(col1X, startY, btnW, btnH)) {
+    navigateTo(ScreenID::SETTINGS_DEVICE);
+    return;
+  }
+  // Fossibot
+  if (isHit(col2X, startY, btnW, btnH)) {
+    navigateTo(ScreenID::SETTINGS_FOSSIBOT);
+    return;
+  }
+  // SD Diag
+  if (isHit(col1X, row2Y, btnW, btnH)) {
+    navigateTo(ScreenID::SD_DIAG);
+    return;
+  }
+  // History
+  if (isHit(col2X, row2Y, btnW, btnH)) {
+    navigateTo(ScreenID::HISTORY);
+    return;
+  }
+  // Back
+  if (isHit(SCREEN_WIDTH / 2 - btnW / 2, row3Y, btnW, btnH)) {
+    navigateTo(ScreenID::HOME);
+    return;
+  }
+}
+
+// ============================================================================
+// Device Settings Screen (Date/Time/Refresh/Sleep)
+// ============================================================================
+
+void UIManager::drawDeviceSettingsScreen() {
+  M5.Display.fillScreen(COLOR_WHITE);
+  drawMenuBar();
+
+  // Title - centered
+  M5.Display.setTextSize(4);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(SCREEN_WIDTH / 2 - 140, 20);
+  M5.Display.print("Device Settings");
+
   // --- Date ---
-  int y = 120;
+  int y = 100;
   M5.Display.setTextSize(3);
   M5.Display.setCursor(20, y + 15);
   M5.Display.print("Date:");
@@ -749,7 +871,7 @@ void UIManager::drawSettingsScreen() {
   drawButton(810, y, 60, 60, "+");
 
   // --- Time ---
-  y = 220;
+  y = 200;
   M5.Display.setCursor(20, y + 15);
   M5.Display.print("Time:");
 
@@ -766,56 +888,37 @@ void UIManager::drawSettingsScreen() {
   drawButton(570, y, 70, 60, "+");
 
   // --- Refresh Rate (Left Side) ---
-  y = 320;
+  y = 300;
   M5.Display.setCursor(20, y + 15);
   M5.Display.print("Refresh:");
 
-  // - Button
   drawButton(160, y, 60, 60, "-");
-  // Value display
   char rateStr[32];
   snprintf(rateStr, sizeof(rateStr), "%ds", _refreshRateSeconds);
   M5.Display.setCursor(240, y + 15);
   M5.Display.print(rateStr);
-  // + Button
   drawButton(320, y, 60, 60, "+");
 
   // --- Sleep Timeout (Right Side) ---
-  // Uses remaining space on Row 3
   M5.Display.setCursor(450, y + 15);
   M5.Display.print("Sleep:");
 
-  // - Button
   drawButton(560, y, 60, 60, "-");
-
-  // Value display
   M5.Display.setCursor(640, y + 15);
   if (_editAutoSleep == 0) {
     M5.Display.print("Never");
   } else {
     M5.Display.printf("%dm", _editAutoSleep);
   }
-
-  // + Button
   drawButton(740, y, 60, 60, "+");
 
   // --- Actions ---
   y = 400;
-  drawButton(100, y, 200, 70, "History"); // Next to SD Diag
-  drawButton(320, y, 200, 70, "SD Diag");
-  drawButton(540, y, 200, 70, "SAVE", true);
-  drawButton(750, y, 200, 70, "CANCEL");
-
-  // --- Battery Status (Moved to Top Right) ---
-  M5.Display.setTextSize(2);
-  M5.Display.setCursor(SCREEN_WIDTH - 220, 15);
-  float voltage = Battery::getVoltage();
-  int percentage = Battery::getPercentage();
-  M5.Display.printf("Bat: %d%% (%.2fV)", percentage, voltage);
+  drawButton(320, y, 200, 70, "SAVE", true);
+  drawButton(540, y, 200, 70, "CANCEL");
 }
 
-void UIManager::handleSettingsTouch(int x, int y) {
-  // Check buttons
+void UIManager::handleDeviceSettingsTouch(int x, int y) {
   auto isHit = [&](int bx, int by, int bw, int bh) {
     if (x >= bx && x < bx + bw && y >= by && y < by + bh) {
       Buzzer::click();
@@ -824,7 +927,7 @@ void UIManager::handleSettingsTouch(int x, int y) {
     return false;
   };
 
-  int row1 = 120;
+  int row1 = 100;
   // Year
   if (isHit(160, row1, 90, 60))
     _editYear--;
@@ -855,7 +958,7 @@ void UIManager::handleSettingsTouch(int x, int y) {
       _editDay = 1;
   }
 
-  int row2 = 220;
+  int row2 = 200;
   // Hour
   if (isHit(160, row2, 70, 60)) {
     _editHour--;
@@ -880,24 +983,22 @@ void UIManager::handleSettingsTouch(int x, int y) {
       _editMinute = 0;
   }
 
-  int row3 = 320;
+  int row3 = 300;
   // Refresh Rate -5
-  if (isHit(200, row3, 80, 60)) {
+  if (isHit(160, row3, 60, 60)) {
     _refreshRateSeconds -= 5;
     if (_refreshRateSeconds < 5)
-      _refreshRateSeconds = 5; // Minimum 5s
+      _refreshRateSeconds = 5;
   }
   // Refresh Rate +5
   if (isHit(320, row3, 60, 60)) {
     _refreshRateSeconds += 5;
     if (_refreshRateSeconds > 300)
-      _refreshRateSeconds = 300; // Max 5 minutes
+      _refreshRateSeconds = 300;
   }
 
   // --- Sleep Timeout ---
-  // Minus Button
   if (isHit(560, row3, 60, 60)) {
-    // 0, 5, 15, 30, 60
     if (_editAutoSleep > 30)
       _editAutoSleep = 30;
     else if (_editAutoSleep > 15)
@@ -907,10 +1008,8 @@ void UIManager::handleSettingsTouch(int x, int y) {
     else if (_editAutoSleep > 0)
       _editAutoSleep = 0;
     else
-      _editAutoSleep = 60; // Wrap around
+      _editAutoSleep = 60;
   }
-
-  // Plus Button
   if (isHit(740, row3, 60, 60)) {
     if (_editAutoSleep == 0)
       _editAutoSleep = 5;
@@ -921,31 +1020,17 @@ void UIManager::handleSettingsTouch(int x, int y) {
     else if (_editAutoSleep < 60)
       _editAutoSleep = 60;
     else
-      _editAutoSleep = 0; // Wrap around
+      _editAutoSleep = 0;
   }
 
   int row4 = 400;
-  // History
-  if (isHit(100, row4, 200, 70)) {
-    navigateTo(ScreenID::HISTORY);
-    return;
-  }
-  // SD Diag
-  if (isHit(320, row4, 200, 70)) {
-    Serial.println("Settings: Opening SD Diagnostics");
-    navigateTo(ScreenID::SD_DIAG);
-    return;
-  }
   // Save
-  if (isHit(540, row4, 200, 70)) {
-    // Save to RTC via direct Wire access
+  if (isHit(320, row4, 200, 70)) {
     RTC::setDateTime(_editYear, _editMonth, _editDay, _editHour, _editMinute,
                      0);
-
     Serial.printf("RTC Time Set: %04d-%02d-%02d %02d:%02d:00\n", _editYear,
                   _editMonth, _editDay, _editHour, _editMinute);
 
-    // Save Config (Sleep Timeout)
     extern Config *config;
     if (config) {
       config->setAutoSleepMinutes(_editAutoSleep);
@@ -954,13 +1039,634 @@ void UIManager::handleSettingsTouch(int x, int y) {
     }
 
     Buzzer::click();
-    navigateTo(ScreenID::HOME);
+    navigateTo(ScreenID::SETTINGS);
   }
 
   // Cancel
-  if (isHit(750, row4, 200, 70)) {
+  if (isHit(540, row4, 200, 70)) {
     Buzzer::click();
-    navigateTo(ScreenID::HOME);
+    navigateTo(ScreenID::SETTINGS);
+  }
+}
+
+// ============================================================================
+// Fossibot Settings Screen (Quick Actions, Power Limits, Timers)
+// ============================================================================
+
+void UIManager::drawFossibotSettingsScreen() {
+  M5.Display.fillScreen(COLOR_WHITE);
+  drawMenuBar();
+
+  // Title
+  M5.Display.setTextSize(4);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(SCREEN_WIDTH / 2 - 140, 15);
+  M5.Display.print("Fossibot Settings");
+
+  // Sync values from BLE data if available
+  if (bleClient && bleClient->isConnected()) {
+    const auto &data = bleClient->getData();
+    if (data.settingsReceived) {
+      _fossiBuzzerEnabled = data.buzzerEnabled;
+      _fossiSilentCharging = data.silentCharging;
+      _fossiLightMode = data.lightMode;
+      _fossiDischargeLimit = data.dischargeLimit;
+      _fossiChargeLimit = data.chargeLimit;
+      _fossiScreenTimeout = data.screenTimeout;
+      _fossiSysStandby = data.sysStandby;
+      _fossiACStandby = data.acStandby;
+      _fossiDCStandby = data.dcStandby;
+      _fossiUSBStandby = data.usbStandby;
+    }
+  }
+
+  M5.Display.setTextSize(2);
+  int y = 60;
+  int labelX = 30;
+  int toggleX = 400;
+  int rowH = 45;
+
+  // === Quick Actions Section ===
+  M5.Display.setTextColor(COLOR_DARK_GRAY);
+  M5.Display.setCursor(labelX, y);
+  M5.Display.print("-- Quick Actions --");
+  y += rowH;
+
+  // Buzzer
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(labelX, y);
+  M5.Display.print("Buzzer (Key Sound)");
+  drawButton(toggleX, y - 10, 100, 40, _fossiBuzzerEnabled ? "ON" : "OFF",
+             _fossiBuzzerEnabled);
+  y += rowH;
+
+  // Silent Charging
+  M5.Display.setTextColor(COLOR_BLACK); // Ensure text is visible
+  M5.Display.setCursor(labelX, y);
+  M5.Display.print("Silent Charging");
+  drawButton(toggleX, y - 10, 100, 40, _fossiSilentCharging ? "ON" : "OFF",
+             _fossiSilentCharging);
+  y += rowH;
+
+  // LED Light
+  M5.Display.setCursor(labelX, y);
+  M5.Display.print("LED Light");
+  const char *lightLabels[] = {"OFF", "ON", "FLASH", "SOS"};
+  drawButton(toggleX, y - 10, 100, 40, lightLabels[_fossiLightMode],
+             _fossiLightMode > 0);
+  y += rowH + 10;
+
+  // === Power Limits Section ===
+  M5.Display.setTextColor(COLOR_DARK_GRAY);
+  M5.Display.setCursor(labelX, y);
+  M5.Display.print("-- Power Limits --");
+  y += rowH;
+
+  // Charge Limit
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(labelX, y);
+  M5.Display.print("Charge Limit (EPS)");
+  char limitStr[16];
+  snprintf(limitStr, sizeof(limitStr), "%d%%", _fossiChargeLimit);
+  drawButton(toggleX - 60, y - 10, 50, 40, "-");
+  M5.Display.setCursor(toggleX + 5, y);
+  M5.Display.print(limitStr);
+  drawButton(toggleX + 70, y - 10, 50, 40, "+");
+  y += rowH;
+
+  // Discharge Limit
+  M5.Display.setCursor(labelX, y);
+  M5.Display.print("Discharge Limit");
+  snprintf(limitStr, sizeof(limitStr), "%d%%", _fossiDischargeLimit);
+  drawButton(toggleX - 60, y - 10, 50, 40, "-");
+  M5.Display.setCursor(toggleX + 5, y);
+  M5.Display.print(limitStr);
+  drawButton(toggleX + 70, y - 10, 50, 40, "+");
+  y += rowH + 10;
+
+  // === Timers Section (Right Column) - Navigate to sub-screen ===
+  int col2X = 550;
+  int col2Y = 120;
+
+  drawButton(col2X, col2Y, 200, 60, "TIMERS", true);
+
+  M5.Display.setTextSize(2);
+  M5.Display.setTextColor(COLOR_DARK_GRAY);
+  M5.Display.setCursor(col2X + 10, col2Y + 70);
+  M5.Display.print("Standby & Schedule");
+
+  // === Power Off Button ===
+  drawButton(col2X, col2Y + 120, 200, 60, "POWER OFF", true);
+
+  // --- Action Buttons ---
+  y = 420;
+  drawButton(320, y, 200, 55, "SAVE", true);
+  drawButton(540, y, 200, 55, "BACK");
+
+  // Connection status indicator
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(SCREEN_WIDTH - 200, 20);
+  if (bleClient && bleClient->isConnected()) {
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.print("Connected");
+  } else {
+    M5.Display.setTextColor(COLOR_GRAY);
+    M5.Display.print("Not Connected");
+  }
+
+  // === Power Off Confirmation Dialog ===
+  if (_showPowerOffConfirmation) {
+    // Draw modal overlay
+    M5.Display.fillRect(200, 150, 560, 240, COLOR_WHITE);
+    M5.Display.drawRect(200, 150, 560, 240, COLOR_BLACK);
+    M5.Display.drawRect(201, 151, 558, 238, COLOR_BLACK);
+
+    M5.Display.setTextSize(3);
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setCursor(240, 180);
+    M5.Display.print("Are you sure you want");
+    M5.Display.setCursor(320, 220);
+    M5.Display.print("to power off?");
+
+    drawButton(280, 290, 150, 60, "YES", true);
+    drawButton(530, 290, 150, 60, "NO");
+  }
+}
+
+void UIManager::handleFossibotSettingsTouch(int x, int y) {
+  auto isHit = [&](int bx, int by, int bw, int bh) {
+    if (x >= bx && x < bx + bw && y >= by && y < by + bh) {
+      Buzzer::click();
+      return true;
+    }
+    return false;
+  };
+
+  // === Power Off Confirmation ===
+  if (_showPowerOffConfirmation) {
+    // YES button
+    if (isHit(280, 290, 150, 60)) {
+      if (bleClient && bleClient->isConnected()) {
+        bleClient->powerOff();
+      }
+      _showPowerOffConfirmation = false;
+      navigateTo(ScreenID::HOME); // Assume power off creates disconnect
+      return;
+    }
+    // NO button
+    if (isHit(530, 290, 150, 60)) {
+      _showPowerOffConfirmation = false;
+      forceRefresh();
+      return;
+    }
+    return; // Block other inputs
+  }
+
+  int toggleX = 400;
+  int rowH = 45;
+  int baseY = 60 + rowH; // After section header
+
+  // Buzzer toggle
+  if (isHit(toggleX, baseY - 10, 100, 40)) {
+    _fossiBuzzerEnabled = !_fossiBuzzerEnabled;
+    if (bleClient && bleClient->isConnected()) {
+      bleClient->setBuzzerEnabled(_fossiBuzzerEnabled);
+    }
+    forceRefresh();
+    return;
+  }
+  baseY += rowH;
+
+  // Silent Charging toggle
+  if (isHit(toggleX, baseY - 10, 100, 40)) {
+    _fossiSilentCharging = !_fossiSilentCharging;
+    if (bleClient && bleClient->isConnected()) {
+      bleClient->setSilentCharging(_fossiSilentCharging);
+    }
+    forceRefresh();
+    return;
+  }
+  baseY += rowH;
+
+  // LED Light cycle (0->1->2->3->0)
+  if (isHit(toggleX, baseY - 10, 100, 40)) {
+    _fossiLightMode = (_fossiLightMode + 1) % 4;
+    if (bleClient && bleClient->isConnected()) {
+      bleClient->setLightMode(_fossiLightMode);
+    }
+    forceRefresh();
+    return;
+  }
+  baseY += rowH + 10 + rowH; // Skip Power Limits header
+
+  // Charge Limit -
+  if (isHit(toggleX - 60, baseY - 10, 50, 40)) {
+    _fossiChargeLimit -= 10;
+    if (_fossiChargeLimit < 60)
+      _fossiChargeLimit = 60;
+    if (bleClient && bleClient->isConnected()) {
+      bleClient->setChargeLimit(_fossiChargeLimit);
+    }
+    forceRefresh();
+    return;
+  }
+  // Charge Limit +
+  if (isHit(toggleX + 70, baseY - 10, 50, 40)) {
+    _fossiChargeLimit += 10;
+    if (_fossiChargeLimit > 100)
+      _fossiChargeLimit = 100;
+    if (bleClient && bleClient->isConnected()) {
+      bleClient->setChargeLimit(_fossiChargeLimit);
+    }
+    forceRefresh();
+    return;
+  }
+  baseY += rowH;
+
+  // Discharge Limit -
+  if (isHit(toggleX - 60, baseY - 10, 50, 40)) {
+    _fossiDischargeLimit -= 5;
+    if (_fossiDischargeLimit < 0)
+      _fossiDischargeLimit = 0;
+    if (bleClient && bleClient->isConnected()) {
+      bleClient->setDischargeLimit(_fossiDischargeLimit);
+    }
+    forceRefresh();
+    return;
+  }
+  // Discharge Limit +
+  if (isHit(toggleX + 70, baseY - 10, 50, 40)) {
+    _fossiDischargeLimit += 5;
+    if (_fossiDischargeLimit > 30)
+      _fossiDischargeLimit = 30;
+    if (bleClient && bleClient->isConnected()) {
+      bleClient->setDischargeLimit(_fossiDischargeLimit);
+    }
+    forceRefresh();
+    return;
+  }
+
+  // === TIMERS button (Right Column) - Navigate to Timers sub-screen ===
+  int col2X = 550;
+  int col2Y = 120;
+  if (isHit(col2X, col2Y, 200, 60)) {
+    navigateTo(ScreenID::SETTINGS_FOSSIBOT_TIMERS);
+    return;
+  }
+
+  // === Power Off Button ===
+  if (isHit(col2X, col2Y + 120, 200, 60)) {
+    _showPowerOffConfirmation = true;
+    forceRefresh();
+    return;
+  }
+
+  // Action buttons (Y updated to match moved buttons)
+  int actionY = 420;
+  // Save - just refresh to confirm
+  if (isHit(320, actionY, 200, 55)) {
+    // Values are sent immediately on change, just go back
+    navigateTo(ScreenID::SETTINGS);
+    return;
+  }
+  // Back
+  if (isHit(540, actionY, 200, 55)) {
+    navigateTo(ScreenID::SETTINGS);
+    return;
+  }
+}
+
+// ============================================================================
+// Fossibot Timers Sub-Screen (Output standby timers + Schedule Charge)
+// ============================================================================
+
+void UIManager::drawFossibotTimersScreen() {
+  M5.Display.fillScreen(COLOR_WHITE);
+  drawMenuBar();
+
+  // === Header ===
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(3);
+  M5.Display.setCursor(SCREEN_WIDTH / 2 - 120, 15);
+  M5.Display.print("Fossibot Timers");
+
+  M5.Display.setTextSize(2);
+  int y = 65;
+  int labelX = 20;
+  int btnStartX = 280;
+  int btnW = 60;
+  int btnH = 35;
+  int btnGap = 10;
+  int rowGap = 45;
+
+  // --- PRESETS DEFINITIONS ---
+  const int acPresets[] = {60, 480, 960, 1440, 0}; // Minutes
+  const char *acLabels[] = {"1h", "8h", "16h", "24h", "OFF"};
+
+  const int usbPresets[] = {180, 300, 600, 1800, 0}; // Seconds
+  const char *usbLabels[] = {"3m", "5m", "10m", "30m", "OFF"};
+
+  const int screenPresets[] = {3, 5, 10, 30, 0}; // Minutes
+  const char *screenLabels[] = {"3m", "5m", "10m", "30m", "OFF"};
+
+  const int sysPresets[] = {60, 480, 1440, 0}; // Minutes
+  const char *sysLabels[] = {"1h", "8h", "24h", "OFF"};
+
+  // === AC Standby (Minutes) ===
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(labelX, y + 8);
+  M5.Display.print("AC Standby:");
+  for (int i = 0; i < 5; i++) {
+    bool active = (_fossiACStandby == acPresets[i]);
+    drawButton(btnStartX + i * (btnW + btnGap), y, btnW, btnH, acLabels[i],
+               active);
+  }
+  y += rowGap;
+
+  // === DC Standby (Minutes - Same as AC) ===
+  M5.Display.setCursor(labelX, y + 8);
+  M5.Display.print("DC Standby:");
+  for (int i = 0; i < 5; i++) {
+    bool active = (_fossiDCStandby == acPresets[i]);
+    drawButton(btnStartX + i * (btnW + btnGap), y, btnW, btnH, acLabels[i],
+               active);
+  }
+  y += rowGap;
+
+  // === USB Standby (Seconds) ===
+  M5.Display.setCursor(labelX, y + 8);
+  M5.Display.print("USB Standby:");
+  for (int i = 0; i < 5; i++) {
+    bool active = (_fossiUSBStandby == usbPresets[i]);
+    drawButton(btnStartX + i * (btnW + btnGap), y, btnW, btnH, usbLabels[i],
+               active);
+  }
+  y += rowGap;
+
+  // === Screen Timeout (Minutes) ===
+  M5.Display.setCursor(labelX, y + 8);
+  M5.Display.print("Screen Off:");
+  for (int i = 0; i < 5; i++) {
+    bool active = (_fossiScreenTimeout == screenPresets[i]);
+    drawButton(btnStartX + i * (btnW + btnGap), y, btnW, btnH, screenLabels[i],
+               active);
+  }
+  y += rowGap;
+
+  // === Sys Standby (Minutes) ===
+  M5.Display.setCursor(labelX, y + 8);
+  M5.Display.print("Sys Idle:");
+  for (int i = 0; i < 4; i++) {
+    bool active = (_fossiSysStandby == sysPresets[i]);
+    drawButton(btnStartX + i * (btnW + btnGap), y, btnW, btnH, sysLabels[i],
+               active);
+  }
+  y += rowGap + 10;
+
+  // === Schedule Charge ===
+  M5.Display.setTextColor(COLOR_DARK_GRAY);
+  M5.Display.setCursor(labelX, y);
+  M5.Display.print("-- Schedule Charge --");
+
+  // Show minutes until charge
+  if (_fossiScheduleChargeRemaining > 0) {
+    char timeStr[32];
+    snprintf(timeStr, sizeof(timeStr), "(in %d min)",
+             _fossiScheduleChargeRemaining);
+    M5.Display.setCursor(labelX + 220, y);
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.print(timeStr);
+  }
+  y += 35;
+
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(labelX, y + 8);
+  M5.Display.print("Start at:");
+
+  // Time picker: Hour and Minute
+  int timeX = 180;
+  drawButton(timeX, y, 40, btnH, "-");
+  char hourStr[8];
+  snprintf(hourStr, sizeof(hourStr), "%02d",
+           _fossiScheduleChargeHour >= 0 ? _fossiScheduleChargeHour : 0);
+  M5.Display.setCursor(timeX + 50, y + 8);
+  M5.Display.print(hourStr);
+  drawButton(timeX + 90, y, 40, btnH, "+");
+
+  M5.Display.setCursor(timeX + 140, y + 8);
+  M5.Display.print(":");
+
+  drawButton(timeX + 160, y, 40, btnH, "-");
+  char minStr[8];
+  snprintf(minStr, sizeof(minStr), "%02d", _fossiScheduleChargeMin);
+  M5.Display.setCursor(timeX + 210, y + 8);
+  M5.Display.print(minStr);
+  drawButton(timeX + 250, y, 40, btnH, "+");
+
+  // Set button
+  if (_fossiScheduleChargeHour >= 0) {
+    drawButton(timeX + 320, y, 80, btnH, "SET", true);
+    drawButton(timeX + 410, y, 80, btnH, "CLEAR");
+  } else {
+    M5.Display.setCursor(timeX + 320, y + 8);
+    M5.Display.setTextColor(COLOR_GRAY);
+    M5.Display.print("(disabled)");
+  }
+
+  // --- Action Buttons ---
+  y = 420;
+  drawButton(SCREEN_WIDTH / 2 - 100, y, 200, 55, "BACK");
+
+  // Connection status
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(SCREEN_WIDTH - 200, 20);
+  if (bleClient && bleClient->isConnected()) {
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.print("Connected");
+  } else {
+    M5.Display.setTextColor(COLOR_GRAY);
+    M5.Display.print("Not Connected");
+  }
+}
+
+void UIManager::handleFossibotTimersTouch(int x, int y) {
+  auto isHit = [&](int bx, int by, int bw, int bh) {
+    if (x >= bx && x < bx + bw && y >= by && y < by + bh) {
+      Buzzer::click();
+      _lastTimerSetTime = millis(); // Track interaction time
+      return true;
+    }
+    return false;
+  };
+
+  int btnStartX = 280;
+  int btnW = 60;
+  int btnH = 35;
+  int btnGap = 10;
+  int baseY = 65;
+  int rowGap = 45;
+
+  // Same presets as draw
+  const int acPresets[] = {60, 480, 960, 1440, 0};   // Minutes
+  const int usbPresets[] = {180, 300, 600, 1800, 0}; // Seconds
+  const int screenPresets[] = {3, 5, 10, 30, 0};     // Minutes
+  const int sysPresets[] = {60, 480, 1440, 0};       // Minutes
+
+  // === AC Standby presets ===
+  for (int i = 0; i < 5; i++) {
+    if (isHit(btnStartX + i * (btnW + btnGap), baseY, btnW, btnH)) {
+      _fossiACStandby = acPresets[i];
+      if (bleClient && bleClient->isConnected()) {
+        bleClient->setACStandby(_fossiACStandby);
+      }
+      forceRefresh();
+      return;
+    }
+  }
+  baseY += rowGap;
+
+  // === DC Standby presets ===
+  for (int i = 0; i < 5; i++) {
+    if (isHit(btnStartX + i * (btnW + btnGap), baseY, btnW, btnH)) {
+      _fossiDCStandby = acPresets[i];
+      if (bleClient && bleClient->isConnected()) {
+        bleClient->setDCStandby(_fossiDCStandby);
+      }
+      forceRefresh();
+      return;
+    }
+  }
+  baseY += rowGap;
+
+  // === USB Standby presets ===
+  for (int i = 0; i < 5; i++) {
+    if (isHit(btnStartX + i * (btnW + btnGap), baseY, btnW, btnH)) {
+      _fossiUSBStandby = usbPresets[i];
+      if (bleClient && bleClient->isConnected()) {
+        bleClient->setUSBStandby(_fossiUSBStandby);
+      }
+      forceRefresh();
+      return;
+    }
+  }
+  baseY += rowGap;
+
+  // === Screen Timeout presets ===
+  for (int i = 0; i < 5; i++) {
+    if (isHit(btnStartX + i * (btnW + btnGap), baseY, btnW, btnH)) {
+      _fossiScreenTimeout = screenPresets[i];
+      if (bleClient && bleClient->isConnected()) {
+        bleClient->setScreenTimeout(_fossiScreenTimeout);
+      }
+      forceRefresh();
+      return;
+    }
+  }
+  baseY += rowGap;
+
+  // === Sys Standby presets (4 items) ===
+  for (int i = 0; i < 4; i++) {
+    if (isHit(btnStartX + i * (btnW + btnGap), baseY, btnW, btnH)) {
+      _fossiSysStandby = sysPresets[i];
+      if (bleClient && bleClient->isConnected()) {
+        bleClient->setSysStandby(_fossiSysStandby);
+      }
+      forceRefresh();
+      return;
+    }
+  }
+  baseY += rowGap + 10 + 35; // Skip extra gap + header
+
+  // === Schedule Charge time picker ===
+  int timeX = 180;
+
+  // Hour -
+  if (isHit(timeX, baseY, 40, btnH)) {
+    if (_fossiScheduleChargeHour < 0)
+      _fossiScheduleChargeHour = 23;
+    else {
+      _fossiScheduleChargeHour--;
+      if (_fossiScheduleChargeHour < 0)
+        _fossiScheduleChargeHour = 23;
+    }
+    forceRefresh();
+    return;
+  }
+  // Hour +
+  if (isHit(timeX + 90, baseY, 40, btnH)) {
+    if (_fossiScheduleChargeHour < 0)
+      _fossiScheduleChargeHour = 0;
+    else {
+      _fossiScheduleChargeHour++;
+      if (_fossiScheduleChargeHour > 23)
+        _fossiScheduleChargeHour = 0;
+    }
+    forceRefresh();
+    return;
+  }
+  // Minute -
+  if (isHit(timeX + 160, baseY, 40, btnH)) {
+    _fossiScheduleChargeMin -= 15;
+    if (_fossiScheduleChargeMin < 0)
+      _fossiScheduleChargeMin = 45;
+    forceRefresh();
+    return;
+  }
+  // Minute +
+  if (isHit(timeX + 250, baseY, 40, btnH)) {
+    _fossiScheduleChargeMin += 15;
+    if (_fossiScheduleChargeMin >= 60)
+      _fossiScheduleChargeMin = 0;
+    forceRefresh();
+    return;
+  }
+
+  // SET button - calculates minutes from now and sends to device
+  if (_fossiScheduleChargeHour >= 0 && isHit(timeX + 320, baseY, 80, btnH)) {
+    // Get current time from RTC
+    int currentHour, currentMin, currentSec;
+    RTC::getTime(currentHour, currentMin, currentSec);
+
+    // Calculate target time in minutes from midnight
+    int targetMins = _fossiScheduleChargeHour * 60 + _fossiScheduleChargeMin;
+    int currentMins = currentHour * 60 + currentMin;
+
+    // Calculate minutes until target (handles next day wrap)
+    int minsUntil = targetMins - currentMins;
+    if (minsUntil <= 0) {
+      minsUntil += 24 * 60; // Add 24 hours if target is tomorrow
+    }
+
+    Serial.printf("Schedule Charge: Target %02d:%02d, Current %02d:%02d, "
+                  "Minutes until: %d\n",
+                  _fossiScheduleChargeHour, _fossiScheduleChargeMin,
+                  currentHour, currentMin, minsUntil);
+
+    if (bleClient && bleClient->isConnected()) {
+      bleClient->setScheduleCharge(minsUntil);
+    }
+    _fossiScheduleChargeRemaining = minsUntil; // Update immediately
+    forceRefresh();
+    return;
+  }
+
+  // CLEAR button
+  if (_fossiScheduleChargeHour >= 0 && isHit(timeX + 410, baseY, 80, btnH)) {
+    _fossiScheduleChargeHour = -1;
+    _fossiScheduleChargeMin = 0;
+    _fossiScheduleChargeRemaining = 0;
+    if (bleClient && bleClient->isConnected()) {
+      bleClient->setScheduleCharge(0); // 0 = disable
+    }
+    forceRefresh();
+    return;
+  }
+
+  // === Back button ===
+  int actionY = 420;
+  if (isHit(SCREEN_WIDTH / 2 - 100, actionY, 200, 55)) {
+    navigateTo(ScreenID::SETTINGS_FOSSIBOT);
+    return;
   }
 }
 
@@ -1025,34 +1731,23 @@ void UIManager::drawClockSidebar(int x, int y, int w, int h) {
   M5.Display.setTextSize(2);
   M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setCursor(x + 20, y + 15);
-  M5.Display.print("ALARMS");
+  M5.Display.print("MODES");
 
-  // Sidebar buttons (y positions)
+  // Sidebar buttons parameters
   int btnY = y + 60;
   int btnH = 70;
   int btnSpacing = 10;
 
-  // Clock button
-  bool clockActive = (_clockMode == ClockMode::CLOCK);
+  // Timer button (Top)
+  bool timerActive = (_clockMode == ClockMode::TIMER);
   M5.Display.fillRect(x + 10, btnY, w - 20, btnH,
-                      clockActive ? COLOR_BLACK : COLOR_WHITE);
+                      timerActive ? COLOR_BLACK : COLOR_WHITE);
   M5.Display.drawRect(x + 10, btnY, w - 20, btnH, COLOR_BLACK);
-  M5.Display.setTextSize(2);
-  M5.Display.setTextColor(clockActive ? COLOR_WHITE : COLOR_BLACK);
+  M5.Display.setTextColor(timerActive ? COLOR_WHITE : COLOR_BLACK);
   M5.Display.setCursor(x + 30, btnY + 25);
-  M5.Display.print("Clock");
+  M5.Display.print("Timer");
 
-  // Alarm button
-  btnY += btnH + btnSpacing;
-  bool alarmActive = (_clockMode == ClockMode::ALARM);
-  M5.Display.fillRect(x + 10, btnY, w - 20, btnH,
-                      alarmActive ? COLOR_BLACK : COLOR_WHITE);
-  M5.Display.drawRect(x + 10, btnY, w - 20, btnH, COLOR_BLACK);
-  M5.Display.setTextColor(alarmActive ? COLOR_WHITE : COLOR_BLACK);
-  M5.Display.setCursor(x + 30, btnY + 25);
-  M5.Display.print("Alarm");
-
-  // Pomodoro button
+  // Pomodoro button (Second)
   btnY += btnH + btnSpacing;
   bool pomodoroActive = (_clockMode == ClockMode::POMODORO);
   M5.Display.fillRect(x + 10, btnY, w - 20, btnH,
@@ -1061,16 +1756,6 @@ void UIManager::drawClockSidebar(int x, int y, int w, int h) {
   M5.Display.setTextColor(pomodoroActive ? COLOR_WHITE : COLOR_BLACK);
   M5.Display.setCursor(x + 20, btnY + 25);
   M5.Display.print("Pomodoro");
-
-  // Timer button
-  btnY += btnH + btnSpacing;
-  bool timerActive = (_clockMode == ClockMode::TIMER);
-  M5.Display.fillRect(x + 10, btnY, w - 20, btnH,
-                      timerActive ? COLOR_BLACK : COLOR_WHITE);
-  M5.Display.drawRect(x + 10, btnY, w - 20, btnH, COLOR_BLACK);
-  M5.Display.setTextColor(timerActive ? COLOR_WHITE : COLOR_BLACK);
-  M5.Display.setCursor(x + 30, btnY + 25);
-  M5.Display.print("Timer");
 }
 
 void UIManager::drawPomodoroContent(int x, int y, int w, int h) {
@@ -2794,88 +3479,29 @@ void UIManager::handleClockTouch(int x, int y, TouchEvent event) {
 
   // 1. Sidebar Handling (Left 160px)
   if (x < 160) {
-    if (y > 60 && y < 130)
-      _clockMode = ClockMode::CLOCK;
-    else if (y > 140 && y < 210)
-      _clockMode = ClockMode::ALARM;
-    else if (y > 220 && y < 290)
-      _clockMode = ClockMode::POMODORO;
-    else if (y > 300 && y < 370)
+    // Timer (Row 1)
+    if (y > 60 && y < 130) {
       _clockMode = ClockMode::TIMER;
+    }
+    // Pomodoro (Row 2)
+    else if (y > 140 && y < 210) {
+      _clockMode = ClockMode::POMODORO;
+    }
 
     Buzzer::click();
     _needsRefresh = true;
-    _lastRefresh = 0; // Force immediate refresh
+    _lastRefresh = 0;
     return;
   }
 
-  // 2. Exit Button (Top Right) area check - handled by global if mapped, but
-  // safety:
+  // 2. Exit Button (Top Right)
   if (x > SCREEN_WIDTH - 80 && y < 60) {
     navigateTo(ScreenID::HOME);
     return;
   }
 
   // 3. Content Handling
-  if (_clockMode == ClockMode::ALARM) {
-    extern Config *config;
-    if (!config)
-      return;
-    int ah = config->getAlarmHour();
-    int am = config->getAlarmMinute();
-
-    // Inline Layout Logic matches drawAlarmContent
-    // Approx StartX = 265
-    // Hit zones centered on buttons (80x70) at RowY=120
-
-    int rowY = 120;
-    int hitH = 90; // Generous
-
-    if (y > rowY - 10 && y < rowY + hitH) {
-      int startX = 265;
-      // Hour Minus
-      if (x > startX && x < startX + 90) {
-        ah = (ah - 1 + 24) % 24;
-        Buzzer::click();
-      }
-      // Hour Plus (approx +195px offset)
-      if (x > startX + 180 && x < startX + 280) {
-        ah = (ah + 1) % 24;
-        Buzzer::click();
-      }
-
-      int minStartX = 580;
-      // Min Minus
-      if (x > minStartX && x < minStartX + 90) {
-        am = (am - 1 + 60) % 60;
-        Buzzer::click();
-      }
-      // Min Plus
-      if (x > minStartX + 180 && x < minStartX + 280) {
-        am = (am + 1) % 60;
-        Buzzer::click();
-      }
-
-      Serial.printf("Alarm Touch: New Time %02d:%02d\n", ah, am);
-    }
-
-    // Toggle
-    if (y > 280 && y < 380) {
-      // Center X approx 560. Width 200.
-      if (x > 460 && x < 660) {
-        config->setAlarmEnabled(!config->getAlarmEnabled());
-        Buzzer::click();
-        Serial.println("Alarm Touch: Toggle");
-      }
-    }
-
-    config->setAlarmHour(ah);
-    config->setAlarmMinute(am);
-    config->save("/config/settings.json");
-    _needsRefresh = true;
-    _lastRefresh = 0; // Force immediate refresh
-
-  } else if (_clockMode == ClockMode::TIMER) {
+  if (_clockMode == ClockMode::TIMER) {
     // Timer Controls - Match drawTimerContent layout exactly
     // Content area starts at x=160
     int contentX = 160;
@@ -4095,8 +4721,32 @@ void UIManager::drawHistoryScreen() {
   M5.Display.setCursor(20, 18);
   M5.Display.print(dateStr);
 
-  // EXIT button (top right)
-  drawButton(SCREEN_WIDTH - 90, 10, 80, 40, "EXIT", false);
+  // EXIT button (White X in top right)
+  int cx = SCREEN_WIDTH - 40;
+  int cy = 30;
+  for (int i = -1; i <= 1; i++) {
+    M5.Display.drawLine(cx - 15 + i, cy - 15, cx + 15 + i, cy + 15,
+                        COLOR_WHITE);
+    M5.Display.drawLine(cx + 15 + i, cy - 15, cx - 15 + i, cy + 15,
+                        COLOR_WHITE);
+  }
+
+  // --- Data Analysis for Scaling ---
+  uint16_t sampleCount = _powerHistory.getSampleCount(_historyViewDay);
+  float maxW = 50.0f; // Minimum scale set to 50W
+
+  if (sampleCount > 0) {
+    for (uint16_t i = 0; i < sampleCount; i++) {
+      PowerSample s = _powerHistory.getSample(_historyViewDay, i);
+      if (s.inputW > maxW)
+        maxW = s.inputW;
+      if (s.outputW > maxW)
+        maxW = s.outputW;
+    }
+  }
+
+  // Round maxW up to nice number (nearest 50)
+  int graphMax = (int)ceil(maxW / 50.0) * 50;
 
   // --- Graph Area (expanded) ---
   const int graphX = 80;
@@ -4107,13 +4757,13 @@ void UIManager::drawHistoryScreen() {
   // Draw axes
   M5.Display.drawRect(graphX, graphY, graphW, graphH, COLOR_BLACK);
 
-  // Y-axis labels (larger, black text)
+  // Y-axis labels (Watts) - Left side
   M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setTextSize(2);
   for (int i = 0; i <= 4; i++) {
     int yPos = graphY + graphH - (i * graphH / 4);
-    int val = i * 25;
-    M5.Display.setCursor(graphX - 50, yPos - 8);
+    int val = i * (graphMax / 4);
+    M5.Display.setCursor(graphX - 60, yPos - 8);
     M5.Display.printf("%d", val);
     // Grid line
     if (i > 0 && i < 4) {
@@ -4122,6 +4772,8 @@ void UIManager::drawHistoryScreen() {
       }
     }
   }
+  M5.Display.setCursor(graphX - 60, graphY - 30);
+  M5.Display.print("Watts");
 
   // X-axis labels (larger, black text)
   const char *timeLabels[] = {"00", "04", "08", "12", "16", "20", "24"};
@@ -4138,8 +4790,6 @@ void UIManager::drawHistoryScreen() {
   }
 
   // --- Draw Data Lines (THICK 3x, all BLACK) ---
-  uint16_t sampleCount = _powerHistory.getSampleCount(_historyViewDay);
-
   if (sampleCount == 0) {
     M5.Display.setTextColor(COLOR_BLACK);
     M5.Display.setTextSize(3);
@@ -4149,7 +4799,7 @@ void UIManager::drawHistoryScreen() {
     // Plot each metric if filter is enabled
     int prevX = -1, prevYBatt = -1, prevYIn = -1, prevYOut = -1;
 
-    // Optimization: Stride by 4 to reduce draw calls (1440 -> 360 points)
+    // Optimization: Stride by 4 to reduce draw calls
     for (uint16_t i = 0; i < sampleCount; i += 4) {
       PowerSample sample = _powerHistory.getSample(_historyViewDay, i);
       if (sample.timestamp == 0)
@@ -4162,12 +4812,19 @@ void UIManager::drawHistoryScreen() {
       int minuteOfDay = st.tm_hour * 60 + st.tm_min;
       int x = graphX + (minuteOfDay * graphW / 1440);
 
-      // Calculate Y positions (scaled to 0-100 range)
+      // Calculate Y positions
+      // Battery: Scaled 0-100% of height
       int yBatt = graphY + graphH - (sample.batteryPct * graphH / 100);
-      int yIn =
-          graphY + graphH - (min((int)sample.inputW, 1000) * graphH / 1000);
-      int yOut =
-          graphY + graphH - (min((int)sample.outputW, 1000) * graphH / 1000);
+      // Power: Scaled 0-graphMax of height
+      int safeIn = (int)sample.inputW;
+      if (safeIn > graphMax)
+        safeIn = graphMax;
+      int yIn = graphY + graphH - (safeIn * graphH / graphMax);
+
+      int safeOut = (int)sample.outputW;
+      if (safeOut > graphMax)
+        safeOut = graphMax;
+      int yOut = graphY + graphH - (safeOut * graphH / graphMax);
 
       // Draw THICK lines (3x) - all BLACK
       if (prevX >= 0) {
@@ -4204,15 +4861,15 @@ void UIManager::drawHistoryScreen() {
 
   // BATT button
   bool battOn = (_historyFilter & 0x01) != 0;
-  drawButton(0, btnY, btnW, MENU_BAR_HEIGHT, "BATT", battOn);
+  drawButton(0, btnY, btnW, MENU_BAR_HEIGHT, "BATT %", battOn);
 
   // INPUT button
   bool inputOn = (_historyFilter & 0x02) != 0;
-  drawButton(btnW, btnY, btnW, MENU_BAR_HEIGHT, "INPUT", inputOn);
+  drawButton(btnW, btnY, btnW, MENU_BAR_HEIGHT, "INPUT W", inputOn);
 
   // OUTPUT button
   bool outputOn = (_historyFilter & 0x04) != 0;
-  drawButton(btnW * 2, btnY, btnW, MENU_BAR_HEIGHT, "OUTPUT", outputOn);
+  drawButton(btnW * 2, btnY, btnW, MENU_BAR_HEIGHT, "OUTPUT W", outputOn);
 
   // ALL button
   bool allOn = (_historyFilter == 0x07);

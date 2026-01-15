@@ -28,7 +28,10 @@ enum class ScreenID {
   CALCULATOR,
   NOTES,
   WEATHER,
-  SETTINGS,
+  SETTINGS,                 // Main settings menu
+  SETTINGS_DEVICE,          // Device Settings (date/time/refresh/sleep)
+  SETTINGS_FOSSIBOT,        // Fossibot settings (Quick Actions, Power Limits)
+  SETTINGS_FOSSIBOT_TIMERS, // Fossibot timers sub-menu
   SD_DIAG,
   NOTES_BROWSE,
   HISTORY
@@ -86,9 +89,24 @@ public:
   void drawHomeScreen(); // Helper for drawing content
 
   /**
-   * Draw settings screen
+   * Draw settings screen (now main settings menu)
    */
   void drawSettingsScreen();
+
+  /**
+   * Draw device settings screen (date/time/refresh/sleep)
+   */
+  void drawDeviceSettingsScreen();
+
+  /**
+   * Draw Fossibot settings screen (Quick Actions, Power Limits)
+   */
+  void drawFossibotSettingsScreen();
+
+  /**
+   * Draw Fossibot Timers sub-screen (standby timers, schedule charge)
+   */
+  void drawFossibotTimersScreen();
 
   /**
    * Navigate to a screen
@@ -179,7 +197,9 @@ private:
 
   // Screen-specific handlers
   void handleHomeTouch(int x, int y, TouchEvent event);
-  void handleSettingsTouch(int x, int y);
+  void handleSettingsTouch(int x, int y);         // Main settings menu touch
+  void handleDeviceSettingsTouch(int x, int y);   // Device settings touch
+  void handleFossibotSettingsTouch(int x, int y); // Fossibot settings touch
 
   // Settings edit state
   int _editYear;
@@ -190,8 +210,27 @@ private:
   int _refreshRateSeconds = 30; // Default refresh rate for preview
   int _editAutoSleep;           // Auto sleep timeout in minutes
 
+  // Fossibot settings state (from device or user input)
+  bool _fossiBuzzerEnabled = true;       // Key sound on/off
+  bool _fossiSilentCharging = false;     // AC Silent mode
+  int _fossiLightMode = 0;               // 0=off,1=on,2=flash,3=sos
+  int _fossiDischargeLimit = 0;          // 0-30%
+  int _fossiChargeLimit = 100;           // 60-100%
+  int _fossiScreenTimeout = 60;          // Seconds (0=never)
+  int _fossiSysStandby = 5;              // Minutes (0=never)
+  int _fossiACStandby = 60;              // Minutes (0=never)
+  int _fossiDCStandby = 60;              // Minutes (0=never)
+  int _fossiUSBStandby = 300;            // Seconds (0=never)
+  int _fossiScheduleChargeHour = -1;     // -1=off, 0-23 = target hour
+  int _fossiScheduleChargeMin = 0;       // 0-59 = target minute
+  int _fossiScheduleChargeRemaining = 0; // Read from Reg 63 (minutes)
+  unsigned long _lastTimerSetTime = 0;
+  bool _showPowerOffConfirmation = false;
+
+  void handleFossibotTimersTouch(int x, int y); // Fossibot timers touch
+
   // Clock screen state
-  ClockMode _clockMode = ClockMode::POMODORO; // Default to Pomodoro
+  ClockMode _clockMode = ClockMode::TIMER; // Default to Timer (Alarm removed)
   bool _alarmRinging = false;
   unsigned long _alarmRingStart = 0;
 
