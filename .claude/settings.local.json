@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(wc:*)",
+      "Bash(sudo chown:*)",
+      "Bash(pio run:*)",
+      "Bash(~/.platformio/penv/bin/pio run:*)",
+      "Bash(~/.local/bin/pio run:*)",
+      "Bash(python3 -m platformio:*)",
+      "Bash(pip3 install:*)",
+      "Bash(python3 -m pip install:*)",
+      "Bash(apt list:*)",
+      "Bash(sudo apt-get update:*)",
+      "Bash(sudo apt-get:*)",
+      "Bash(pipx install:*)",
+      "Bash(dmesg:*)",
+      "Bash(curl:*)",
+      "Bash(ls:*)"
+    ]
+  }
+}

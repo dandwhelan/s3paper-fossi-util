@@ -1,0 +1,8 @@
+{
+  "name": "tinyxml2",
+  "version": "10.0.0",
+  "description": "TinyXML2 - simple XML parser",
+  "keywords": "xml, parser",
+  "frameworks": "arduino",
+  "platforms": "*"
+}

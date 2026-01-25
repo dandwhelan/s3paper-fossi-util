@@ -1,0 +1,16 @@
+.pio
+.vscode
+.idea
+*.bin
+*.elf
+*.map
+*.o
+*.a
+.pio_trash/
+backups/
+oldbuild/
+build*.log
+build*.txt
+clean_pio.py
+epub_ref/
+TerminusTTF*

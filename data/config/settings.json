@@ -1,0 +1,25 @@
+{
+    "wifi": {
+        "ssid": "",
+        "password": ""
+    },
+    "bluetooth": {
+        "fossibot_mac": "DC:1E:D5:E4:07:1E"
+    },
+    "display": {
+        "theme": "classic_grid",
+        "auto_sleep_minutes": 5
+    },
+    "timezone": {
+        "offset_hours": 0
+    },
+    "weather": {
+        "api_key": "",
+        "city": "London",
+        "units": "metric"
+    },
+    "eink": {
+        "soc_change_threshold": 1,
+        "power_change_threshold": 5
+    }
+}
