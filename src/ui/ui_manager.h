@@ -389,22 +389,9 @@ private:
   bool sudokuCheckWin();
   void sudokuClearCell();
 
-  // Nonogram Game state (10x10)
-  static const int NONOGRAM_SIZE = 10;
-  bool _nonogramSolution[10][10]; // True = filled
-  int8_t _nonogramState[10][10];  // 0 = empty, 1 = filled, 2 = cross
-  bool _nonogramInputMode;        // False = Fill, True = Cross
-
-  // Nonogram Game methods
-  void drawNonogramGame();
-  void handleNonogramTouch(int x, int y, TouchEvent event);
-  void nonogramInit();
-  void nonogramCheckWin();
-  void nonogramGeneratePuzzle();
-
   // Minesweeper Game state
-  bool _mineGrid[8][12];    // [Rows][Cols]
-  int8_t _mineState[8][12]; // 0=Covered, 1=Revealed, 2=Flagged
+  bool _mineGrid[7][12];    // [Rows][Cols]
+  int8_t _mineState[7][12]; // 0=Covered, 1=Revealed, 2=Flagged
   bool _mineInputMode;      // False=Reveal, True=Flag
   bool _mineGameOver;
 

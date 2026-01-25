@@ -231,9 +231,6 @@ void UIManager::update() {
   case ScreenID::GAME_SUDOKU:
     drawSudokuGame();
     break;
-  case ScreenID::GAME_NONOGRAM:
-    drawNonogramGame();
-    break;
   case ScreenID::GAME_MINESWEEPER:
     drawMinesweeperGame();
     break;
@@ -347,11 +344,6 @@ void UIManager::handleTouch(int x, int y, TouchEvent event) {
         handleSudokuTouch(x, y, event);
       }
 
-      // GAME_NONOGRAM touch handling
-      if (_currentScreen == ScreenID::GAME_NONOGRAM) {
-        handleNonogramTouch(x, y, event);
-      }
-
       // GAME_MINESWEEPER touch handling
       if (_currentScreen == ScreenID::GAME_MINESWEEPER) {
         handleMinesweeperTouch(x, y, event);
@@ -362,7 +354,6 @@ void UIManager::handleTouch(int x, int y, TouchEvent event) {
           _currentScreen != ScreenID::NOTES_BROWSE &&
           _currentScreen != ScreenID::GAME_2048 &&
           _currentScreen != ScreenID::GAME_SUDOKU &&
-          _currentScreen != ScreenID::GAME_NONOGRAM &&
           _currentScreen != ScreenID::GAME_MINESWEEPER &&
           _currentScreen != ScreenID::HISTORY &&
           _currentScreen != ScreenID::READER) { // Disable nav bar in Reader
@@ -409,13 +400,12 @@ void UIManager::navigateTo(ScreenID screen) {
   // GHOSTING FIX: Force full EPD quality refresh on screen transition
   // M5.Display.setEpdMode(epd_mode_t::epd_quality); // DISABLED: Causes DMA
   // contention with BLE M5.Display.fillScreen(COLOR_WHITE); // DISABLED: Causes
-  // DMA contention with BLE
+  // contention with BLE
 
   // SMART REFRESH: Switch modes based on content requirements
   if (screen == ScreenID::NOTES || screen == ScreenID::READER ||
       screen == ScreenID::GAMES_MENU || screen == ScreenID::GAME_2048 ||
-      screen == ScreenID::GAME_SUDOKU || screen == ScreenID::GAME_NONOGRAM ||
-      screen == ScreenID::GAME_MINESWEEPER ||
+      screen == ScreenID::GAME_SUDOKU || screen == ScreenID::GAME_MINESWEEPER ||
       screen == ScreenID::NOTES_BROWSE) {
     // High Quality Mode for content creation/reading
     M5.Display.setEpdMode(epd_mode_t::epd_quality);
@@ -452,8 +442,7 @@ void UIManager::navigateTo(ScreenID screen) {
   bool enteringIntensiveScreen =
       (screen == ScreenID::READER || screen == ScreenID::NOTES ||
        screen == ScreenID::GAMES_MENU || screen == ScreenID::GAME_2048 ||
-       screen == ScreenID::GAME_SUDOKU || screen == ScreenID::GAME_NONOGRAM ||
-       screen == ScreenID::GAME_MINESWEEPER);
+       screen == ScreenID::GAME_SUDOKU || screen == ScreenID::GAME_MINESWEEPER);
   bool leavingIntensiveScreen = (_previousScreen == ScreenID::READER ||
                                  _previousScreen == ScreenID::NOTES ||
                                  _previousScreen == ScreenID::GAMES_MENU ||
@@ -4086,12 +4075,8 @@ void UIManager::drawGamesMenu() {
   drawButton(gridX + btnW + gap, gridY, btnW, btnH, "SUDOKU", true);
 
   // Row 2
-  // Nonogram Button
-  drawButton(gridX, gridY + btnH + 50, btnW, btnH, "NONOGRAM", true);
-
-  // Minesweeper Button
-  drawButton(gridX + btnW + gap, gridY + btnH + 50, btnW, btnH, "MINESWEEPER",
-             true);
+  // Minesweeper Button (Moved to left)
+  drawButton(gridX, gridY + btnH + 50, btnW, btnH, "MINESWEEPER", true);
 }
 
 void UIManager::handleGamesMenuTouch(int x, int y) {
@@ -4125,21 +4110,9 @@ void UIManager::handleGamesMenuTouch(int x, int y) {
     return;
   }
 
-  // Nonogram button
+  // Minesweeper button (Moved to left)
   if (x >= gridX && x < gridX + btnW && y >= gridY + btnH + 50 &&
       y < gridY + btnH + 50 + btnH) {
-    Buzzer::click();
-    nonogramInit();
-    M5.Display.setEpdMode(epd_mode_t::epd_quality);
-    M5.Display.fillScreen(COLOR_WHITE);
-    M5.Display.display();
-    navigateTo(ScreenID::GAME_NONOGRAM);
-    return;
-  }
-
-  // Minesweeper button
-  if (x >= gridX + btnW + gap && x < gridX + 2 * btnW + gap &&
-      y >= gridY + btnH + 50 && y < gridY + btnH + 50 + btnH) {
     Buzzer::click();
     minesweeperInit();
     M5.Display.setEpdMode(epd_mode_t::epd_quality);
@@ -6349,239 +6322,6 @@ void UIManager::handleReaderTouch(int x, int y, TouchEvent event) {
 }
 
 // ============================================================================
-// Nonogram Game
-// ============================================================================
-
-void UIManager::nonogramInit() {
-  // Clear state
-  memset(_nonogramState, 0, sizeof(_nonogramState));
-  _nonogramInputMode = false; // Default: Fill
-
-  nonogramGeneratePuzzle();
-}
-
-void UIManager::nonogramGeneratePuzzle() {
-  // Simple random generation (60% fill rate)
-  for (int r = 0; r < NONOGRAM_SIZE; r++) {
-    for (int c = 0; c < NONOGRAM_SIZE; c++) {
-      _nonogramSolution[r][c] = (random(100) < 60);
-    }
-  }
-}
-
-void UIManager::drawNonogramGame() {
-  M5.Display.fillScreen(COLOR_WHITE);
-  drawMenuBar();
-
-  // Header
-  M5.Display.setTextSize(2);
-  M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setCursor(20, 20);
-  M5.Display.print("NONOGRAM");
-
-  // Mode Toggle Button
-  int modeBtnX = 700;
-  int modeBtnY = 10;
-  drawButton(modeBtnX, modeBtnY, 100, 50, _nonogramInputMode ? "CROSS" : "FILL",
-             true);
-
-  // Reset Button
-  drawButton(modeBtnX - 120, modeBtnY, 100, 50, "RESET");
-
-  // Grid Config
-  int cellSize = 35;
-  int gridX = 250;
-  int gridY = 120;
-
-  // Draw Grid Lines
-  for (int i = 0; i <= NONOGRAM_SIZE; i++) {
-    bool thick = (i % 5 == 0);
-    int thickness = thick ? 3 : 1;
-    M5.Display.fillRect(gridX, gridY + i * cellSize, NONOGRAM_SIZE * cellSize,
-                        thickness, COLOR_BLACK);
-    M5.Display.fillRect(gridX + i * cellSize, gridY, thickness,
-                        NONOGRAM_SIZE * cellSize, COLOR_BLACK);
-  }
-
-  // Draw Cells
-  for (int r = 0; r < NONOGRAM_SIZE; r++) {
-    for (int c = 0; c < NONOGRAM_SIZE; c++) {
-      int x = gridX + c * cellSize + 2;
-      int y = gridY + r * cellSize + 2;
-      int w = cellSize - 3;
-      int h = cellSize - 3;
-
-      if (_nonogramState[r][c] == 1) { // Filled
-        M5.Display.fillRect(x, y, w, h, COLOR_BLACK);
-      } else if (_nonogramState[r][c] == 2) { // Cross
-        M5.Display.drawLine(x, y, x + w, y + h, COLOR_BLACK);
-        M5.Display.drawLine(x + w, y, x, y + h, COLOR_BLACK);
-      }
-    }
-  }
-
-  // Calculate and Draw Hints
-  M5.Display.setTextSize(1);
-  M5.Display.setTextColor(COLOR_BLACK);
-
-  // Row Hints
-  for (int r = 0; r < NONOGRAM_SIZE; r++) {
-    int count = 0;
-    std::vector<int> hints;
-    for (int c = 0; c < NONOGRAM_SIZE; c++) {
-      if (_nonogramSolution[r][c]) {
-        count++;
-      } else if (count > 0) {
-        hints.push_back(count);
-        count = 0;
-      }
-    }
-    if (count > 0)
-      hints.push_back(count);
-    if (hints.empty())
-      hints.push_back(0);
-
-    int cx = gridX - 10;
-    int cy = gridY + r * cellSize + 10;
-    for (int i = hints.size() - 1; i >= 0; i--) {
-      M5.Display.setCursor(cx, cy);
-      M5.Display.printf("%d", hints[i]);
-      cx -= 20;
-    }
-  }
-
-  // Col Hints
-  for (int c = 0; c < NONOGRAM_SIZE; c++) {
-    int count = 0;
-    std::vector<int> hints;
-    for (int r = 0; r < NONOGRAM_SIZE; r++) {
-      if (_nonogramSolution[r][c]) {
-        count++;
-      } else if (count > 0) {
-        hints.push_back(count);
-        count = 0;
-      }
-    }
-    if (count > 0)
-      hints.push_back(count);
-    if (hints.empty())
-      hints.push_back(0);
-
-    int cx = gridX + c * cellSize + 10;
-    int cy = gridY - 20;
-    for (int i = hints.size() - 1; i >= 0; i--) {
-      M5.Display.setCursor(cx, cy);
-      M5.Display.printf("%d", hints[i]);
-      cy -= 20;
-    }
-  }
-
-  // Back Button
-  drawButton(SCREEN_WIDTH - 220, 10, 200, 50, "BACK TO MENU");
-}
-
-void UIManager::handleNonogramTouch(int x, int y, TouchEvent event) {
-  if (event != TouchEvent::RELEASE)
-    return;
-
-  // Back Button
-  if (x > SCREEN_WIDTH - 220 && y < 60) {
-    Buzzer::click();
-    navigateTo(ScreenID::GAMES_MENU);
-    return;
-  }
-
-  // Mode Toggle
-  int modeBtnX = 700;
-  int modeBtnY = 10;
-  if (x >= modeBtnX && x < modeBtnX + 100 && y >= modeBtnY &&
-      y < modeBtnY + 50) {
-    Buzzer::click();
-    _nonogramInputMode = !_nonogramInputMode;
-    forceRefresh();
-    return;
-  }
-
-  // Reset
-  if (x >= modeBtnX - 120 && x < modeBtnX - 20 && y >= 10 && y < 60) {
-    Buzzer::click();
-    nonogramInit();
-    M5.Display.setEpdMode(epd_mode_t::epd_quality);
-    forceRefresh();
-    return;
-  }
-
-  // Grid interaction
-  int cellSize = 35;
-  int gridX = 250;
-  int gridY = 120;
-
-  int r = (y - gridY) / cellSize;
-  int c = (x - gridX) / cellSize;
-
-  if (r >= 0 && r < NONOGRAM_SIZE && c >= 0 && c < NONOGRAM_SIZE) {
-    int targetState = _nonogramInputMode ? 2 : 1;
-
-    if (_nonogramState[r][c] == targetState) {
-      _nonogramState[r][c] = 0;
-    } else {
-      _nonogramState[r][c] = targetState;
-    }
-
-    // Partial refresh
-    int cellX = gridX + c * cellSize;
-    int cellY = gridY + r * cellSize;
-
-    M5.Display.fillRect(cellX + 2, cellY + 2, cellSize - 3, cellSize - 3,
-                        COLOR_WHITE);
-
-    if (_nonogramState[r][c] == 1) {
-      M5.Display.fillRect(cellX + 2, cellY + 2, cellSize - 3, cellSize - 3,
-                          COLOR_BLACK);
-    } else if (_nonogramState[r][c] == 2) {
-      M5.Display.drawLine(cellX + 2, cellY + 2, cellX + cellSize - 2,
-                          cellY + cellSize - 2, COLOR_BLACK);
-      M5.Display.drawLine(cellX + cellSize - 2, cellY + 2, cellX + 2,
-                          cellY + cellSize - 2, COLOR_BLACK);
-    }
-    M5.Display.display();
-
-    nonogramCheckWin();
-  }
-}
-
-void UIManager::nonogramCheckWin() {
-  bool win = true;
-  for (int r = 0; r < NONOGRAM_SIZE; r++) {
-    for (int c = 0; c < NONOGRAM_SIZE; c++) {
-      bool shouldBeFilled = _nonogramSolution[r][c];
-      bool isFilled = (_nonogramState[r][c] == 1);
-      if (shouldBeFilled != isFilled) {
-        win = false;
-        break;
-      }
-    }
-    if (!win)
-      break;
-  }
-
-  if (win) {
-    M5.Display.fillRect(300, 200, 360, 140, COLOR_WHITE);
-    M5.Display.drawRect(300, 200, 360, 140, COLOR_BLACK);
-    M5.Display.setTextSize(3);
-    M5.Display.setCursor(380, 250);
-    M5.Display.print("SOLVED!");
-    M5.Display.display();
-    delay(2000);
-    navigateTo(ScreenID::GAMES_MENU);
-  }
-}
-
-// ============================================================================
-// Minesweeper Game
-// ============================================================================
-
-// ============================================================================
 // Minesweeper Game
 // ============================================================================
 
@@ -6591,10 +6331,10 @@ void UIManager::minesweeperInit() {
   _mineInputMode = false; // Reveal
   _mineGameOver = false;
 
-  // Place 12 mines (for 8x12 grid)
+  // Place 12 mines (for 7x12 grid)
   int minesPlaced = 0;
   while (minesPlaced < 12) {
-    int r = random(8);
+    int r = random(7);
     int c = random(12);
     if (!_mineGrid[r][c]) {
       _mineGrid[r][c] = true;
@@ -6611,7 +6351,7 @@ int UIManager::minesweeperCountNeighbors(int r, int c) {
         continue;
       int nr = r + dr;
       int nc = c + dc;
-      if (nr >= 0 && nr < 8 && nc >= 0 && nc < 12) {
+      if (nr >= 0 && nr < 7 && nc >= 0 && nc < 12) {
         if (_mineGrid[nr][nc])
           count++;
       }
@@ -6621,7 +6361,7 @@ int UIManager::minesweeperCountNeighbors(int r, int c) {
 }
 
 void UIManager::minesweeperReveal(int r, int c) {
-  if (r < 0 || r >= 8 || c < 0 || c >= 12)
+  if (r < 0 || r >= 7 || c < 0 || c >= 12)
     return;
   if (_mineState[r][c] != 0)
     return; // Already revealed or flagged
@@ -6644,13 +6384,15 @@ void UIManager::minesweeperCheckWin() {
     return;
 
   bool win = true;
-  for (int r = 0; r < 8; r++) {
+  for (int r = 0; r < 7; r++) {
     for (int c = 0; c < 12; c++) {
       if (!_mineGrid[r][c] && _mineState[r][c] != 1) {
         win = false; // Non-mine not revealed
         break;
       }
     }
+    if (!win)
+      break;
   }
 
   if (win) {
@@ -6692,7 +6434,7 @@ void UIManager::drawMinesweeperGame() {
   int gridY = 80;
 
   // Draw Grid
-  for (int r = 0; r < 8; r++) {
+  for (int r = 0; r < 7; r++) {
     for (int c = 0; c < 12; c++) {
       int x = gridX + c * cellSize;
       int y = gridY + r * cellSize;
@@ -6709,10 +6451,12 @@ void UIManager::drawMinesweeperGame() {
         M5.Display.fillRect(x + 2, y + 2, cellSize - 4, cellSize - 4,
                             COLOR_LIGHT_GRAY);
         M5.Display.setTextColor(COLOR_RED);
-        M5.Display.setTextSize(3);
+        M5.Display.setTextSize(2); // Reduced from 3
         // Center 'F'
         int tw = M5.Display.textWidth("F");
-        M5.Display.setCursor(x + (cellSize - tw) / 2, y + 15);
+        M5.Display.setCursor(x + (cellSize - tw) / 2,
+                             y + (cellSize - 16) /
+                                     2); // Approx vertical center for size 2
         M5.Display.print("F");
         M5.Display.setTextColor(COLOR_BLACK);
       } else if (_mineState[r][c] == 1) {
@@ -6724,12 +6468,13 @@ void UIManager::drawMinesweeperGame() {
         } else {
           int n = minesweeperCountNeighbors(r, c);
           if (n > 0) {
-            M5.Display.setTextSize(3);
+            M5.Display.setTextSize(2); // Reduced from 3
             char numStr[2];
             itoa(n, numStr, 10);
             int tw = M5.Display.textWidth(numStr);
             // Center number
-            M5.Display.setCursor(x + (cellSize - tw) / 2, y + 15);
+            M5.Display.setCursor(x + (cellSize - tw) / 2,
+                                 y + (cellSize - 16) / 2);
             M5.Display.print(numStr);
           }
         }
@@ -6789,7 +6534,7 @@ void UIManager::handleMinesweeperTouch(int x, int y, TouchEvent event) {
   int r = (y - gridY) / cellSize;
   int c = (x - gridX) / cellSize;
 
-  if (r >= 0 && r < 8 && c >= 0 && c < 12) {
+  if (r >= 0 && r < 7 && c >= 0 && c < 12) {
     bool changed = false;
 
     if (_mineInputMode) {
@@ -6809,7 +6554,7 @@ void UIManager::handleMinesweeperTouch(int x, int y, TouchEvent event) {
           _mineState[r][c] = 1;
           _mineGameOver = true;
           // Reveal all mines... logic same as before, but updated loops
-          for (int i = 0; i < 8; i++)
+          for (int i = 0; i < 7; i++)
             for (int j = 0; j < 12; j++)
               if (_mineGrid[i][j])
                 _mineState[i][j] = 1;
