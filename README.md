@@ -26,7 +26,7 @@ A power user's companion for the Fossibot Power Station, built on the M5Paper S3
 * **Notes**: fast, low-latency scribbling with saving to SD card.
 * **Timer & Pomodoro**: Focus tools that run in the background.
 * **Calculator**: Quick arithmetic on the fly.
-* **Games**: Relax with Sudoku and 2048.
+* **Games**: Relax with Sudoku, 2048, and **Minesweeper**.
 
 ### 🐈‍⬛ e-Rex
 
@@ -49,8 +49,8 @@ The device is named e-Rex named after my recently deceased cat. He lived to the 
 1. **Clone the Repository**
 
     ```bash
-    git clone https://github.com/your-username/FOSSI-S3PAP.git
-    cd FOSSI-S3PAP
+    git clone https://github.com/dandwhelan/s3paper-fossi-util.git
+    cd s3paper-fossi-util
     ```
 
 2. **Build with PlatformIO**
@@ -58,9 +58,43 @@ The device is named e-Rex named after my recently deceased cat. He lived to the 
     * Install the **PlatformIO** extension.
     * Click **PlatformIO Icon** -> **Project Tasks** -> **Upload**.
 
-3. **SD Card Setup**
-    * Create a folder `/books` for your books.
-    * Create a folder `/history` (optional, auto-created).
+3. **SD Card Setup (Critical)**
+   To use all features (Books, Games, History, Config), your SD card must be set up with the following folders and files:
+
+   **Folder Structure:**
+   ```
+   / (Root)
+   ├── books/              # Place your .epub files here
+   ├── config/             # Configuration files
+   │   └── settings.json   # Connectivity and device settings
+   ├── games/              # Game save files (auto-created)
+   ├── history/            # Power monitoring logs (auto-created)
+   ├── notes/              # Handwritten notes (auto-created)
+   ├── reader/             # Book progress and settings (auto-created)
+   │   └── bookmarks/      # Bookmarks (auto-created)
+   └── boot.png            # (Optional) Custom boot splash screen (960x540 grayscale)
+   ```
+
+   **Configuration (`/config/settings.json`):**
+   Create this file to enable Fossibot connectivity. Replace the MAC address with your device's MAC.
+
+   ```json
+   {
+     "wifi": {
+       "ssid": "YourWiFiSSID",
+       "password": "YourWiFiPassword"
+     },
+     "bluetooth": {
+       "fossibot_mac": "XX:XX:XX:XX:XX:XX"
+     },
+     "weather": {
+       "api_key": "your_openweathermap_key",
+       "city": "London",
+       "units": "metric"
+     }
+   }
+   ```
+   *Note: If no config is found, defaults will be used and Bluetooth/WiFi features may be disabled.*
 
 For detailed developer instructions, see the [Developer Guide](docs/DEVELOPMENT.md).
 
