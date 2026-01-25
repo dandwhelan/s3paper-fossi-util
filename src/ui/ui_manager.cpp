@@ -6581,17 +6581,21 @@ void UIManager::nonogramCheckWin() {
 // Minesweeper Game
 // ============================================================================
 
+// ============================================================================
+// Minesweeper Game
+// ============================================================================
+
 void UIManager::minesweeperInit() {
   memset(_mineState, 0, sizeof(_mineState));
   memset(_mineGrid, 0, sizeof(_mineGrid));
   _mineInputMode = false; // Reveal
   _mineGameOver = false;
 
-  // Place 10 mines
+  // Place 12 mines (for 8x12 grid)
   int minesPlaced = 0;
-  while (minesPlaced < 10) {
-    int r = random(10);
-    int c = random(10);
+  while (minesPlaced < 12) {
+    int r = random(8);
+    int c = random(12);
     if (!_mineGrid[r][c]) {
       _mineGrid[r][c] = true;
       minesPlaced++;
@@ -6607,7 +6611,7 @@ int UIManager::minesweeperCountNeighbors(int r, int c) {
         continue;
       int nr = r + dr;
       int nc = c + dc;
-      if (nr >= 0 && nr < 10 && nc >= 0 && nc < 10) {
+      if (nr >= 0 && nr < 8 && nc >= 0 && nc < 12) {
         if (_mineGrid[nr][nc])
           count++;
       }
@@ -6617,7 +6621,7 @@ int UIManager::minesweeperCountNeighbors(int r, int c) {
 }
 
 void UIManager::minesweeperReveal(int r, int c) {
-  if (r < 0 || r >= 10 || c < 0 || c >= 10)
+  if (r < 0 || r >= 8 || c < 0 || c >= 12)
     return;
   if (_mineState[r][c] != 0)
     return; // Already revealed or flagged
@@ -6640,8 +6644,8 @@ void UIManager::minesweeperCheckWin() {
     return;
 
   bool win = true;
-  for (int r = 0; r < 10; r++) {
-    for (int c = 0; c < 10; c++) {
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 12; c++) {
       if (!_mineGrid[r][c] && _mineState[r][c] != 1) {
         win = false; // Non-mine not revealed
         break;
@@ -6662,8 +6666,9 @@ void UIManager::minesweeperCheckWin() {
 }
 
 void UIManager::drawMinesweeperGame() {
+  // NOTE: We do NOT call drawMenuBar() to hide the navbar.
+
   M5.Display.fillScreen(COLOR_WHITE);
-  drawMenuBar();
 
   M5.Display.setTextSize(2);
   M5.Display.setTextColor(COLOR_BLACK);
@@ -6671,7 +6676,7 @@ void UIManager::drawMinesweeperGame() {
   M5.Display.print("MINESWEEPER");
 
   // Mode Toggle
-  int modeBtnX = 700;
+  int modeBtnX = 600;
   int modeBtnY = 10;
   drawButton(modeBtnX, modeBtnY, 100, 50, _mineInputMode ? "FLAG" : "DIG",
              true);
@@ -6679,16 +6684,20 @@ void UIManager::drawMinesweeperGame() {
   // Reset
   drawButton(modeBtnX - 120, modeBtnY, 100, 50, "RESET");
 
-  int cellSize = 45;
-  int gridX = 250;
+  // Quit (X) Button
+  drawButton(900, 10, 50, 50, "X");
+
+  int cellSize = 60; // Increased size for better touch
+  int gridX = (SCREEN_WIDTH - (12 * cellSize)) / 2; // Center horizontal
   int gridY = 80;
 
   // Draw Grid
-  for (int r = 0; r < 10; r++) {
-    for (int c = 0; c < 10; c++) {
+  for (int r = 0; r < 8; r++) {
+    for (int c = 0; c < 12; c++) {
       int x = gridX + c * cellSize;
       int y = gridY + r * cellSize;
 
+      // Draw cell border
       M5.Display.drawRect(x, y, cellSize, cellSize, COLOR_BLACK);
 
       if (_mineState[r][c] == 0) {
@@ -6700,22 +6709,28 @@ void UIManager::drawMinesweeperGame() {
         M5.Display.fillRect(x + 2, y + 2, cellSize - 4, cellSize - 4,
                             COLOR_LIGHT_GRAY);
         M5.Display.setTextColor(COLOR_RED);
-        M5.Display.setTextSize(2);
-        M5.Display.setCursor(x + 15, y + 10);
+        M5.Display.setTextSize(3);
+        // Center 'F'
+        int tw = M5.Display.textWidth("F");
+        M5.Display.setCursor(x + (cellSize - tw) / 2, y + 15);
         M5.Display.print("F");
-        M5.Display.setTextColor(COLOR_BLACK); // Reset
+        M5.Display.setTextColor(COLOR_BLACK);
       } else if (_mineState[r][c] == 1) {
         // Revealed
         if (_mineGrid[r][c]) {
           // Mine
-          M5.Display.fillCircle(x + cellSize / 2, y + cellSize / 2, 10,
-                                COLOR_BLACK);
+          M5.Display.fillCircle(x + cellSize / 2, y + cellSize / 2,
+                                cellSize / 3, COLOR_BLACK);
         } else {
           int n = minesweeperCountNeighbors(r, c);
           if (n > 0) {
-            M5.Display.setTextSize(2);
-            M5.Display.setCursor(x + 15, y + 15);
-            M5.Display.printf("%d", n);
+            M5.Display.setTextSize(3);
+            char numStr[2];
+            itoa(n, numStr, 10);
+            int tw = M5.Display.textWidth(numStr);
+            // Center number
+            M5.Display.setCursor(x + (cellSize - tw) / 2, y + 15);
+            M5.Display.print(numStr);
           }
         }
       }
@@ -6727,7 +6742,7 @@ void UIManager::handleMinesweeperTouch(int x, int y, TouchEvent event) {
   if (event != TouchEvent::RELEASE)
     return;
 
-  int modeBtnX = 700;
+  int modeBtnX = 600;
   int modeBtnY = 10;
 
   // Mode Toggle
@@ -6735,7 +6750,12 @@ void UIManager::handleMinesweeperTouch(int x, int y, TouchEvent event) {
       y < modeBtnY + 50) {
     Buzzer::click();
     _mineInputMode = !_mineInputMode;
-    forceRefresh();
+    // Just refresh the button area for speed?
+    // For now, full refresh is safer for logic, but let's try to be smart if
+    // requested. User asked for "quick refresh". We can just redraw the button.
+    drawButton(modeBtnX, modeBtnY, 100, 50, _mineInputMode ? "FLAG" : "DIG",
+               true);
+    M5.Display.display();
     return;
   }
 
@@ -6743,31 +6763,44 @@ void UIManager::handleMinesweeperTouch(int x, int y, TouchEvent event) {
   if (x >= modeBtnX - 120 && x < modeBtnX - 20 && y >= 10 && y < 60) {
     Buzzer::click();
     minesweeperInit();
+    // Full refresh needed for new game
     M5.Display.setEpdMode(epd_mode_t::epd_quality);
     forceRefresh();
     return;
   }
 
+  // Quit (X)
+  if (x >= 900 && x < 950 && y >= 10 && y < 60) {
+    Buzzer::click();
+    navigateTo(ScreenID::GAMES_MENU);
+    return;
+  }
+
   if (_mineGameOver) {
-    // Tap anywhere to reset or exit?
-    // Let's just allow back button or reset button.
+    // Allow quit or reset
+    return;
   }
 
   // Grid
-  int cellSize = 45;
-  int gridX = 250;
+  int cellSize = 60;
+  int gridX = (SCREEN_WIDTH - (12 * cellSize)) / 2;
   int gridY = 80;
 
   int r = (y - gridY) / cellSize;
   int c = (x - gridX) / cellSize;
 
-  if (r >= 0 && r < 10 && c >= 0 && c < 10 && !_mineGameOver) {
+  if (r >= 0 && r < 8 && c >= 0 && c < 12) {
+    bool changed = false;
+
     if (_mineInputMode) {
       // Flagging
-      if (_mineState[r][c] == 0)
+      if (_mineState[r][c] == 0) {
         _mineState[r][c] = 2;
-      else if (_mineState[r][c] == 2)
+        changed = true;
+      } else if (_mineState[r][c] == 2) {
         _mineState[r][c] = 0;
+        changed = true;
+      }
     } else {
       // Digging
       if (_mineState[r][c] == 0) {
@@ -6775,25 +6808,32 @@ void UIManager::handleMinesweeperTouch(int x, int y, TouchEvent event) {
           // Boom
           _mineState[r][c] = 1;
           _mineGameOver = true;
-          // Reveal all mines
-          for (int i = 0; i < 10; i++)
-            for (int j = 0; j < 10; j++)
+          // Reveal all mines... logic same as before, but updated loops
+          for (int i = 0; i < 8; i++)
+            for (int j = 0; j < 12; j++)
               if (_mineGrid[i][j])
                 _mineState[i][j] = 1;
 
-          M5.Display.fillRect(300, 200, 360, 140, COLOR_WHITE);
-          M5.Display.drawRect(300, 200, 360, 140, COLOR_BLACK);
-          M5.Display.setTextSize(3);
-          M5.Display.setCursor(380, 250);
-          M5.Display.print("GAME OVER");
-          M5.Display.display();
+          forceRefresh(); // Full refresh for game over
           return;
         } else {
           minesweeperReveal(r, c);
+          changed = true;
           minesweeperCheckWin();
         }
       }
     }
-    forceRefresh(); // Full refresh easiest for now
+
+    if (changed) {
+      // Fast partial refresh!
+      // We could just redraw the changed cells, but flood fill changes many.
+      // For simplicity with speed, we use fast mode and full redraw, OR
+      // optimized partial. Let's use fast mode for playing.
+      M5.Display.setEpdMode(epd_mode_t::epd_fast); // Faster updates
+      drawMinesweeperGame();
+      M5.Display.display();
+      // Restore quality for text/static elements if needed, but for game
+      // repeated inputs fast is better.
+    }
   }
 }

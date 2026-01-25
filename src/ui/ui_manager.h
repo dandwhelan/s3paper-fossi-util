@@ -403,9 +403,9 @@ private:
   void nonogramGeneratePuzzle();
 
   // Minesweeper Game state
-  bool _mineGrid[10][10];    // True = Mine
-  int8_t _mineState[10][10]; // 0=Covered, 1=Revealed, 2=Flagged
-  bool _mineInputMode;       // False=Reveal, True=Flag
+  bool _mineGrid[8][12];    // [Rows][Cols]
+  int8_t _mineState[8][12]; // 0=Covered, 1=Revealed, 2=Flagged
+  bool _mineInputMode;      // False=Reveal, True=Flag
   bool _mineGameOver;
 
   // Minesweeper Methods
