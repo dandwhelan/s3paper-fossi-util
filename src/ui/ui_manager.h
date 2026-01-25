@@ -24,7 +24,8 @@ enum class ScreenID {
   HOME,
   GAMES_MENU,
   GAME_2048,
-  GAME_WORDLE,
+  GAME_NONOGRAM,
+  GAME_MINESWEEPER,
   GAME_SUDOKU,
   READER,
   CLOCK,
@@ -145,7 +146,7 @@ public:
   // Power Management
   void checkPowerManagement();
   void enterDeepSleep();
-  void showSleepImage();  // Display random image before deep sleep
+  void showSleepImage(); // Display random image before deep sleep
 
   // Public method to force exit from Eco Mode (called by main.cpp on touch)
   void exitEcoMode();
@@ -158,7 +159,7 @@ private:
   // Power State
   bool _lowPowerMode = false;
   unsigned long _lastActivityTime = 0;
-  unsigned long _bleDisconnectedTime = 0;  // Timestamp when BLE disconnected
+  unsigned long _bleDisconnectedTime = 0; // Timestamp when BLE disconnected
 
   // Power bank data cache
   Fossibot::PowerBankData _powerData;
@@ -387,6 +388,33 @@ private:
   bool sudokuValidateCell(byte row, byte col);
   bool sudokuCheckWin();
   void sudokuClearCell();
+
+  // Nonogram Game state (10x10)
+  static const int NONOGRAM_SIZE = 10;
+  bool _nonogramSolution[10][10]; // True = filled
+  int8_t _nonogramState[10][10];  // 0 = empty, 1 = filled, 2 = cross
+  bool _nonogramInputMode;        // False = Fill, True = Cross
+
+  // Nonogram Game methods
+  void drawNonogramGame();
+  void handleNonogramTouch(int x, int y, TouchEvent event);
+  void nonogramInit();
+  void nonogramCheckWin();
+  void nonogramGeneratePuzzle();
+
+  // Minesweeper Game state
+  bool _mineGrid[10][10];    // True = Mine
+  int8_t _mineState[10][10]; // 0=Covered, 1=Revealed, 2=Flagged
+  bool _mineInputMode;       // False=Reveal, True=Flag
+  bool _mineGameOver;
+
+  // Minesweeper Methods
+  void drawMinesweeperGame();
+  void handleMinesweeperTouch(int x, int y, TouchEvent event);
+  void minesweeperInit();
+  void minesweeperCheckWin();
+  int minesweeperCountNeighbors(int r, int c);
+  void minesweeperReveal(int r, int c);
 
   // Power History (data collection active, UI Phase 3)
   PowerHistory _powerHistory;

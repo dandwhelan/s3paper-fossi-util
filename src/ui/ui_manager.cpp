@@ -231,6 +231,12 @@ void UIManager::update() {
   case ScreenID::GAME_SUDOKU:
     drawSudokuGame();
     break;
+  case ScreenID::GAME_NONOGRAM:
+    drawNonogramGame();
+    break;
+  case ScreenID::GAME_MINESWEEPER:
+    drawMinesweeperGame();
+    break;
   case ScreenID::HISTORY:
     drawHistoryScreen();
     break;
@@ -341,11 +347,23 @@ void UIManager::handleTouch(int x, int y, TouchEvent event) {
         handleSudokuTouch(x, y, event);
       }
 
+      // GAME_NONOGRAM touch handling
+      if (_currentScreen == ScreenID::GAME_NONOGRAM) {
+        handleNonogramTouch(x, y, event);
+      }
+
+      // GAME_MINESWEEPER touch handling
+      if (_currentScreen == ScreenID::GAME_MINESWEEPER) {
+        handleMinesweeperTouch(x, y, event);
+      }
+
       // Check menu buttons (Allow navigation from all screens as requested)
       if (_currentScreen != ScreenID::NOTES &&
           _currentScreen != ScreenID::NOTES_BROWSE &&
           _currentScreen != ScreenID::GAME_2048 &&
           _currentScreen != ScreenID::GAME_SUDOKU &&
+          _currentScreen != ScreenID::GAME_NONOGRAM &&
+          _currentScreen != ScreenID::GAME_MINESWEEPER &&
           _currentScreen != ScreenID::HISTORY &&
           _currentScreen != ScreenID::READER) { // Disable nav bar in Reader
         int menuHit = hitTestMenuButton(x, y);
@@ -396,7 +414,9 @@ void UIManager::navigateTo(ScreenID screen) {
   // SMART REFRESH: Switch modes based on content requirements
   if (screen == ScreenID::NOTES || screen == ScreenID::READER ||
       screen == ScreenID::GAMES_MENU || screen == ScreenID::GAME_2048 ||
-      screen == ScreenID::GAME_SUDOKU || screen == ScreenID::NOTES_BROWSE) {
+      screen == ScreenID::GAME_SUDOKU || screen == ScreenID::GAME_NONOGRAM ||
+      screen == ScreenID::GAME_MINESWEEPER ||
+      screen == ScreenID::NOTES_BROWSE) {
     // High Quality Mode for content creation/reading
     M5.Display.setEpdMode(epd_mode_t::epd_quality);
     Serial.println("UI: Switched to EPD Quality Mode");
@@ -432,7 +452,8 @@ void UIManager::navigateTo(ScreenID screen) {
   bool enteringIntensiveScreen =
       (screen == ScreenID::READER || screen == ScreenID::NOTES ||
        screen == ScreenID::GAMES_MENU || screen == ScreenID::GAME_2048 ||
-       screen == ScreenID::GAME_SUDOKU);
+       screen == ScreenID::GAME_SUDOKU || screen == ScreenID::GAME_NONOGRAM ||
+       screen == ScreenID::GAME_MINESWEEPER);
   bool leavingIntensiveScreen = (_previousScreen == ScreenID::READER ||
                                  _previousScreen == ScreenID::NOTES ||
                                  _previousScreen == ScreenID::GAMES_MENU ||
@@ -1116,7 +1137,7 @@ void UIManager::handleDeviceSettingsTouch(int x, int y) {
     return false;
   };
 
-  int row1 = 80;  // Date
+  int row1 = 80; // Date
   // Year
   if (isHit(160, row1, 90, 60))
     _editYear--;
@@ -1147,7 +1168,7 @@ void UIManager::handleDeviceSettingsTouch(int x, int y) {
       _editDay = 1;
   }
 
-  int row2 = 160;  // Time
+  int row2 = 160; // Time
   // Hour
   if (isHit(160, row2, 70, 60)) {
     _editHour--;
@@ -1172,7 +1193,7 @@ void UIManager::handleDeviceSettingsTouch(int x, int y) {
       _editMinute = 0;
   }
 
-  int row3 = 240;  // Sleep
+  int row3 = 240; // Sleep
   // Sleep -10
   if (isHit(160, row3, 60, 60)) {
     _editAutoSleep -= 10;
@@ -1214,10 +1235,10 @@ void UIManager::handleDeviceSettingsTouch(int x, int y) {
   if (isHit(350, rowBT, 180, 50)) {
     Serial.println("User initiated deep sleep test...");
     enterDeepSleep();
-    return;  // Won't reach here - device is asleep
+    return; // Won't reach here - device is asleep
   }
 
-  int row4 = 400;  // Save/Cancel (bottom right)
+  int row4 = 400; // Save/Cancel (bottom right)
   // Save
   if (isHit(560, row4, 140, 55)) {
     RTC::setDateTime(_editYear, _editMonth, _editDay, _editHour, _editMinute,
@@ -3207,9 +3228,9 @@ void UIManager::checkPowerManagement() {
 
   // Track BLE disconnection time
   if (bleConnected) {
-    _bleDisconnectedTime = 0;  // Reset when connected
+    _bleDisconnectedTime = 0; // Reset when connected
   } else if (_bleDisconnectedTime == 0) {
-    _bleDisconnectedTime = millis();  // Record when first disconnected
+    _bleDisconnectedTime = millis(); // Record when first disconnected
   }
 
   // 1. Deep Sleep Logic: Only if BLE disconnected for 1 hour
@@ -3217,7 +3238,7 @@ void UIManager::checkPowerManagement() {
   extern Config *config;
   bool sleepDisabled = (config && config->getAutoSleepMinutes() == 0);
 
-  unsigned long bleDisconnectDuration = 60 * 60 * 1000UL;  // 1 hour
+  unsigned long bleDisconnectDuration = 60 * 60 * 1000UL; // 1 hour
   if (!sleepDisabled && !bleConnected && _bleDisconnectedTime > 0 &&
       (millis() - _bleDisconnectedTime > bleDisconnectDuration)) {
     Serial.println("BLE disconnected for 1 hour, entering deep sleep...");
@@ -3318,23 +3339,30 @@ void UIManager::showSleepImage() {
 
   if (ext == "png" && fileSize > 24) {
     // PNG: width at bytes 16-19, height at bytes 20-23 (big-endian)
-    imgWidth = (imgBuf[16] << 24) | (imgBuf[17] << 16) | (imgBuf[18] << 8) | imgBuf[19];
-    imgHeight = (imgBuf[20] << 24) | (imgBuf[21] << 16) | (imgBuf[22] << 8) | imgBuf[23];
+    imgWidth = (imgBuf[16] << 24) | (imgBuf[17] << 16) | (imgBuf[18] << 8) |
+               imgBuf[19];
+    imgHeight = (imgBuf[20] << 24) | (imgBuf[21] << 16) | (imgBuf[22] << 8) |
+                imgBuf[23];
   } else if ((ext == "jpg" || ext == "jpeg") && fileSize > 2) {
     // JPEG: Need to parse markers to find SOF0/SOF2
     for (size_t i = 2; i < fileSize - 10; i++) {
-      if (imgBuf[i] == 0xFF && (imgBuf[i+1] == 0xC0 || imgBuf[i+1] == 0xC2)) {
-        // SOF marker found: height at i+5, width at i+7 (big-endian, 2 bytes each)
-        imgHeight = (imgBuf[i+5] << 8) | imgBuf[i+6];
-        imgWidth = (imgBuf[i+7] << 8) | imgBuf[i+8];
+      if (imgBuf[i] == 0xFF &&
+          (imgBuf[i + 1] == 0xC0 || imgBuf[i + 1] == 0xC2)) {
+        // SOF marker found: height at i+5, width at i+7 (big-endian, 2 bytes
+        // each)
+        imgHeight = (imgBuf[i + 5] << 8) | imgBuf[i + 6];
+        imgWidth = (imgBuf[i + 7] << 8) | imgBuf[i + 8];
         break;
       }
     }
   } else if (ext == "bmp" && fileSize > 26) {
     // BMP: width at bytes 18-21, height at bytes 22-25 (little-endian)
-    imgWidth = imgBuf[18] | (imgBuf[19] << 8) | (imgBuf[20] << 16) | (imgBuf[21] << 24);
-    imgHeight = imgBuf[22] | (imgBuf[23] << 8) | (imgBuf[24] << 16) | (imgBuf[25] << 24);
-    if (imgHeight < 0) imgHeight = -imgHeight;  // BMP can have negative height
+    imgWidth = imgBuf[18] | (imgBuf[19] << 8) | (imgBuf[20] << 16) |
+               (imgBuf[21] << 24);
+    imgHeight = imgBuf[22] | (imgBuf[23] << 8) | (imgBuf[24] << 16) |
+                (imgBuf[25] << 24);
+    if (imgHeight < 0)
+      imgHeight = -imgHeight; // BMP can have negative height
   }
 
   Serial.printf("Sleep image: %dx%d\n", imgWidth, imgHeight);
@@ -4043,26 +4071,27 @@ void UIManager::drawGamesMenu() {
   M5.Display.setCursor(SCREEN_WIDTH / 2 - 80, 30);
   M5.Display.print("GAMES");
 
-  // Game grid (2x2 for now)
+  // Game grid (2x2)
   int gridX = 200;
   int gridY = 120;
   int btnW = 240;
   int btnH = 150;
   int gap = 80;
 
+  // Row 1
   // 2048 Button
   drawButton(gridX, gridY, btnW, btnH, "2048", true);
 
-  // Placeholder buttons
-  M5.Display.setTextSize(1);
-  M5.Display.setTextColor(COLOR_GRAY);
-
-  // Sudoku Button (now enabled!)
+  // Sudoku Button
   drawButton(gridX + btnW + gap, gridY, btnW, btnH, "SUDOKU", true);
 
-  drawButton(gridX, gridY + btnH + 50, btnW, btnH, "WORDLE");
-  M5.Display.setCursor(gridX + 50, gridY + btnH + 50 + 90);
-  M5.Display.print("(Coming Soon)");
+  // Row 2
+  // Nonogram Button
+  drawButton(gridX, gridY + btnH + 50, btnW, btnH, "NONOGRAM", true);
+
+  // Minesweeper Button
+  drawButton(gridX + btnW + gap, gridY + btnH + 50, btnW, btnH, "MINESWEEPER",
+             true);
 }
 
 void UIManager::handleGamesMenuTouch(int x, int y) {
@@ -4076,7 +4105,7 @@ void UIManager::handleGamesMenuTouch(int x, int y) {
   if (x >= gridX && x < gridX + btnW && y >= gridY && y < gridY + btnH) {
     Buzzer::click();
     game2048Load(); // Load saved game or init new
-    // Full quality clear to remove ghosting (like Notes)
+    // Full quality clear to remove ghosting
     M5.Display.setEpdMode(epd_mode_t::epd_quality);
     M5.Display.fillScreen(COLOR_WHITE);
     M5.Display.display();
@@ -4089,11 +4118,34 @@ void UIManager::handleGamesMenuTouch(int x, int y) {
       y < gridY + btnH) {
     Buzzer::click();
     sudokuInit();
-    // Full quality clear to remove ghosting (like Notes)
     M5.Display.setEpdMode(epd_mode_t::epd_quality);
     M5.Display.fillScreen(COLOR_WHITE);
     M5.Display.display();
     navigateTo(ScreenID::GAME_SUDOKU);
+    return;
+  }
+
+  // Nonogram button
+  if (x >= gridX && x < gridX + btnW && y >= gridY + btnH + 50 &&
+      y < gridY + btnH + 50 + btnH) {
+    Buzzer::click();
+    nonogramInit();
+    M5.Display.setEpdMode(epd_mode_t::epd_quality);
+    M5.Display.fillScreen(COLOR_WHITE);
+    M5.Display.display();
+    navigateTo(ScreenID::GAME_NONOGRAM);
+    return;
+  }
+
+  // Minesweeper button
+  if (x >= gridX + btnW + gap && x < gridX + 2 * btnW + gap &&
+      y >= gridY + btnH + 50 && y < gridY + btnH + 50 + btnH) {
+    Buzzer::click();
+    minesweeperInit();
+    M5.Display.setEpdMode(epd_mode_t::epd_quality);
+    M5.Display.fillScreen(COLOR_WHITE);
+    M5.Display.display();
+    navigateTo(ScreenID::GAME_MINESWEEPER);
     return;
   }
 }
@@ -6293,5 +6345,455 @@ void UIManager::handleReaderTouch(int x, int y, TouchEvent event) {
       _readerMenuOpen = false;
       forceRefresh();
     }
+  }
+}
+
+// ============================================================================
+// Nonogram Game
+// ============================================================================
+
+void UIManager::nonogramInit() {
+  // Clear state
+  memset(_nonogramState, 0, sizeof(_nonogramState));
+  _nonogramInputMode = false; // Default: Fill
+
+  nonogramGeneratePuzzle();
+}
+
+void UIManager::nonogramGeneratePuzzle() {
+  // Simple random generation (60% fill rate)
+  for (int r = 0; r < NONOGRAM_SIZE; r++) {
+    for (int c = 0; c < NONOGRAM_SIZE; c++) {
+      _nonogramSolution[r][c] = (random(100) < 60);
+    }
+  }
+}
+
+void UIManager::drawNonogramGame() {
+  M5.Display.fillScreen(COLOR_WHITE);
+  drawMenuBar();
+
+  // Header
+  M5.Display.setTextSize(2);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(20, 20);
+  M5.Display.print("NONOGRAM");
+
+  // Mode Toggle Button
+  int modeBtnX = 700;
+  int modeBtnY = 10;
+  drawButton(modeBtnX, modeBtnY, 100, 50, _nonogramInputMode ? "CROSS" : "FILL",
+             true);
+
+  // Reset Button
+  drawButton(modeBtnX - 120, modeBtnY, 100, 50, "RESET");
+
+  // Grid Config
+  int cellSize = 35;
+  int gridX = 250;
+  int gridY = 120;
+
+  // Draw Grid Lines
+  for (int i = 0; i <= NONOGRAM_SIZE; i++) {
+    bool thick = (i % 5 == 0);
+    int thickness = thick ? 3 : 1;
+    M5.Display.fillRect(gridX, gridY + i * cellSize, NONOGRAM_SIZE * cellSize,
+                        thickness, COLOR_BLACK);
+    M5.Display.fillRect(gridX + i * cellSize, gridY, thickness,
+                        NONOGRAM_SIZE * cellSize, COLOR_BLACK);
+  }
+
+  // Draw Cells
+  for (int r = 0; r < NONOGRAM_SIZE; r++) {
+    for (int c = 0; c < NONOGRAM_SIZE; c++) {
+      int x = gridX + c * cellSize + 2;
+      int y = gridY + r * cellSize + 2;
+      int w = cellSize - 3;
+      int h = cellSize - 3;
+
+      if (_nonogramState[r][c] == 1) { // Filled
+        M5.Display.fillRect(x, y, w, h, COLOR_BLACK);
+      } else if (_nonogramState[r][c] == 2) { // Cross
+        M5.Display.drawLine(x, y, x + w, y + h, COLOR_BLACK);
+        M5.Display.drawLine(x + w, y, x, y + h, COLOR_BLACK);
+      }
+    }
+  }
+
+  // Calculate and Draw Hints
+  M5.Display.setTextSize(1);
+  M5.Display.setTextColor(COLOR_BLACK);
+
+  // Row Hints
+  for (int r = 0; r < NONOGRAM_SIZE; r++) {
+    int count = 0;
+    std::vector<int> hints;
+    for (int c = 0; c < NONOGRAM_SIZE; c++) {
+      if (_nonogramSolution[r][c]) {
+        count++;
+      } else if (count > 0) {
+        hints.push_back(count);
+        count = 0;
+      }
+    }
+    if (count > 0)
+      hints.push_back(count);
+    if (hints.empty())
+      hints.push_back(0);
+
+    int cx = gridX - 10;
+    int cy = gridY + r * cellSize + 10;
+    for (int i = hints.size() - 1; i >= 0; i--) {
+      M5.Display.setCursor(cx, cy);
+      M5.Display.printf("%d", hints[i]);
+      cx -= 20;
+    }
+  }
+
+  // Col Hints
+  for (int c = 0; c < NONOGRAM_SIZE; c++) {
+    int count = 0;
+    std::vector<int> hints;
+    for (int r = 0; r < NONOGRAM_SIZE; r++) {
+      if (_nonogramSolution[r][c]) {
+        count++;
+      } else if (count > 0) {
+        hints.push_back(count);
+        count = 0;
+      }
+    }
+    if (count > 0)
+      hints.push_back(count);
+    if (hints.empty())
+      hints.push_back(0);
+
+    int cx = gridX + c * cellSize + 10;
+    int cy = gridY - 20;
+    for (int i = hints.size() - 1; i >= 0; i--) {
+      M5.Display.setCursor(cx, cy);
+      M5.Display.printf("%d", hints[i]);
+      cy -= 20;
+    }
+  }
+
+  // Back Button
+  drawButton(SCREEN_WIDTH - 220, 10, 200, 50, "BACK TO MENU");
+}
+
+void UIManager::handleNonogramTouch(int x, int y, TouchEvent event) {
+  if (event != TouchEvent::RELEASE)
+    return;
+
+  // Back Button
+  if (x > SCREEN_WIDTH - 220 && y < 60) {
+    Buzzer::click();
+    navigateTo(ScreenID::GAMES_MENU);
+    return;
+  }
+
+  // Mode Toggle
+  int modeBtnX = 700;
+  int modeBtnY = 10;
+  if (x >= modeBtnX && x < modeBtnX + 100 && y >= modeBtnY &&
+      y < modeBtnY + 50) {
+    Buzzer::click();
+    _nonogramInputMode = !_nonogramInputMode;
+    forceRefresh();
+    return;
+  }
+
+  // Reset
+  if (x >= modeBtnX - 120 && x < modeBtnX - 20 && y >= 10 && y < 60) {
+    Buzzer::click();
+    nonogramInit();
+    M5.Display.setEpdMode(epd_mode_t::epd_quality);
+    forceRefresh();
+    return;
+  }
+
+  // Grid interaction
+  int cellSize = 35;
+  int gridX = 250;
+  int gridY = 120;
+
+  int r = (y - gridY) / cellSize;
+  int c = (x - gridX) / cellSize;
+
+  if (r >= 0 && r < NONOGRAM_SIZE && c >= 0 && c < NONOGRAM_SIZE) {
+    int targetState = _nonogramInputMode ? 2 : 1;
+
+    if (_nonogramState[r][c] == targetState) {
+      _nonogramState[r][c] = 0;
+    } else {
+      _nonogramState[r][c] = targetState;
+    }
+
+    // Partial refresh
+    int cellX = gridX + c * cellSize;
+    int cellY = gridY + r * cellSize;
+
+    M5.Display.fillRect(cellX + 2, cellY + 2, cellSize - 3, cellSize - 3,
+                        COLOR_WHITE);
+
+    if (_nonogramState[r][c] == 1) {
+      M5.Display.fillRect(cellX + 2, cellY + 2, cellSize - 3, cellSize - 3,
+                          COLOR_BLACK);
+    } else if (_nonogramState[r][c] == 2) {
+      M5.Display.drawLine(cellX + 2, cellY + 2, cellX + cellSize - 2,
+                          cellY + cellSize - 2, COLOR_BLACK);
+      M5.Display.drawLine(cellX + cellSize - 2, cellY + 2, cellX + 2,
+                          cellY + cellSize - 2, COLOR_BLACK);
+    }
+    M5.Display.display();
+
+    nonogramCheckWin();
+  }
+}
+
+void UIManager::nonogramCheckWin() {
+  bool win = true;
+  for (int r = 0; r < NONOGRAM_SIZE; r++) {
+    for (int c = 0; c < NONOGRAM_SIZE; c++) {
+      bool shouldBeFilled = _nonogramSolution[r][c];
+      bool isFilled = (_nonogramState[r][c] == 1);
+      if (shouldBeFilled != isFilled) {
+        win = false;
+        break;
+      }
+    }
+    if (!win)
+      break;
+  }
+
+  if (win) {
+    M5.Display.fillRect(300, 200, 360, 140, COLOR_WHITE);
+    M5.Display.drawRect(300, 200, 360, 140, COLOR_BLACK);
+    M5.Display.setTextSize(3);
+    M5.Display.setCursor(380, 250);
+    M5.Display.print("SOLVED!");
+    M5.Display.display();
+    delay(2000);
+    navigateTo(ScreenID::GAMES_MENU);
+  }
+}
+
+// ============================================================================
+// Minesweeper Game
+// ============================================================================
+
+void UIManager::minesweeperInit() {
+  memset(_mineState, 0, sizeof(_mineState));
+  memset(_mineGrid, 0, sizeof(_mineGrid));
+  _mineInputMode = false; // Reveal
+  _mineGameOver = false;
+
+  // Place 10 mines
+  int minesPlaced = 0;
+  while (minesPlaced < 10) {
+    int r = random(10);
+    int c = random(10);
+    if (!_mineGrid[r][c]) {
+      _mineGrid[r][c] = true;
+      minesPlaced++;
+    }
+  }
+}
+
+int UIManager::minesweeperCountNeighbors(int r, int c) {
+  int count = 0;
+  for (int dr = -1; dr <= 1; dr++) {
+    for (int dc = -1; dc <= 1; dc++) {
+      if (dr == 0 && dc == 0)
+        continue;
+      int nr = r + dr;
+      int nc = c + dc;
+      if (nr >= 0 && nr < 10 && nc >= 0 && nc < 10) {
+        if (_mineGrid[nr][nc])
+          count++;
+      }
+    }
+  }
+  return count;
+}
+
+void UIManager::minesweeperReveal(int r, int c) {
+  if (r < 0 || r >= 10 || c < 0 || c >= 10)
+    return;
+  if (_mineState[r][c] != 0)
+    return; // Already revealed or flagged
+
+  _mineState[r][c] = 1; // Reveal
+
+  int neighbors = minesweeperCountNeighbors(r, c);
+  if (neighbors == 0) {
+    // Flood fill
+    for (int dr = -1; dr <= 1; dr++) {
+      for (int dc = -1; dc <= 1; dc++) {
+        minesweeperReveal(r + dr, c + dc);
+      }
+    }
+  }
+}
+
+void UIManager::minesweeperCheckWin() {
+  if (_mineGameOver)
+    return;
+
+  bool win = true;
+  for (int r = 0; r < 10; r++) {
+    for (int c = 0; c < 10; c++) {
+      if (!_mineGrid[r][c] && _mineState[r][c] != 1) {
+        win = false; // Non-mine not revealed
+        break;
+      }
+    }
+  }
+
+  if (win) {
+    _mineGameOver = true;
+    M5.Display.fillRect(300, 200, 360, 140, COLOR_WHITE);
+    M5.Display.drawRect(300, 200, 360, 140, COLOR_BLACK);
+    M5.Display.setTextSize(3);
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setCursor(380, 250);
+    M5.Display.print("YOU WIN!");
+    M5.Display.display();
+  }
+}
+
+void UIManager::drawMinesweeperGame() {
+  M5.Display.fillScreen(COLOR_WHITE);
+  drawMenuBar();
+
+  M5.Display.setTextSize(2);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(20, 20);
+  M5.Display.print("MINESWEEPER");
+
+  // Mode Toggle
+  int modeBtnX = 700;
+  int modeBtnY = 10;
+  drawButton(modeBtnX, modeBtnY, 100, 50, _mineInputMode ? "FLAG" : "DIG",
+             true);
+
+  // Reset
+  drawButton(modeBtnX - 120, modeBtnY, 100, 50, "RESET");
+
+  int cellSize = 45;
+  int gridX = 250;
+  int gridY = 80;
+
+  // Draw Grid
+  for (int r = 0; r < 10; r++) {
+    for (int c = 0; c < 10; c++) {
+      int x = gridX + c * cellSize;
+      int y = gridY + r * cellSize;
+
+      M5.Display.drawRect(x, y, cellSize, cellSize, COLOR_BLACK);
+
+      if (_mineState[r][c] == 0) {
+        // Covered
+        M5.Display.fillRect(x + 2, y + 2, cellSize - 4, cellSize - 4,
+                            COLOR_LIGHT_GRAY);
+      } else if (_mineState[r][c] == 2) {
+        // Flagged
+        M5.Display.fillRect(x + 2, y + 2, cellSize - 4, cellSize - 4,
+                            COLOR_LIGHT_GRAY);
+        M5.Display.setTextColor(COLOR_RED);
+        M5.Display.setTextSize(2);
+        M5.Display.setCursor(x + 15, y + 10);
+        M5.Display.print("F");
+        M5.Display.setTextColor(COLOR_BLACK); // Reset
+      } else if (_mineState[r][c] == 1) {
+        // Revealed
+        if (_mineGrid[r][c]) {
+          // Mine
+          M5.Display.fillCircle(x + cellSize / 2, y + cellSize / 2, 10,
+                                COLOR_BLACK);
+        } else {
+          int n = minesweeperCountNeighbors(r, c);
+          if (n > 0) {
+            M5.Display.setTextSize(2);
+            M5.Display.setCursor(x + 15, y + 15);
+            M5.Display.printf("%d", n);
+          }
+        }
+      }
+    }
+  }
+}
+
+void UIManager::handleMinesweeperTouch(int x, int y, TouchEvent event) {
+  if (event != TouchEvent::RELEASE)
+    return;
+
+  int modeBtnX = 700;
+  int modeBtnY = 10;
+
+  // Mode Toggle
+  if (x >= modeBtnX && x < modeBtnX + 100 && y >= modeBtnY &&
+      y < modeBtnY + 50) {
+    Buzzer::click();
+    _mineInputMode = !_mineInputMode;
+    forceRefresh();
+    return;
+  }
+
+  // Reset
+  if (x >= modeBtnX - 120 && x < modeBtnX - 20 && y >= 10 && y < 60) {
+    Buzzer::click();
+    minesweeperInit();
+    M5.Display.setEpdMode(epd_mode_t::epd_quality);
+    forceRefresh();
+    return;
+  }
+
+  if (_mineGameOver) {
+    // Tap anywhere to reset or exit?
+    // Let's just allow back button or reset button.
+  }
+
+  // Grid
+  int cellSize = 45;
+  int gridX = 250;
+  int gridY = 80;
+
+  int r = (y - gridY) / cellSize;
+  int c = (x - gridX) / cellSize;
+
+  if (r >= 0 && r < 10 && c >= 0 && c < 10 && !_mineGameOver) {
+    if (_mineInputMode) {
+      // Flagging
+      if (_mineState[r][c] == 0)
+        _mineState[r][c] = 2;
+      else if (_mineState[r][c] == 2)
+        _mineState[r][c] = 0;
+    } else {
+      // Digging
+      if (_mineState[r][c] == 0) {
+        if (_mineGrid[r][c]) {
+          // Boom
+          _mineState[r][c] = 1;
+          _mineGameOver = true;
+          // Reveal all mines
+          for (int i = 0; i < 10; i++)
+            for (int j = 0; j < 10; j++)
+              if (_mineGrid[i][j])
+                _mineState[i][j] = 1;
+
+          M5.Display.fillRect(300, 200, 360, 140, COLOR_WHITE);
+          M5.Display.drawRect(300, 200, 360, 140, COLOR_BLACK);
+          M5.Display.setTextSize(3);
+          M5.Display.setCursor(380, 250);
+          M5.Display.print("GAME OVER");
+          M5.Display.display();
+          return;
+        } else {
+          minesweeperReveal(r, c);
+          minesweeperCheckWin();
+        }
+      }
+    }
+    forceRefresh(); // Full refresh easiest for now
   }
 }
