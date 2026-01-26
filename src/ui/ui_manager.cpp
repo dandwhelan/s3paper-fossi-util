@@ -6,6 +6,7 @@
 
 #include "ui_manager.h"
 #include "../ble/ble_client.h"
+#include "../fonts/ReaderFonts.h"  // Reader font family registry
 #include "../fonts/TerminusBold.h" // Terminus Bold font
 #include "../hardware/battery.h"
 #include "../hardware/buzzer.h"
@@ -25,14 +26,11 @@
 #define COLOR_RED 0xF800
 
 // ============================================================================
-// USER CONFIGURATION - READER SETTINGS
+// READER FONT CONFIGURATION
 // ============================================================================
-// Change these to your preferred fonts.
-// Available fonts: DejaVu12, DejaVu18, DejaVu24, DejaVu40, DejaVu56, DejaVu72
-//                  Terminus24, Terminus32, etc. (Check src/fonts/)
-#define READER_FONT_SMALL &fonts::DejaVu18
-#define READER_FONT_MEDIUM &fonts::DejaVu24
-#define READER_FONT_LARGE &fonts::DejaVu40
+// Reader fonts are now handled via ReaderFonts.h with font family selection.
+// Use getReaderFont() method to get the current font based on family + size.
+// Available families: Serif (Bookerly), Sans-serif (Noto Sans), Dyslexic
 
 // Line spacing (pixels added between lines)
 // You can adjust these values, or the logic in drawReaderScreen uses
@@ -87,6 +85,17 @@ void UIManager::init() {
 
   _needsRefresh = true;
   _lastActivityTime = millis();
+}
+
+const m5gfx::IFont* UIManager::getReaderFont() {
+  // Return font based on current family and size selection
+  if (_readerFontSize == 2) {
+    // Medium size
+    return getReaderFontMedium(_readerFontFamily);
+  } else {
+    // Large size (default)
+    return getReaderFontLarge(_readerFontFamily);
+  }
 }
 
 void UIManager::initMenuButtons() {
@@ -5491,25 +5500,29 @@ void UIManager::drawReaderScreen() {
           [](void *param) {
             UIManager *self = (UIManager *)param;
 
-            Serial.println("Relayout task: Starting...");
+            Serial.printf("Relayout task: Starting (fontFamily=%d, fontSize=%d)\n",
+                          self->_readerFontFamily, self->_readerFontSize);
 
-            // SET RENDERER STATE FIRST - use M or L font based on selection
+            // SET RENDERER STATE FIRST - use font based on family + size
+            const m5gfx::IFont *layoutFont = self->getReaderFont();
+            if (!layoutFont) {
+              Serial.println("Relayout task: ERROR - null font pointer!");
+              g_readerBusy = false;
+              g_relayoutInProgress = false;
+              self->_needsRefresh = true;
+              vTaskDelete(NULL);
+              return;
+            }
+
             if (self->epubRenderer) {
-              const m5gfx::IFont *layoutFont = (self->_readerFontSize == 2)
-                                                   ? READER_FONT_MEDIUM
-                                                   : READER_FONT_LARGE;
-
               self->epubRenderer->setFont(layoutFont);
               self->epubRenderer->setFontSize(1.0);
               self->epubRenderer->setLineSpacing((int)self->_readerLineSpacing);
             }
 
-            // Sync global display state - use M or L font based on selection
+            // Sync global display state
             M5.Display.setRotation(0);
-            const m5gfx::IFont *font = (self->_readerFontSize == 2)
-                                           ? READER_FONT_MEDIUM
-                                           : READER_FONT_LARGE;
-            M5.Display.setFont(font);
+            M5.Display.setFont(layoutFont);
             M5.Display.setTextSize(1.0);
 
             // HEAP MONITORING
@@ -5517,11 +5530,11 @@ void UIManager::drawReaderScreen() {
                           esp_get_free_heap_size());
 
             // This function does the heavy lifting (zip extraction + parsing)
-            self->epubReader->parse_and_layout_current_section();
-
-            // CRITICAL: Render immediately after layout (same as book open
-            // pattern)
-            self->epubReader->render();
+            if (self->epubReader) {
+              self->epubReader->parse_and_layout_current_section();
+              Serial.println("Relayout task: Layout complete, rendering...");
+              self->epubReader->render();
+            }
 
             Serial.printf("HEAP: After re-layout: %d bytes free\n",
                           esp_get_free_heap_size());
@@ -5530,6 +5543,8 @@ void UIManager::drawReaderScreen() {
             g_readerBusy = false;
             g_relayoutInProgress = false;
             self->_needsRefresh = true;
+
+            Serial.println("Relayout task: Complete!");
 
             // Give IDLE task time to clean up before task deletion
             vTaskDelay(pdMS_TO_TICKS(50));
@@ -5543,9 +5558,8 @@ void UIManager::drawReaderScreen() {
 
     M5.Display.setRotation(0);
 
-    // Use M or L font based on selection
-    const m5gfx::IFont *font =
-        (_readerFontSize == 2) ? READER_FONT_MEDIUM : READER_FONT_LARGE;
+    // Use font based on family + size selection
+    const m5gfx::IFont *font = getReaderFont();
 
     M5.Display.setFont(font);
     M5.Display.setTextSize(1.0);
@@ -5625,8 +5639,8 @@ void UIManager::drawReaderMenu() {
   int screenW = M5.Display.width();
   int screenH = M5.Display.height();
 
-  int menuW = 340; // Wider for better button spacing
-  int menuH = 200; // Shorter - just font and buttons
+  int menuW = 280;
+  int menuH = 420; // Taller for vertical layout
   int menuX = (screenW - menuW) / 2;
   int menuY = (screenH - menuH) / 2;
 
@@ -5634,47 +5648,94 @@ void UIManager::drawReaderMenu() {
   M5.Display.drawRect(menuX, menuY, menuW, menuH, COLOR_BLACK);
   M5.Display.drawRect(menuX + 2, menuY + 2, menuW - 4, menuH - 4, COLOR_BLACK);
 
-  // DejaVu24 is large, use size 1.0 or 0.8 for menu text
   M5.Display.setTextSize(0.8);
   M5.Display.setTextColor(COLOR_BLACK);
 
-  int y = menuY + 30;
+  int y = menuY + 20;
+  int btnW = 200;
+  int btnH = 45;
+  int btnX = menuX + (menuW - btnW) / 2;
 
-  // Font Size Row - M and L buttons
-  M5.Display.setCursor(menuX + 20, y + 10);
-  M5.Display.print("Font:");
+  // === Font Size Row - M and L side by side ===
+  M5.Display.setCursor(menuX + 20, y + 12);
+  M5.Display.print("Size:");
 
-  // M button (Medium) - highlighted if selected
+  int sizeBtn = 80;
+  int mX = menuX + 100;
+  int lX = mX + sizeBtn + 10;
+
   bool isMedium = (_readerFontSize == 2);
   if (isMedium) {
-    M5.Display.fillRect(menuX + 130, y, 70, 40, COLOR_BLACK);
+    M5.Display.fillRect(mX, y, sizeBtn, btnH, COLOR_BLACK);
     M5.Display.setTextColor(COLOR_WHITE);
   } else {
-    M5.Display.drawRect(menuX + 130, y, 70, 40, COLOR_BLACK);
+    M5.Display.drawRect(mX, y, sizeBtn, btnH, COLOR_BLACK);
     M5.Display.setTextColor(COLOR_BLACK);
   }
-  M5.Display.setCursor(menuX + 155, y + 12);
+  M5.Display.setCursor(mX + 30, y + 14);
   M5.Display.print("M");
 
-  // L button (Large) - highlighted if selected
   bool isLarge = (_readerFontSize == 3);
   if (isLarge) {
-    M5.Display.fillRect(menuX + 220, y, 70, 40, COLOR_BLACK);
+    M5.Display.fillRect(lX, y, sizeBtn, btnH, COLOR_BLACK);
     M5.Display.setTextColor(COLOR_WHITE);
   } else {
-    M5.Display.drawRect(menuX + 220, y, 70, 40, COLOR_BLACK);
+    M5.Display.drawRect(lX, y, sizeBtn, btnH, COLOR_BLACK);
     M5.Display.setTextColor(COLOR_BLACK);
   }
-  M5.Display.setCursor(menuX + 250, y + 12);
+  M5.Display.setCursor(lX + 30, y + 14);
   M5.Display.print("L");
 
-  M5.Display.setTextColor(COLOR_BLACK); // Reset
+  M5.Display.setTextColor(COLOR_BLACK);
+  y += btnH + 15;
 
-  y += 70; // Next row
+  // === Font Family - Stacked vertically ===
+  // Serif button
+  bool isSerif = (_readerFontFamily == 0);
+  if (isSerif) {
+    M5.Display.fillRect(btnX, y, btnW, btnH, COLOR_BLACK);
+    M5.Display.setTextColor(COLOR_WHITE);
+  } else {
+    M5.Display.drawRect(btnX, y, btnW, btnH, COLOR_BLACK);
+    M5.Display.setTextColor(COLOR_BLACK);
+  }
+  M5.Display.setCursor(btnX + 70, y + 14);
+  M5.Display.print("Serif");
+  y += btnH + 8;
 
-  // Close Book & Done Row
-  drawButton(menuX + 30, y, 130, 40, "CLOSE");
-  drawButton(menuX + 180, y, 130, 40, "DONE");
+  // Sans button
+  M5.Display.setTextColor(COLOR_BLACK);
+  bool isSans = (_readerFontFamily == 1);
+  if (isSans) {
+    M5.Display.fillRect(btnX, y, btnW, btnH, COLOR_BLACK);
+    M5.Display.setTextColor(COLOR_WHITE);
+  } else {
+    M5.Display.drawRect(btnX, y, btnW, btnH, COLOR_BLACK);
+    M5.Display.setTextColor(COLOR_BLACK);
+  }
+  M5.Display.setCursor(btnX + 70, y + 14);
+  M5.Display.print("Sans");
+  y += btnH + 8;
+
+  // Dyslexic button
+  M5.Display.setTextColor(COLOR_BLACK);
+  bool isDys = (_readerFontFamily == 2);
+  if (isDys) {
+    M5.Display.fillRect(btnX, y, btnW, btnH, COLOR_BLACK);
+    M5.Display.setTextColor(COLOR_WHITE);
+  } else {
+    M5.Display.drawRect(btnX, y, btnW, btnH, COLOR_BLACK);
+    M5.Display.setTextColor(COLOR_BLACK);
+  }
+  M5.Display.setCursor(btnX + 55, y + 14);
+  M5.Display.print("Dyslexic");
+  y += btnH + 15;
+
+  // === Action buttons - Stacked vertically ===
+  M5.Display.setTextColor(COLOR_BLACK);
+  drawButton(btnX, y, btnW, btnH, "DONE");
+  y += btnH + 8;
+  drawButton(btnX, y, btnW, btnH, "CLOSE");
 }
 
 void UIManager::readerOpenFile(const String &path) {
@@ -5742,10 +5803,8 @@ void UIManager::readerOpenFile(const String &path) {
           Serial.println("Reader: Parsing first section in background task...");
 
           // CRITICAL: Synchronize display state for layout calculation
-          // Use M or L font based on selection
-          const m5gfx::IFont *font = (myself->_readerFontSize == 2)
-                                         ? READER_FONT_MEDIUM
-                                         : READER_FONT_LARGE;
+          // Use font based on family + size selection
+          const m5gfx::IFont *font = myself->getReaderFont();
 
           // Apply to BOTH displays (M5 and Renderer) to be safe
           M5.Display.setFont(font);
@@ -5963,11 +6022,20 @@ void UIManager::readerLoadSettings() {
       String line = file.readStringUntil('\n');
       line.trim();
       if (line.startsWith("fontSize=")) {
-        // FORCE Large font - ignore saved value
-        _readerFontSize = 3;
+        _readerFontSize = line.substring(9).toInt();
+        // Validate: 2=Medium, 3=Large (default to Large if invalid)
+        if (_readerFontSize < 2 || _readerFontSize > 3) {
+          _readerFontSize = 3;
+        }
+      } else if (line.startsWith("fontFamily=")) {
+        _readerFontFamily = line.substring(11).toInt();
+        // Validate: 0=Serif, 1=Sans, 2=Dyslexic
+        if (_readerFontFamily < 0 || _readerFontFamily >= READER_FONT_FAMILY_COUNT) {
+          _readerFontFamily = 0;
+        }
+      } else if (line.startsWith("lineSpacing=")) {
+        _readerLineSpacing = line.substring(12).toInt();
       }
-      // Force Line Spacing to Normal (6)
-      _readerLineSpacing = 6;
     }
     file.close();
   }
@@ -6022,6 +6090,7 @@ void UIManager::readerSaveSettings() {
   File file = SD.open("/reader/settings.txt", FILE_WRITE);
   if (file) {
     file.printf("fontSize=%d\n", _readerFontSize);
+    file.printf("fontFamily=%d\n", _readerFontFamily);
     file.printf("lineSpacing=%d\n", _readerLineSpacing);
     file.close();
   }
@@ -6120,73 +6189,99 @@ void UIManager::handleReaderTouch(int x, int y, TouchEvent event) {
 
   // --- 1. HANDLE MENU OVERLAY (Priority) ---
   if (_readerMenuOpen) {
-    // Menu geometry: 340w x 200h, Centered in 540x960
-    int menuW = 340;
-    int menuH = 200;
-    int menuX = (540 - menuW) / 2; // 100
-    int menuY = (960 - menuH) / 2; // 380
+    // Menu geometry: 280w x 420h, Centered in 540x960
+    int menuW = 280;
+    int menuH = 420;
+    int menuX = (540 - menuW) / 2;
+    int menuY = (960 - menuH) / 2;
 
     // Check if touch inside menu box
     if (pX >= menuX && pX <= menuX + menuW && pY >= menuY &&
         pY <= menuY + menuH) {
-      // Relative Y in menu
-      int relY = pY - menuY; // 0 to 200
-      int relX = pX - menuX; // 0 to 340
+      int relY = pY - menuY;
+      int relX = pX - menuX;
 
       Buzzer::click();
       Serial.printf("Menu touch: relX=%d, relY=%d\n", relX, relY);
 
-      // Font Row (Y 30-70) - M button at x=130-200, L button at x=220-290
-      if (relY >= 30 && relY < 70) {
-        // Block font changes while re-layout task is running
-        if (g_readerBusy) {
-          Serial.println("Reader: Font change blocked - layout in progress");
-          return;
-        }
+      // Block font changes while re-layout task is running
+      if (g_readerBusy) {
+        Serial.println("Reader: Font change blocked - layout in progress");
+        return;
+      }
 
+      // Font Size Row (Y 20-65) - M at x=100-180, L at x=190-270
+      if (relY >= 20 && relY < 65) {
         bool fontChanged = false;
-        if (relX >= 130 && relX < 200) {
+        if (relX >= 100 && relX < 180) {
           _readerFontSize = 2; // Medium
           fontChanged = true;
-          Serial.println("Reader: Font -> Medium");
-        } else if (relX >= 220 && relX < 290) {
+          Serial.println("Reader: Font Size -> Medium");
+        } else if (relX >= 190 && relX < 270) {
           _readerFontSize = 3; // Large
           fontChanged = true;
-          Serial.println("Reader: Font -> Large");
+          Serial.println("Reader: Font Size -> Large");
         }
 
         if (fontChanged) {
-          // Save and refresh
           readerSaveSettings();
           _needsRefresh = true;
-
-          // Invalidate layout to force re-calculation with new font size
           if (epubReader) {
             epubReader->invalidateLayout();
           }
-
-          _readerMenuOpen = false; // Close menu after font change
+          _readerMenuOpen = false;
           forceRefresh();
         }
         return;
       }
 
-      // Close/Done Row (Y 100-140) - CLOSE at x=30-160, DONE at x=180-310
-      if (relY >= 100 && relY < 140) {
-        // CLOSE button
-        if (relX >= 30 && relX < 160) {
+      // Font buttons stacked vertically (x=40-240 for all)
+      if (relX >= 40 && relX < 240) {
+        bool familyChanged = false;
+
+        // Serif button (Y 80-125)
+        if (relY >= 80 && relY < 125) {
+          _readerFontFamily = 0;
+          familyChanged = true;
+          Serial.println("Reader: Font Family -> Serif");
+        }
+        // Sans button (Y 133-178)
+        else if (relY >= 133 && relY < 178) {
+          _readerFontFamily = 1;
+          familyChanged = true;
+          Serial.println("Reader: Font Family -> Sans");
+        }
+        // Dyslexic button (Y 186-231)
+        else if (relY >= 186 && relY < 231) {
+          _readerFontFamily = 2;
+          familyChanged = true;
+          Serial.println("Reader: Font Family -> Dyslexic");
+        }
+        // DONE button (Y 246-291)
+        else if (relY >= 246 && relY < 291) {
+          Serial.println("Reader: DONE button pressed");
+          _readerMenuOpen = false;
+          forceRefresh();
+          return;
+        }
+        // CLOSE button (Y 299-344)
+        else if (relY >= 299 && relY < 344) {
           Serial.println("Reader: CLOSE button pressed");
           readerCloseFile();
           navigateTo(ScreenID::HOME);
           return;
         }
-        // DONE button
-        if (relX >= 180 && relX < 310) {
-          Serial.println("Reader: DONE button pressed");
-          _readerMenuOpen = false; // Close menu
+
+        if (familyChanged) {
+          readerSaveSettings();
+          _needsRefresh = true;
+          if (epubReader) {
+            epubReader->invalidateLayout();
+          }
+          _readerMenuOpen = false;
           forceRefresh();
-          return;
         }
+        return;
       }
 
       return; // Touch inside menu but no button

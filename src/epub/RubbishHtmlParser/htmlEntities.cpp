@@ -380,3 +380,98 @@ std::string replace_html_entities(const std::string &text)
   }
   return res;
 }
+
+// Sanitize UTF-8 text to ASCII-compatible characters for fonts that don't support Unicode
+std::string sanitize_for_ascii_font(const std::string &text)
+{
+  std::string res;
+  res.reserve(text.size());
+
+  for (size_t i = 0; i < text.size(); ++i)
+  {
+    unsigned char c = text[i];
+
+    // ASCII characters pass through
+    if (c < 0x80) {
+      res += c;
+      continue;
+    }
+
+    // Handle multi-byte UTF-8 sequences
+    // 2-byte sequences (0xC0-0xDF)
+    if ((c & 0xE0) == 0xC0 && i + 1 < text.size()) {
+      unsigned char c2 = text[i + 1];
+      int codepoint = ((c & 0x1F) << 6) | (c2 & 0x3F);
+      i += 1;
+
+      // Common substitutions for 2-byte chars
+      if (codepoint == 0xA0) { res += ' '; continue; }  // NBSP
+      if (codepoint >= 0xC0 && codepoint <= 0xFF) {
+        // Latin-1 supplement - try to map to ASCII
+        res += '?';
+        continue;
+      }
+      res += '?';
+      continue;
+    }
+
+    // 3-byte sequences (0xE0-0xEF) - includes curly quotes
+    if ((c & 0xF0) == 0xE0 && i + 2 < text.size()) {
+      unsigned char c2 = text[i + 1];
+      unsigned char c3 = text[i + 2];
+      int codepoint = ((c & 0x0F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F);
+      i += 2;
+
+      // Curly quotes -> straight quotes
+      if (codepoint == 0x2018 || codepoint == 0x2019) { res += '\''; continue; }  // ' '
+      if (codepoint == 0x201C || codepoint == 0x201D) { res += '"'; continue; }   // " "
+      if (codepoint == 0x201A) { res += ','; continue; }   // ‚
+      if (codepoint == 0x201E) { res += '"'; continue; }   // „
+
+      // Dashes
+      if (codepoint == 0x2013) { res += '-'; continue; }   // en-dash –
+      if (codepoint == 0x2014) { res += '-'; res += '-'; continue; }  // em-dash —
+
+      // Ellipsis
+      if (codepoint == 0x2026) { res += '.'; res += '.'; res += '.'; continue; }  // …
+
+      // Bullets and symbols
+      if (codepoint == 0x2022) { res += '*'; continue; }   // bullet •
+      if (codepoint == 0x2032) { res += '\''; continue; }  // prime ′
+      if (codepoint == 0x2033) { res += '"'; continue; }   // double prime ″
+
+      // Arrows
+      if (codepoint == 0x2190) { res += '<'; res += '-'; continue; }  // ←
+      if (codepoint == 0x2192) { res += '-'; res += '>'; continue; }  // →
+      if (codepoint == 0x2191) { res += '^'; continue; }   // ↑
+      if (codepoint == 0x2193) { res += 'v'; continue; }   // ↓
+
+      // Trademark, copyright, etc
+      if (codepoint == 0x2122) { res += "(TM)"; continue; }  // ™
+      if (codepoint == 0x00A9) { res += "(c)"; continue; }   // ©
+      if (codepoint == 0x00AE) { res += "(R)"; continue; }   // ®
+
+      // Euro
+      if (codepoint == 0x20AC) { res += "EUR"; continue; }   // €
+
+      // Fraction slash
+      if (codepoint == 0x2044) { res += '/'; continue; }   // ⁄
+
+      // Default: unknown 3-byte char
+      res += '?';
+      continue;
+    }
+
+    // 4-byte sequences (0xF0-0xF7) - emojis and rare chars
+    if ((c & 0xF8) == 0xF0 && i + 3 < text.size()) {
+      i += 3;
+      res += '?';
+      continue;
+    }
+
+    // Invalid UTF-8 - skip
+    res += '?';
+  }
+
+  return res;
+}

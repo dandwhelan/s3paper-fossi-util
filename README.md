@@ -18,8 +18,9 @@ A power user's companion for the Fossibot Power Station, built on the M5Paper S3
 
 ### 📖 [Usage & EPUB Reader](docs/EPUB_READER.md)
 
-* **E-Ink Reader**: Read `.epub` books comfortably with adjustable fonts (Medium/Large).
-* **Progress Saving**: Never lose your page.
+* **E-Ink Reader**: Read `.epub` books comfortably on the E-Ink display.
+* **Font Options**: Choose from three font families (Serif, Sans, Dyslexic) and two sizes (Medium/Large).
+* **Progress Saving**: Never lose your page - bookmarks are saved per book.
 
 ### 🛠️ [Productivity Tools](docs/PRODUCTIVITY.md)
 

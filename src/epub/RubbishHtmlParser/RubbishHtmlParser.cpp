@@ -162,8 +162,9 @@ void RubbishHtmlParser::parse(const char *html, int length) {
 
 void RubbishHtmlParser::addText(const char *text, bool is_bold,
                                 bool is_italic) {
-  // Probably there is a more elegant way to do this
+  // Replace HTML entities, then sanitize for ASCII-only fonts
   std::string parsetxt = replace_html_entities((string)text);
+  parsetxt = sanitize_for_ascii_font(parsetxt);
   currentTextBlock->add_span(parsetxt.c_str(), is_bold, is_italic);
 }
 
