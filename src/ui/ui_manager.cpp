@@ -1912,25 +1912,36 @@ void UIManager::handleFossibotTimersTouch(int x, int y) {
 void UIManager::drawClockScreen() {
   Serial.println("UI: Drawing Clock screen");
 
-  // SMART EPD MODE: Use Quality for full refreshes (tabs, entry), Fastest for
-  // updates (timer)
-  if (_lastRefresh == 0) {
-    M5.Display.setEpdMode(epd_mode_t::epd_quality);
-  } else {
-    M5.Display.setEpdMode(epd_mode_t::epd_fastest);
-  }
-
-  M5.Display.fillScreen(COLOR_WHITE);
-  drawMenuBar();
-
-  // Layout: Sidebar (160px) | Content Area (remaining)
+  // Layout constants
   const int SIDEBAR_WIDTH = 160;
   const int CONTENT_X = SIDEBAR_WIDTH;
   const int CONTENT_WIDTH = SCREEN_WIDTH - SIDEBAR_WIDTH;
   const int CONTENT_HEIGHT = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
 
-  // Draw sidebar
-  drawClockSidebar(0, 0, SIDEBAR_WIDTH, CONTENT_HEIGHT);
+  // Check if this is a timer auto-refresh (partial update only)
+  bool pomodoroRunning = (_clockMode == ClockMode::POMODORO &&
+                         _pomodoroState == PomodoroState::RUNNING);
+  bool timerRunning = (_clockMode == ClockMode::TIMER && _timerRunning);
+  bool isTimerAutoRefresh = (_lastRefresh != 0) && (pomodoroRunning || timerRunning);
+
+  if (isTimerAutoRefresh) {
+    // PARTIAL REFRESH: Only update content area with fast mode (no blink)
+    M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+    // Clear only the content area
+    M5.Display.fillRect(CONTENT_X, 0, CONTENT_WIDTH, CONTENT_HEIGHT, COLOR_WHITE);
+  } else {
+    // FULL REFRESH: Redraw everything
+    if (_lastRefresh == 0) {
+      M5.Display.setEpdMode(epd_mode_t::epd_quality);
+    } else {
+      M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+    }
+    M5.Display.fillScreen(COLOR_WHITE);
+    drawMenuBar();
+    drawClockSidebar(0, 0, SIDEBAR_WIDTH, CONTENT_HEIGHT);
+    // Draw Exit/Back button (Top Right)
+    drawButton(SCREEN_WIDTH - 80, 10, 70, 50, "X");
+  }
 
   // Draw content based on current clock mode
   switch (_clockMode) {
@@ -1952,9 +1963,6 @@ void UIManager::drawClockScreen() {
     M5.Display.print("Clock Coming Soon...");
     break;
   }
-
-  // Draw Exit/Back button (Top Right)
-  drawButton(SCREEN_WIDTH - 80, 10, 70, 50, "X");
 }
 
 void UIManager::drawClockSidebar(int x, int y, int w, int h) {
