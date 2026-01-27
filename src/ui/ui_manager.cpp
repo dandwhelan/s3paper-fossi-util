@@ -514,11 +514,8 @@ void UIManager::updatePowerBankData(const Fossibot::PowerBankData &data) {
     _fossiScheduleChargeRemaining = data.scheduleCharge;
   }
 
-  // Block auto-refresh in Reader/Notes/Games to prevent interruption
-  if (_currentScreen == ScreenID::NOTES || _currentScreen == ScreenID::READER ||
-      _currentScreen == ScreenID::GAMES_MENU ||
-      _currentScreen == ScreenID::GAME_2048 ||
-      _currentScreen == ScreenID::GAME_SUDOKU) {
+  // Only trigger auto-refresh on HOME screen - other screens should not be interrupted
+  if (_currentScreen != ScreenID::HOME) {
     return;
   }
 
