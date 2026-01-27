@@ -170,6 +170,13 @@ void UIManager::update() {
     _needsRefresh = true;
   }
 
+  // Auto-refresh Timers screen every 15 seconds when a timer is active
+  if (_currentScreen == ScreenID::SETTINGS_FOSSIBOT_TIMERS &&
+      _fossiScheduleChargeRemaining > 0 && (millis() - _lastRefresh > 15000)) {
+    Serial.println("UI: 15s Timers auto-refresh trigger");
+    _needsRefresh = true;
+  }
+
   // Watchdog: Clear stuck task after 30 seconds (Large fonts can be slow)
   unsigned long now = millis();
   if (g_readerBusy) {
@@ -514,14 +521,17 @@ void UIManager::updatePowerBankData(const Fossibot::PowerBankData &data) {
     _fossiScheduleChargeRemaining = data.scheduleCharge;
   }
 
-  // Only trigger auto-refresh on HOME screen - other screens should not be interrupted
-  if (_currentScreen != ScreenID::HOME) {
+  // Only trigger auto-refresh on HOME screen or Timers screen (when timer active)
+  bool onTimersWithActiveTimer = (_currentScreen == ScreenID::SETTINGS_FOSSIBOT_TIMERS &&
+                                   _fossiScheduleChargeRemaining > 0);
+  if (_currentScreen != ScreenID::HOME && !onTimersWithActiveTimer) {
     return;
   }
 
   // Smart Refresh: Only update if data changed significantly
   if (shouldUpdateDashboard(data) ||
-      (data.connected != _lastRenderedData.connected)) {
+      (data.connected != _lastRenderedData.connected) ||
+      (onTimersWithActiveTimer && data.scheduleCharge != _lastRenderedData.scheduleCharge)) {
     // Serial.println("UI::updatePowerBankData() - SETTING _needsRefresh =
     // true!");
     _needsRefresh = true;
