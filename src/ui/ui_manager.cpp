@@ -177,6 +177,16 @@ void UIManager::update() {
     _needsRefresh = true;
   }
 
+  // Auto-refresh Clock screen every second when Pomodoro or Timer is running
+  if (_currentScreen == ScreenID::CLOCK && (millis() - _lastRefresh > 1000)) {
+    bool pomodoroRunning = (_clockMode == ClockMode::POMODORO &&
+                           _pomodoroState == PomodoroState::RUNNING);
+    bool timerRunning = (_clockMode == ClockMode::TIMER && _timerRunning);
+    if (pomodoroRunning || timerRunning) {
+      _needsRefresh = true;
+    }
+  }
+
   // Watchdog: Clear stuck task after 30 seconds (Large fonts can be slow)
   unsigned long now = millis();
   if (g_readerBusy) {
