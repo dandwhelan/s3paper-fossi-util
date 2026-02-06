@@ -3284,7 +3284,7 @@ void UIManager::checkPowerManagement() {
     // Enter Eco Mode (80MHz)
     if (!_lowPowerMode) {
       setCpuFrequencyMhz(80);
-      Serial.printf("Power: Entered Eco Mode (80MHz). Active=%lu\n",
+      Serial.printf("Power: Entered Eco Mode (80MHz + light sleep). Idle=%lums\n",
                     millis() - _lastActivityTime);
       _lowPowerMode = true;
     }

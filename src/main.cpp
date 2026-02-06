@@ -23,6 +23,8 @@
 #include "utils/sd_manager.h"
 #include <M5Unified.h>
 #include <SD.h>
+#include <driver/gpio.h>
+#include <esp_sleep.h>
 #include <sys/time.h>
 #include <time.h>
 
@@ -211,6 +213,15 @@ void setup() {
   // Force immediate UI update (don't wait for loop)
   uiManager->update();
 
+  // Configure light sleep wakeup sources
+  // GPIO 48 (GT911 touch INT) goes LOW on touch → wakes from light sleep
+  pinMode(48, INPUT_PULLUP);
+  gpio_wakeup_enable(GPIO_NUM_48, GPIO_INTR_LOW_LEVEL);
+  esp_sleep_enable_gpio_wakeup();
+  // Periodic 1-second timer wakeup for alarm checks, BLE updates, etc.
+  esp_sleep_enable_timer_wakeup(1000000);
+  Serial.println("Light sleep configured: GPIO 48 + 1s timer wakeup");
+
   Serial.println("Initialization complete!");
 }
 
@@ -395,8 +406,26 @@ void loop() {
   // Update UI (handles its own refresh timing)
   uiManager->update();
 
-  // Small delay to prevent tight loop
-  delay(10);
+  // Power-saving idle: light sleep when eco mode is active
+  // Light sleep draws ~0.24mA vs ~20mA active idle (80MHz busy loop)
+  // Wakes instantly on touch (GPIO 48) or every 1s for periodic tasks
+  bool canLightSleep = uiManager->isEcoMode() && !wasTouching;
+
+  // Don't light sleep during active BLE (radio needs CPU)
+  if (bleClient && (bleClient->isConnected() || bleClient->isConnecting())) {
+    canLightSleep = false;
+  }
+
+  if (canLightSleep) {
+    esp_light_sleep_start();
+
+    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_GPIO) {
+      // Touch woke us — restore full performance immediately
+      uiManager->exitEcoMode();
+    }
+  } else {
+    delay(10);
+  }
 }
 
 void initHardware() {
