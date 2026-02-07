@@ -27,6 +27,9 @@ enum class ScreenID {
   GAME_NONOGRAM,
   GAME_MINESWEEPER,
   GAME_SUDOKU,
+  GAME_TILT_MAZE,
+  GAME_GRAVITY_BLOCKS,
+  GAME_BREAKOUT,
   READER,
   CLOCK,
   CALCULATOR,
@@ -402,6 +405,48 @@ private:
   void minesweeperCheckWin();
   int minesweeperCountNeighbors(int r, int c);
   void minesweeperReveal(int r, int c);
+
+  // Tilt Maze / Labyrinth state
+  float _mazeballX = 0, _mazeballY = 0;   // Ball position (pixels)
+  float _mazeBallVX = 0, _mazeBallVY = 0;  // Ball velocity
+  uint8_t _mazeGrid[15][25];               // 1=wall, 0=path, 2=hole, 3=goal
+  int _mazeLevel = 1;
+  bool _mazeWon = false;
+  bool _mazeFell = false;
+  unsigned long _mazeLastTick = 0;
+  void drawTiltMaze();
+  void handleTiltMazeTouch(int x, int y);
+  void tiltMazeInit(int level = 1);
+  void tiltMazeTick();
+  void tiltMazeGenerateLevel(int level);
+
+  // Gravity Blocks (Tilt Sokoban) state
+  uint8_t _gravGrid[9][14];    // 0=empty, 1=wall, 2=block, 3=goal, 4=block_on_goal
+  uint8_t _gravGridInit[9][14]; // Initial state for reset
+  int _gravLevel = 1;
+  bool _gravWon = false;
+  unsigned long _gravLastTilt = 0;
+  void drawGravityBlocks();
+  void handleGravityBlocksTouch(int x, int y);
+  void gravityBlocksInit(int level = 1);
+  void gravityBlocksTilt(int dx, int dy);
+  void gravityBlocksLoadLevel(int level);
+
+  // Breakout / Arkanoid state
+  float _brkPaddleX = 0;
+  float _brkBallX = 0, _brkBallY = 0;
+  float _brkBallVX = 0, _brkBallVY = 0;
+  uint8_t _brkBricks[5][12];   // 0=destroyed, 1+=hit points
+  int _brkScore = 0;
+  int _brkLives = 3;
+  bool _brkGameOver = false;
+  bool _brkWon = false;
+  bool _brkLaunched = false;    // Ball launched from paddle?
+  unsigned long _brkLastTick = 0;
+  void drawBreakout();
+  void handleBreakoutTouch(int x, int y);
+  void breakoutInit();
+  void breakoutTick();
 
   // Power History (data collection active, UI Phase 3)
   PowerHistory _powerHistory;

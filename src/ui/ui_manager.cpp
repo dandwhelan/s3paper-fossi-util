@@ -164,6 +164,28 @@ void UIManager::update() {
     updateNotes();
   }
 
+  // Gyro game ticking (continuous physics update)
+  if (_currentScreen == ScreenID::GAME_TILT_MAZE) {
+    tiltMazeTick();
+  } else if (_currentScreen == ScreenID::GAME_BREAKOUT) {
+    breakoutTick();
+  } else if (_currentScreen == ScreenID::GAME_GRAVITY_BLOCKS) {
+    // IMU-based tilt with deadzone and cooldown
+    if (!_gravWon && millis() - _gravLastTilt > 300) {
+      float gax = 0, gay = 0, gaz = 0;
+      M5.Imu.getAccelData(&gax, &gay, &gaz);
+      int dx = 0, dy = 0;
+      if (gay > 0.4f) dx = 1;
+      else if (gay < -0.4f) dx = -1;
+      if (gax > 0.4f) dy = 1;
+      else if (gax < -0.4f) dy = -1;
+      if (dx != 0 || dy != 0) {
+        gravityBlocksTilt(dx, dy);
+        _gravLastTilt = millis();
+      }
+    }
+  }
+
   // Auto-refresh Home Screen every 60 seconds (User Request)
   if (_currentScreen == ScreenID::HOME && (millis() - _lastRefresh > 60000)) {
     Serial.println("UI: 60s Auto-refresh trigger");
@@ -259,6 +281,15 @@ void UIManager::update() {
     break;
   case ScreenID::GAME_MINESWEEPER:
     drawMinesweeperGame();
+    break;
+  case ScreenID::GAME_TILT_MAZE:
+    drawTiltMaze();
+    break;
+  case ScreenID::GAME_GRAVITY_BLOCKS:
+    drawGravityBlocks();
+    break;
+  case ScreenID::GAME_BREAKOUT:
+    drawBreakout();
     break;
   case ScreenID::HISTORY:
     drawHistoryScreen();
@@ -375,12 +406,26 @@ void UIManager::handleTouch(int x, int y, TouchEvent event) {
         handleMinesweeperTouch(x, y, event);
       }
 
+      // Gyro game touch handling (tap-based, only on RELEASE)
+      if (_currentScreen == ScreenID::GAME_TILT_MAZE) {
+        handleTiltMazeTouch(x, y);
+      }
+      if (_currentScreen == ScreenID::GAME_GRAVITY_BLOCKS) {
+        handleGravityBlocksTouch(x, y);
+      }
+      if (_currentScreen == ScreenID::GAME_BREAKOUT) {
+        handleBreakoutTouch(x, y);
+      }
+
       // Check menu buttons (Allow navigation from all screens as requested)
       if (_currentScreen != ScreenID::NOTES &&
           _currentScreen != ScreenID::NOTES_BROWSE &&
           _currentScreen != ScreenID::GAME_2048 &&
           _currentScreen != ScreenID::GAME_SUDOKU &&
           _currentScreen != ScreenID::GAME_MINESWEEPER &&
+          _currentScreen != ScreenID::GAME_TILT_MAZE &&
+          _currentScreen != ScreenID::GAME_GRAVITY_BLOCKS &&
+          _currentScreen != ScreenID::GAME_BREAKOUT &&
           _currentScreen != ScreenID::HISTORY &&
           _currentScreen != ScreenID::READER) { // Disable nav bar in Reader
         int menuHit = hitTestMenuButton(x, y);
@@ -432,6 +477,8 @@ void UIManager::navigateTo(ScreenID screen) {
   if (screen == ScreenID::NOTES || screen == ScreenID::READER ||
       screen == ScreenID::GAMES_MENU || screen == ScreenID::GAME_2048 ||
       screen == ScreenID::GAME_SUDOKU || screen == ScreenID::GAME_MINESWEEPER ||
+      screen == ScreenID::GAME_TILT_MAZE || screen == ScreenID::GAME_GRAVITY_BLOCKS ||
+      screen == ScreenID::GAME_BREAKOUT ||
       screen == ScreenID::NOTES_BROWSE) {
     // High Quality Mode for content creation/reading
     M5.Display.setEpdMode(epd_mode_t::epd_quality);
@@ -468,12 +515,17 @@ void UIManager::navigateTo(ScreenID screen) {
   bool enteringIntensiveScreen =
       (screen == ScreenID::READER || screen == ScreenID::NOTES ||
        screen == ScreenID::GAMES_MENU || screen == ScreenID::GAME_2048 ||
-       screen == ScreenID::GAME_SUDOKU || screen == ScreenID::GAME_MINESWEEPER);
+       screen == ScreenID::GAME_SUDOKU || screen == ScreenID::GAME_MINESWEEPER ||
+       screen == ScreenID::GAME_TILT_MAZE || screen == ScreenID::GAME_GRAVITY_BLOCKS ||
+       screen == ScreenID::GAME_BREAKOUT);
   bool leavingIntensiveScreen = (_previousScreen == ScreenID::READER ||
                                  _previousScreen == ScreenID::NOTES ||
                                  _previousScreen == ScreenID::GAMES_MENU ||
                                  _previousScreen == ScreenID::GAME_2048 ||
-                                 _previousScreen == ScreenID::GAME_SUDOKU);
+                                 _previousScreen == ScreenID::GAME_SUDOKU ||
+                                 _previousScreen == ScreenID::GAME_TILT_MAZE ||
+                                 _previousScreen == ScreenID::GAME_GRAVITY_BLOCKS ||
+                                 _previousScreen == ScreenID::GAME_BREAKOUT);
 
   if (enteringIntensiveScreen && !leavingIntensiveScreen) {
     extern FossibotBLE *bleClient;
@@ -3269,8 +3321,10 @@ void UIManager::checkPowerManagement() {
   }
 
   // Check if the current screen requires high performance
-  // With "Instant Wakeup" in main.cpp, we can allow ALL screens to sleep!
-  bool isHighPerfScreen = false;
+  // Gyro games need 240MHz for smooth physics + IMU reads
+  bool isHighPerfScreen = (_currentScreen == ScreenID::GAME_TILT_MAZE ||
+                           _currentScreen == ScreenID::GAME_BREAKOUT ||
+                           _currentScreen == ScreenID::GAME_GRAVITY_BLOCKS);
 
   // Check external inhibition (e.g. BLE connecting need stable clock)
   extern FossibotBLE *bleClient;
@@ -4094,47 +4148,49 @@ void UIManager::drawGamesMenu() {
   M5.Display.setCursor(SCREEN_WIDTH / 2 - 80, 30);
   M5.Display.print("GAMES");
 
-  // Game grid (2x2)
-  int gridX = 200;
-  int gridY = 120;
-  int btnW = 240;
-  int btnH = 150;
-  int gap = 80;
+  // Game grid (3x2)
+  int gridX = 60;
+  int gridY = 100;
+  int btnW = 260;
+  int btnH = 120;
+  int gapX = 40;
+  int gapY = 30;
 
-  // Row 1
-  // 2048 Button
+  // Row 1: Touch games
   drawButton(gridX, gridY, btnW, btnH, "2048", true);
+  drawButton(gridX + btnW + gapX, gridY, btnW, btnH, "SUDOKU", true);
+  drawButton(gridX + 2*(btnW + gapX), gridY, btnW, btnH, "MINESWEEPER", true);
 
-  // Sudoku Button
-  drawButton(gridX + btnW + gap, gridY, btnW, btnH, "SUDOKU", true);
-
-  // Row 2
-  // Minesweeper Button (Moved to left)
-  drawButton(gridX, gridY + btnH + 50, btnW, btnH, "MINESWEEPER", true);
+  // Row 2: Gyro games
+  drawButton(gridX, gridY + btnH + gapY, btnW, btnH, "TILT MAZE", true);
+  drawButton(gridX + btnW + gapX, gridY + btnH + gapY, btnW, btnH, "GRAVITY", true);
+  drawButton(gridX + 2*(btnW + gapX), gridY + btnH + gapY, btnW, btnH, "BREAKOUT", true);
 }
 
 void UIManager::handleGamesMenuTouch(int x, int y) {
-  int gridX = 200;
-  int gridY = 120;
-  int btnW = 240;
-  int btnH = 150;
-  int gap = 80;
+  int gridX = 60;
+  int gridY = 100;
+  int btnW = 260;
+  int btnH = 120;
+  int gapX = 40;
+  int gapY = 30;
+  int row2Y = gridY + btnH + gapY;
 
-  // 2048 button
-  if (x >= gridX && x < gridX + btnW && y >= gridY && y < gridY + btnH) {
+  auto inBtn = [](int tx, int ty, int bx, int by, int bw, int bh) {
+    return tx >= bx && tx < bx + bw && ty >= by && ty < by + bh;
+  };
+
+  // Row 1: Touch games
+  if (inBtn(x, y, gridX, gridY, btnW, btnH)) {
     Buzzer::click();
-    game2048Load(); // Load saved game or init new
-    // Full quality clear to remove ghosting
+    game2048Load();
     M5.Display.setEpdMode(epd_mode_t::epd_quality);
     M5.Display.fillScreen(COLOR_WHITE);
     M5.Display.display();
     navigateTo(ScreenID::GAME_2048);
     return;
   }
-
-  // Sudoku button
-  if (x >= gridX + btnW + gap && x < gridX + 2 * btnW + gap && y >= gridY &&
-      y < gridY + btnH) {
+  if (inBtn(x, y, gridX + btnW + gapX, gridY, btnW, btnH)) {
     Buzzer::click();
     sudokuInit();
     M5.Display.setEpdMode(epd_mode_t::epd_quality);
@@ -4143,16 +4199,42 @@ void UIManager::handleGamesMenuTouch(int x, int y) {
     navigateTo(ScreenID::GAME_SUDOKU);
     return;
   }
-
-  // Minesweeper button (Moved to left)
-  if (x >= gridX && x < gridX + btnW && y >= gridY + btnH + 50 &&
-      y < gridY + btnH + 50 + btnH) {
+  if (inBtn(x, y, gridX + 2*(btnW + gapX), gridY, btnW, btnH)) {
     Buzzer::click();
     minesweeperInit();
     M5.Display.setEpdMode(epd_mode_t::epd_quality);
     M5.Display.fillScreen(COLOR_WHITE);
     M5.Display.display();
     navigateTo(ScreenID::GAME_MINESWEEPER);
+    return;
+  }
+
+  // Row 2: Gyro games
+  if (inBtn(x, y, gridX, row2Y, btnW, btnH)) {
+    Buzzer::click();
+    tiltMazeInit(1);
+    M5.Display.setEpdMode(epd_mode_t::epd_quality);
+    M5.Display.fillScreen(COLOR_WHITE);
+    M5.Display.display();
+    navigateTo(ScreenID::GAME_TILT_MAZE);
+    return;
+  }
+  if (inBtn(x, y, gridX + btnW + gapX, row2Y, btnW, btnH)) {
+    Buzzer::click();
+    gravityBlocksInit(1);
+    M5.Display.setEpdMode(epd_mode_t::epd_quality);
+    M5.Display.fillScreen(COLOR_WHITE);
+    M5.Display.display();
+    navigateTo(ScreenID::GAME_GRAVITY_BLOCKS);
+    return;
+  }
+  if (inBtn(x, y, gridX + 2*(btnW + gapX), row2Y, btnW, btnH)) {
+    Buzzer::click();
+    breakoutInit();
+    M5.Display.setEpdMode(epd_mode_t::epd_quality);
+    M5.Display.fillScreen(COLOR_WHITE);
+    M5.Display.display();
+    navigateTo(ScreenID::GAME_BREAKOUT);
     return;
   }
 }
@@ -6700,5 +6782,522 @@ void UIManager::handleMinesweeperTouch(int x, int y, TouchEvent event) {
       // Restore quality for text/static elements if needed, but for game
       // repeated inputs fast is better.
     }
+  }
+}
+
+// ============================================================================
+// Tilt Maze / Labyrinth Game
+// ============================================================================
+
+static const int MAZE_ROWS = 15;
+static const int MAZE_COLS = 25;
+static const int MAZE_CELL_W = 36;
+static const int MAZE_CELL_H = 32;
+static const int MAZE_OFFSET_X = 30;
+static const int MAZE_OFFSET_Y = 45;
+static const int MAZE_BALL_R = 10;
+
+void UIManager::tiltMazeGenerateLevel(int level) {
+  memset(_mazeGrid, 0, sizeof(_mazeGrid));
+  for (int c = 0; c < MAZE_COLS; c++) {
+    _mazeGrid[0][c] = 1;
+    _mazeGrid[MAZE_ROWS - 1][c] = 1;
+  }
+  for (int r = 0; r < MAZE_ROWS; r++) {
+    _mazeGrid[r][0] = 1;
+    _mazeGrid[r][MAZE_COLS - 1] = 1;
+  }
+
+  if (level == 1) {
+    for (int c = 2; c < 12; c++) _mazeGrid[3][c] = 1;
+    for (int c = 14; c < 23; c++) _mazeGrid[5][c] = 1;
+    for (int c = 2; c < 10; c++) _mazeGrid[7][c] = 1;
+    for (int c = 12; c < 23; c++) _mazeGrid[9][c] = 1;
+    for (int c = 2; c < 16; c++) _mazeGrid[11][c] = 1;
+    _mazeGrid[4][8] = 2;  _mazeGrid[6][18] = 2;  _mazeGrid[10][5] = 2;
+  } else if (level == 2) {
+    for (int c = 2; c < 8; c++) _mazeGrid[2][c] = 1;
+    for (int r = 2; r < 7; r++) _mazeGrid[r][10] = 1;
+    for (int c = 12; c < 20; c++) _mazeGrid[4][c] = 1;
+    for (int r = 6; r < 12; r++) _mazeGrid[r][6] = 1;
+    for (int c = 8; c < 18; c++) _mazeGrid[8][c] = 1;
+    for (int r = 4; r < 10; r++) _mazeGrid[r][20] = 1;
+    for (int c = 14; c < 23; c++) _mazeGrid[11][c] = 1;
+    for (int c = 2; c < 6; c++) _mazeGrid[12][c] = 1;
+    _mazeGrid[3][5] = 2;  _mazeGrid[5][15] = 2;  _mazeGrid[7][3] = 2;
+    _mazeGrid[9][22] = 2; _mazeGrid[10][12] = 2;
+  } else {
+    srand(level * 42);
+    for (int r = 2; r < MAZE_ROWS - 2; r++)
+      for (int c = 2; c < MAZE_COLS - 2; c++) {
+        int rnd = rand() % 100;
+        if (rnd < 18 + level * 2) _mazeGrid[r][c] = 1;
+        else if (rnd < 22 + level) _mazeGrid[r][c] = 2;
+      }
+    _mazeGrid[1][1] = 0; _mazeGrid[1][2] = 0; _mazeGrid[2][1] = 0;
+    _mazeGrid[MAZE_ROWS-2][MAZE_COLS-2] = 0;
+    _mazeGrid[MAZE_ROWS-2][MAZE_COLS-3] = 0;
+    _mazeGrid[MAZE_ROWS-3][MAZE_COLS-2] = 0;
+  }
+  _mazeGrid[MAZE_ROWS - 2][MAZE_COLS - 2] = 3;
+}
+
+void UIManager::tiltMazeInit(int level) {
+  _mazeLevel = level;
+  _mazeWon = false;
+  _mazeFell = false;
+  _mazeBallVX = 0;  _mazeBallVY = 0;
+  _mazeballX = MAZE_OFFSET_X + 1 * MAZE_CELL_W + MAZE_CELL_W / 2.0f;
+  _mazeballY = MAZE_OFFSET_Y + 1 * MAZE_CELL_H + MAZE_CELL_H / 2.0f;
+  _mazeLastTick = millis();
+  tiltMazeGenerateLevel(level);
+}
+
+void UIManager::tiltMazeTick() {
+  if (_mazeWon || _mazeFell) return;
+  unsigned long now = millis();
+  float dt = (now - _mazeLastTick) / 1000.0f;
+  if (dt < 0.04f) return;
+  _mazeLastTick = now;
+
+  float ax = 0, ay = 0, az = 0;
+  M5.Imu.getAccelData(&ax, &ay, &az);
+  float tiltX = ay * 800.0f;
+  float tiltY = ax * 800.0f;
+
+  _mazeBallVX = _mazeBallVX * 0.92f + tiltX * dt;
+  _mazeBallVY = _mazeBallVY * 0.92f + tiltY * dt;
+  float maxV = 300.0f;
+  if (_mazeBallVX > maxV) _mazeBallVX = maxV;
+  if (_mazeBallVX < -maxV) _mazeBallVX = -maxV;
+  if (_mazeBallVY > maxV) _mazeBallVY = maxV;
+  if (_mazeBallVY < -maxV) _mazeBallVY = -maxV;
+
+  float newX = _mazeballX + _mazeBallVX * dt;
+  float newY = _mazeballY + _mazeBallVY * dt;
+  int col = (int)(newX - MAZE_OFFSET_X) / MAZE_CELL_W;
+  int row = (int)(newY - MAZE_OFFSET_Y) / MAZE_CELL_H;
+
+  if (col >= 0 && col < MAZE_COLS && row >= 0 && row < MAZE_ROWS) {
+    uint8_t cell = _mazeGrid[row][col];
+    if (cell == 1) {
+      _mazeBallVX *= -0.3f;  _mazeBallVY *= -0.3f;
+    } else if (cell == 2) {
+      _mazeFell = true;  Buzzer::click();
+    } else if (cell == 3) {
+      _mazeWon = true;   Buzzer::click();
+    } else {
+      _mazeballX = newX;  _mazeballY = newY;
+    }
+  }
+
+  float minX = MAZE_OFFSET_X + MAZE_BALL_R + MAZE_CELL_W;
+  float maxX = MAZE_OFFSET_X + (MAZE_COLS - 1) * MAZE_CELL_W - MAZE_BALL_R;
+  float minY = MAZE_OFFSET_Y + MAZE_BALL_R + MAZE_CELL_H;
+  float maxY = MAZE_OFFSET_Y + (MAZE_ROWS - 1) * MAZE_CELL_H - MAZE_BALL_R;
+  if (_mazeballX < minX) { _mazeballX = minX; _mazeBallVX = 0; }
+  if (_mazeballX > maxX) { _mazeballX = maxX; _mazeBallVX = 0; }
+  if (_mazeballY < minY) { _mazeballY = minY; _mazeBallVY = 0; }
+  if (_mazeballY > maxY) { _mazeballY = maxY; _mazeBallVY = 0; }
+
+  _needsRefresh = true;
+  _lastRefresh = 0;
+}
+
+void UIManager::drawTiltMaze() {
+  M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+  M5.Display.fillScreen(COLOR_WHITE);
+
+  M5.Display.setTextSize(1);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(20, 10);
+  M5.Display.printf("TILT MAZE  Level %d", _mazeLevel);
+  drawButton(SCREEN_WIDTH - 130, 5, 120, 30, "HOME");
+
+  for (int r = 0; r < MAZE_ROWS; r++)
+    for (int c = 0; c < MAZE_COLS; c++) {
+      int px = MAZE_OFFSET_X + c * MAZE_CELL_W;
+      int py = MAZE_OFFSET_Y + r * MAZE_CELL_H;
+      uint8_t cell = _mazeGrid[r][c];
+      if (cell == 1)
+        M5.Display.fillRect(px, py, MAZE_CELL_W, MAZE_CELL_H, COLOR_BLACK);
+      else if (cell == 2)
+        M5.Display.fillCircle(px + MAZE_CELL_W/2, py + MAZE_CELL_H/2,
+                              MAZE_CELL_W/3, COLOR_DARK_GRAY);
+      else if (cell == 3) {
+        M5.Display.drawRect(px+4, py+4, MAZE_CELL_W-8, MAZE_CELL_H-8, COLOR_BLACK);
+        M5.Display.drawRect(px+8, py+8, MAZE_CELL_W-16, MAZE_CELL_H-16, COLOR_BLACK);
+      }
+    }
+
+  M5.Display.fillCircle((int)_mazeballX, (int)_mazeballY, MAZE_BALL_R, COLOR_BLACK);
+
+  if (_mazeWon || _mazeFell) {
+    int bW=400, bH=160, bX=(SCREEN_WIDTH-400)/2, bY=(SCREEN_HEIGHT-160)/2;
+    M5.Display.fillRect(bX, bY, bW, bH, COLOR_WHITE);
+    M5.Display.drawRect(bX, bY, bW, bH, COLOR_BLACK);
+    M5.Display.drawRect(bX+2, bY+2, bW-4, bH-4, COLOR_BLACK);
+    M5.Display.setTextSize(2);
+    const char *msg = _mazeWon ? "LEVEL CLEAR!" : "FELL IN HOLE!";
+    int mW = M5.Display.textWidth(msg);
+    M5.Display.setCursor(bX+(bW-mW)/2, bY+40);
+    M5.Display.print(msg);
+    M5.Display.setTextSize(1);
+    const char *sub = _mazeWon ? "Tap: Next Level" : "Tap: Retry";
+    int sW = M5.Display.textWidth(sub);
+    M5.Display.setCursor(bX+(bW-sW)/2, bY+110);
+    M5.Display.print(sub);
+  }
+}
+
+void UIManager::handleTiltMazeTouch(int x, int y) {
+  if (x >= SCREEN_WIDTH - 130 && y < 35) {
+    Buzzer::click(); navigateTo(ScreenID::GAMES_MENU); return;
+  }
+  if (_mazeWon) {
+    Buzzer::click(); tiltMazeInit(_mazeLevel + 1);
+    _needsRefresh = true; _lastRefresh = 0;
+  } else if (_mazeFell) {
+    Buzzer::click(); tiltMazeInit(_mazeLevel);
+    _needsRefresh = true; _lastRefresh = 0;
+  }
+}
+
+// ============================================================================
+// Gravity Blocks (Tilt Sokoban)
+// ============================================================================
+
+static const int GRAV_ROWS = 9;
+static const int GRAV_COLS = 14;
+static const int GRAV_CELL_W = 64;
+static const int GRAV_CELL_H = 50;
+static const int GRAV_OFFSET_X = 32;
+static const int GRAV_OFFSET_Y = 50;
+
+void UIManager::gravityBlocksLoadLevel(int level) {
+  memset(_gravGrid, 0, sizeof(_gravGrid));
+  for (int c = 0; c < GRAV_COLS; c++) {
+    _gravGrid[0][c] = 1; _gravGrid[GRAV_ROWS-1][c] = 1;
+  }
+  for (int r = 0; r < GRAV_ROWS; r++) {
+    _gravGrid[r][0] = 1; _gravGrid[r][GRAV_COLS-1] = 1;
+  }
+
+  if (level == 1) {
+    _gravGrid[3][4]=1; _gravGrid[3][5]=1;
+    _gravGrid[5][8]=1; _gravGrid[5][9]=1;
+    _gravGrid[2][7]=2; _gravGrid[6][3]=2;
+    _gravGrid[7][12]=3; _gravGrid[1][1]=3;
+  } else if (level == 2) {
+    _gravGrid[2][3]=1; _gravGrid[2][4]=1; _gravGrid[2][5]=1;
+    _gravGrid[4][7]=1; _gravGrid[4][8]=1;
+    _gravGrid[6][2]=1; _gravGrid[6][3]=1;
+    _gravGrid[6][10]=1; _gravGrid[6][11]=1;
+    _gravGrid[3][2]=2; _gravGrid[5][6]=2; _gravGrid[3][11]=2;
+    _gravGrid[7][1]=3; _gravGrid[1][12]=3; _gravGrid[7][7]=3;
+  } else if (level == 3) {
+    _gravGrid[2][2]=1; _gravGrid[2][3]=1;
+    _gravGrid[3][6]=1; _gravGrid[3][7]=1; _gravGrid[3][8]=1;
+    _gravGrid[5][4]=1; _gravGrid[5][5]=1;
+    _gravGrid[6][9]=1; _gravGrid[6][10]=1;
+    _gravGrid[4][2]=2; _gravGrid[2][10]=2;
+    _gravGrid[6][5]=2; _gravGrid[4][11]=2;
+    _gravGrid[7][1]=3; _gravGrid[1][12]=3;
+    _gravGrid[7][12]=3; _gravGrid[1][1]=3;
+  } else {
+    srand(level * 77);
+    int nb = 2 + level; if (nb > 6) nb = 6;
+    for (int r=1; r<GRAV_ROWS-1; r++)
+      for (int c=1; c<GRAV_COLS-1; c++)
+        if (rand()%100 < 12+level) _gravGrid[r][c] = 1;
+    int placed=0;
+    while (placed < nb) {
+      int r=1+rand()%(GRAV_ROWS-2), c=1+rand()%(GRAV_COLS-2);
+      if (_gravGrid[r][c]==0) { _gravGrid[r][c]=2; placed++; }
+    }
+    placed=0;
+    while (placed < nb) {
+      int r=1+rand()%(GRAV_ROWS-2), c=1+rand()%(GRAV_COLS-2);
+      if (_gravGrid[r][c]==0) { _gravGrid[r][c]=3; placed++; }
+    }
+  }
+  memcpy(_gravGridInit, _gravGrid, sizeof(_gravGrid));
+}
+
+void UIManager::gravityBlocksInit(int level) {
+  _gravLevel = level; _gravWon = false; _gravLastTilt = 0;
+  gravityBlocksLoadLevel(level);
+}
+
+void UIManager::gravityBlocksTilt(int dx, int dy) {
+  if (_gravWon) return;
+  bool moved = true;
+  while (moved) {
+    moved = false;
+    for (int r = (dy>0 ? GRAV_ROWS-2 : 1);
+         dy>0 ? r>=1 : r<GRAV_ROWS-1; r += (dy>0 ? -1 : 1))
+      for (int c = (dx>0 ? GRAV_COLS-2 : 1);
+           dx>0 ? c>=1 : c<GRAV_COLS-1; c += (dx>0 ? -1 : 1)) {
+        uint8_t cell = _gravGrid[r][c];
+        if (cell!=2 && cell!=4) continue;
+        int nr=r+dy, nc=c+dx;
+        if (nr<0||nr>=GRAV_ROWS||nc<0||nc>=GRAV_COLS) continue;
+        uint8_t tgt = _gravGrid[nr][nc];
+        if (tgt==0 || tgt==3) {
+          _gravGrid[r][c] = (cell==4) ? 3 : 0;
+          _gravGrid[nr][nc] = (tgt==3) ? 4 : 2;
+          moved = true;
+        }
+      }
+  }
+  bool allGoals = true;
+  for (int r=0; r<GRAV_ROWS && allGoals; r++)
+    for (int c=0; c<GRAV_COLS && allGoals; c++)
+      if (_gravGrid[r][c]==3) allGoals = false;
+  if (allGoals) { _gravWon = true; Buzzer::click(); }
+  _needsRefresh = true; _lastRefresh = 0;
+}
+
+void UIManager::drawGravityBlocks() {
+  M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+  M5.Display.fillScreen(COLOR_WHITE);
+
+  M5.Display.setTextSize(1);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(20, 10);
+  M5.Display.printf("GRAVITY BLOCKS  Level %d", _gravLevel);
+  drawButton(SCREEN_WIDTH - 130, 5, 120, 30, "HOME");
+  drawButton(SCREEN_WIDTH - 270, 5, 120, 30, "RESET");
+
+  for (int r=0; r<GRAV_ROWS; r++)
+    for (int c=0; c<GRAV_COLS; c++) {
+      int px = GRAV_OFFSET_X + c*GRAV_CELL_W;
+      int py = GRAV_OFFSET_Y + r*GRAV_CELL_H;
+      uint8_t cell = _gravGrid[r][c];
+      if (cell==1) {
+        M5.Display.fillRect(px, py, GRAV_CELL_W, GRAV_CELL_H, COLOR_BLACK);
+      } else if (cell==2) {
+        M5.Display.fillRect(px+3, py+3, GRAV_CELL_W-6, GRAV_CELL_H-6, COLOR_GRAY);
+        M5.Display.drawRect(px+3, py+3, GRAV_CELL_W-6, GRAV_CELL_H-6, COLOR_BLACK);
+      } else if (cell==3) {
+        M5.Display.drawRect(px+8, py+8, GRAV_CELL_W-16, GRAV_CELL_H-16, COLOR_DARK_GRAY);
+        M5.Display.drawLine(px+10, py+10, px+GRAV_CELL_W-10, py+GRAV_CELL_H-10, COLOR_DARK_GRAY);
+        M5.Display.drawLine(px+GRAV_CELL_W-10, py+10, px+10, py+GRAV_CELL_H-10, COLOR_DARK_GRAY);
+      } else if (cell==4) {
+        M5.Display.fillRect(px+3, py+3, GRAV_CELL_W-6, GRAV_CELL_H-6, COLOR_DARK_GRAY);
+        M5.Display.drawRect(px+3, py+3, GRAV_CELL_W-6, GRAV_CELL_H-6, COLOR_BLACK);
+      } else {
+        M5.Display.drawRect(px, py, GRAV_CELL_W, GRAV_CELL_H, COLOR_LIGHT_GRAY);
+      }
+    }
+
+  if (_gravWon) {
+    int bW=400, bH=160, bX=(SCREEN_WIDTH-400)/2, bY=(SCREEN_HEIGHT-160)/2;
+    M5.Display.fillRect(bX, bY, bW, bH, COLOR_WHITE);
+    M5.Display.drawRect(bX, bY, bW, bH, COLOR_BLACK);
+    M5.Display.drawRect(bX+2, bY+2, bW-4, bH-4, COLOR_BLACK);
+    M5.Display.setTextSize(2);
+    const char *msg = "LEVEL CLEAR!";
+    int mW = M5.Display.textWidth(msg);
+    M5.Display.setCursor(bX+(bW-mW)/2, bY+40);
+    M5.Display.print(msg);
+    M5.Display.setTextSize(1);
+    const char *sub = "Tap: Next Level";
+    int sW = M5.Display.textWidth(sub);
+    M5.Display.setCursor(bX+(bW-sW)/2, bY+110);
+    M5.Display.print(sub);
+  }
+}
+
+void UIManager::handleGravityBlocksTouch(int x, int y) {
+  if (x >= SCREEN_WIDTH-130 && y < 35) {
+    Buzzer::click(); navigateTo(ScreenID::GAMES_MENU); return;
+  }
+  if (x >= SCREEN_WIDTH-270 && x < SCREEN_WIDTH-150 && y < 35) {
+    Buzzer::click();
+    memcpy(_gravGrid, _gravGridInit, sizeof(_gravGrid));
+    _gravWon = false; _needsRefresh = true; _lastRefresh = 0;
+    return;
+  }
+  if (_gravWon) {
+    Buzzer::click(); gravityBlocksInit(_gravLevel + 1);
+    _needsRefresh = true; _lastRefresh = 0;
+  }
+}
+
+// ============================================================================
+// Breakout / Arkanoid Game
+// ============================================================================
+
+static const int BRK_ROWS = 5;
+static const int BRK_COLS = 12;
+static const int BRK_BRICK_W = 74;
+static const int BRK_BRICK_H = 22;
+static const int BRK_BRICK_GAP = 4;
+static const int BRK_OFFSET_X = 28;
+static const int BRK_OFFSET_Y = 50;
+static const int BRK_PADDLE_W = 120;
+static const int BRK_PADDLE_H = 12;
+static const int BRK_PADDLE_Y = 490;
+static const int BRK_BALL_R = 6;
+static const float BRK_BALL_SPEED = 350.0f;
+
+void UIManager::breakoutInit() {
+  _brkPaddleX = SCREEN_WIDTH / 2.0f;
+  _brkBallX = SCREEN_WIDTH / 2.0f;
+  _brkBallY = BRK_PADDLE_Y - BRK_BALL_R - 2;
+  _brkBallVX = 0; _brkBallVY = 0;
+  _brkScore = 0; _brkLives = 3;
+  _brkGameOver = false; _brkWon = false; _brkLaunched = false;
+  _brkLastTick = millis();
+  for (int r=0; r<BRK_ROWS; r++)
+    for (int c=0; c<BRK_COLS; c++)
+      _brkBricks[r][c] = (r < 2) ? 2 : 1;
+}
+
+void UIManager::breakoutTick() {
+  if (_brkGameOver || _brkWon) return;
+  unsigned long now = millis();
+  float dt = (now - _brkLastTick) / 1000.0f;
+  if (dt < 0.03f) return;
+  _brkLastTick = now;
+
+  float imuAx=0, imuAy=0, imuAz=0;
+  M5.Imu.getAccelData(&imuAx, &imuAy, &imuAz);
+  _brkPaddleX += imuAy * 2000.0f * dt;
+  float half = BRK_PADDLE_W / 2.0f;
+  if (_brkPaddleX < half) _brkPaddleX = half;
+  if (_brkPaddleX > SCREEN_WIDTH - half) _brkPaddleX = SCREEN_WIDTH - half;
+
+  if (!_brkLaunched) {
+    _brkBallX = _brkPaddleX;
+    _brkBallY = BRK_PADDLE_Y - BRK_BALL_R - 2;
+    _needsRefresh = true; _lastRefresh = 0;
+    return;
+  }
+
+  _brkBallX += _brkBallVX * dt;
+  _brkBallY += _brkBallVY * dt;
+
+  if (_brkBallX - BRK_BALL_R <= 0) { _brkBallX = BRK_BALL_R; _brkBallVX = -_brkBallVX; }
+  if (_brkBallX + BRK_BALL_R >= SCREEN_WIDTH) { _brkBallX = SCREEN_WIDTH - BRK_BALL_R; _brkBallVX = -_brkBallVX; }
+  if (_brkBallY - BRK_BALL_R <= 0) { _brkBallY = BRK_BALL_R; _brkBallVY = -_brkBallVY; }
+
+  if (_brkBallY + BRK_BALL_R >= SCREEN_HEIGHT) {
+    _brkLives--;
+    if (_brkLives <= 0) { _brkGameOver = true; Buzzer::click(); }
+    else { _brkLaunched = false; _brkBallVX = 0; _brkBallVY = 0; }
+    _needsRefresh = true; _lastRefresh = 0;
+    return;
+  }
+
+  if (_brkBallVY > 0 &&
+      _brkBallY + BRK_BALL_R >= BRK_PADDLE_Y &&
+      _brkBallY + BRK_BALL_R <= BRK_PADDLE_Y + BRK_PADDLE_H + 5 &&
+      _brkBallX >= _brkPaddleX - half && _brkBallX <= _brkPaddleX + half) {
+    _brkBallY = BRK_PADDLE_Y - BRK_BALL_R - 1;
+    float hitPos = (_brkBallX - _brkPaddleX) / half;
+    float angle = hitPos * 1.2f;
+    _brkBallVX = BRK_BALL_SPEED * sinf(angle);
+    _brkBallVY = -BRK_BALL_SPEED * cosf(angle);
+  }
+
+  for (int r=0; r<BRK_ROWS; r++)
+    for (int c=0; c<BRK_COLS; c++) {
+      if (_brkBricks[r][c]==0) continue;
+      float bx = BRK_OFFSET_X + c*(BRK_BRICK_W+BRK_BRICK_GAP);
+      float by = BRK_OFFSET_Y + r*(BRK_BRICK_H+BRK_BRICK_GAP);
+      if (_brkBallX+BRK_BALL_R >= bx && _brkBallX-BRK_BALL_R <= bx+BRK_BRICK_W &&
+          _brkBallY+BRK_BALL_R >= by && _brkBallY-BRK_BALL_R <= by+BRK_BRICK_H) {
+        _brkBricks[r][c]--;
+        _brkScore += (_brkBricks[r][c]==0) ? 10 : 5;
+        float oL=(_brkBallX+BRK_BALL_R)-bx, oR=(bx+BRK_BRICK_W)-(_brkBallX-BRK_BALL_R);
+        float oT=(_brkBallY+BRK_BALL_R)-by, oB=(by+BRK_BRICK_H)-(_brkBallY-BRK_BALL_R);
+        if ((oL<oR?oL:oR) < (oT<oB?oT:oB)) _brkBallVX = -_brkBallVX;
+        else _brkBallVY = -_brkBallVY;
+        goto brkDone;
+      }
+    }
+  brkDone:
+
+  { bool rem=false;
+    for (int r=0; r<BRK_ROWS && !rem; r++)
+      for (int c=0; c<BRK_COLS && !rem; c++)
+        if (_brkBricks[r][c]>0) rem=true;
+    if (!rem) { _brkWon = true; Buzzer::click(); }
+  }
+
+  _needsRefresh = true; _lastRefresh = 0;
+}
+
+void UIManager::drawBreakout() {
+  M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+  M5.Display.fillScreen(COLOR_WHITE);
+
+  M5.Display.setTextSize(1);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(20, 10);
+  M5.Display.printf("BREAKOUT  Score: %d", _brkScore);
+  M5.Display.setCursor(350, 10);
+  M5.Display.printf("Lives: %d", _brkLives);
+  drawButton(SCREEN_WIDTH - 130, 5, 120, 30, "HOME");
+
+  for (int r=0; r<BRK_ROWS; r++)
+    for (int c=0; c<BRK_COLS; c++) {
+      if (_brkBricks[r][c]==0) continue;
+      int bx = BRK_OFFSET_X + c*(BRK_BRICK_W+BRK_BRICK_GAP);
+      int by = BRK_OFFSET_Y + r*(BRK_BRICK_H+BRK_BRICK_GAP);
+      uint16_t clr = (_brkBricks[r][c]>=2) ? COLOR_DARK_GRAY : COLOR_GRAY;
+      M5.Display.fillRect(bx, by, BRK_BRICK_W, BRK_BRICK_H, clr);
+      M5.Display.drawRect(bx, by, BRK_BRICK_W, BRK_BRICK_H, COLOR_BLACK);
+    }
+
+  int px = (int)(_brkPaddleX - BRK_PADDLE_W/2);
+  M5.Display.fillRect(px, BRK_PADDLE_Y, BRK_PADDLE_W, BRK_PADDLE_H, COLOR_BLACK);
+  M5.Display.fillCircle((int)_brkBallX, (int)_brkBallY, BRK_BALL_R, COLOR_BLACK);
+
+  if (!_brkLaunched && !_brkGameOver) {
+    M5.Display.setTextSize(1);
+    const char *hint = "Tap to launch!";
+    int hW = M5.Display.textWidth(hint);
+    M5.Display.setCursor((SCREEN_WIDTH-hW)/2, BRK_PADDLE_Y-40);
+    M5.Display.print(hint);
+  }
+
+  if (_brkGameOver || _brkWon) {
+    int bW=400, bH=160, bX=(SCREEN_WIDTH-400)/2, bY=(SCREEN_HEIGHT-160)/2;
+    M5.Display.fillRect(bX, bY, bW, bH, COLOR_WHITE);
+    M5.Display.drawRect(bX, bY, bW, bH, COLOR_BLACK);
+    M5.Display.drawRect(bX+2, bY+2, bW-4, bH-4, COLOR_BLACK);
+    M5.Display.setTextSize(2);
+    const char *msg = _brkWon ? "YOU WIN!" : "GAME OVER";
+    int mW = M5.Display.textWidth(msg);
+    M5.Display.setCursor(bX+(bW-mW)/2, bY+30);
+    M5.Display.print(msg);
+    M5.Display.setTextSize(1);
+    char sb[32]; snprintf(sb, sizeof(sb), "Score: %d", _brkScore);
+    int sW = M5.Display.textWidth(sb);
+    M5.Display.setCursor(bX+(bW-sW)/2, bY+80);
+    M5.Display.print(sb);
+    const char *sub = "Tap to play again";
+    int subW = M5.Display.textWidth(sub);
+    M5.Display.setCursor(bX+(bW-subW)/2, bY+120);
+    M5.Display.print(sub);
+  }
+}
+
+void UIManager::handleBreakoutTouch(int x, int y) {
+  if (x >= SCREEN_WIDTH-130 && y < 35) {
+    Buzzer::click(); navigateTo(ScreenID::GAMES_MENU); return;
+  }
+  if (_brkGameOver || _brkWon) {
+    Buzzer::click(); breakoutInit();
+    _needsRefresh = true; _lastRefresh = 0; return;
+  }
+  if (!_brkLaunched) {
+    _brkLaunched = true;
+    _brkBallVX = BRK_BALL_SPEED * 0.3f;
+    _brkBallVY = -BRK_BALL_SPEED;
+    Buzzer::click();
   }
 }

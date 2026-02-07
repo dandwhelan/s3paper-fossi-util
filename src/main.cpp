@@ -56,7 +56,7 @@ void setup() {
   // Disable some internal modules to prevent auto-I2C init on wrong pins
   // but keep RTC enabled for timekeeping
   cfg.internal_rtc = true; // ENABLE RTC for time/date
-  cfg.internal_imu = false;
+  cfg.internal_imu = true; // ENABLE IMU for gyro-controlled games
   cfg.internal_spk = true; // Enable Speaker for Beep Feedback
   cfg.internal_mic = false;
 
