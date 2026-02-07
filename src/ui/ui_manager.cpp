@@ -3308,15 +3308,15 @@ void UIManager::checkPowerManagement() {
     _bleDisconnectedTime = millis(); // Record when first disconnected
   }
 
-  // 1. Deep Sleep Logic: Only if BLE disconnected for 1 hour
+  // 1. Deep Sleep Logic: Only if BLE disconnected for 15 minutes
   // Check config just in case user set it to 0 (disabled)
   extern Config *config;
   bool sleepDisabled = (config && config->getAutoSleepMinutes() == 0);
 
-  unsigned long bleDisconnectDuration = 60 * 60 * 1000UL; // 1 hour
+  unsigned long bleDisconnectDuration = 15 * 60 * 1000UL; // 15 minutes
   if (!sleepDisabled && !bleConnected && _bleDisconnectedTime > 0 &&
       (millis() - _bleDisconnectedTime > bleDisconnectDuration)) {
-    Serial.println("BLE disconnected for 1 hour, entering deep sleep...");
+    Serial.println("BLE disconnected for 15 min, entering deep sleep...");
     enterDeepSleep();
   }
 
