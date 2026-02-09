@@ -1058,6 +1058,8 @@ void UIManager::handleSettingsTouch(int x, int y) {
 // ============================================================================
 
 void UIManager::drawDeviceSettingsScreen() {
+  // Ultra-fast refresh for responsive button feedback (like Timer/Notes screens)
+  M5.Display.setEpdMode(epd_mode_t::epd_fastest);
   M5.Display.fillScreen(COLOR_WHITE);
   drawMenuBar();
 
@@ -1221,6 +1223,9 @@ void UIManager::handleDeviceSettingsTouch(int x, int y) {
     if (_editAutoSleep > 120)
       _editAutoSleep = 120;
   }
+
+  // Trigger refresh for any date/time/sleep value change above
+  _needsRefresh = true;
 
   // --- Bluetooth & Deep Sleep Test Row ---
   int rowBT = 320;

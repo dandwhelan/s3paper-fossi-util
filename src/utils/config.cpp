@@ -113,9 +113,9 @@ bool Config::save(const char *path) {
   // Bluetooth
   doc["fossibot_mac"] = _fossibotMAC;
 
-  // Display
-  doc["theme"] = _theme;
-  doc["auto_sleep"] = _autoSleepMinutes;
+  // Display (nested format to match load)
+  doc["display"]["theme"] = _theme;
+  doc["display"]["auto_sleep_minutes"] = _autoSleepMinutes;
 
   // Timezone
   doc["timezone_offset"] = _timezoneOffset;
