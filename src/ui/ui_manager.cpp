@@ -3266,8 +3266,14 @@ void UIManager::checkPowerManagement() {
   extern Config *config;
   bool sleepDisabled = (config && config->getAutoSleepMinutes() == 0);
 
+  // Never sleep while Timer or Pomodoro is actively running
+  bool timerActive = (_clockMode == ClockMode::TIMER && _timerRunning);
+  bool pomodoroActive = (_clockMode == ClockMode::POMODORO &&
+                         _pomodoroState == PomodoroState::RUNNING);
+
   unsigned long bleDisconnectDuration = 60 * 60 * 1000UL; // 1 hour
-  if (!sleepDisabled && !bleConnected && _bleDisconnectedTime > 0 &&
+  if (!sleepDisabled && !timerActive && !pomodoroActive &&
+      !bleConnected && _bleDisconnectedTime > 0 &&
       (millis() - _bleDisconnectedTime > bleDisconnectDuration)) {
     Serial.println("BLE disconnected for 1 hour, entering deep sleep...");
     enterDeepSleep();
