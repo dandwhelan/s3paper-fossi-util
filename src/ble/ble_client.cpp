@@ -642,6 +642,11 @@ void FossibotBLE::parseStatusData(const uint8_t *data, size_t length) {
   _data.batteryVoltage = getRegValue(22) / 100.0f;
   _data.batteryPercent = getRegValue(56) / 10.0f;
 
+  // Error & protection registers
+  _data.errorCode = getRegValue(Fossibot::StatusReg::ERROR_CODE);
+  _data.protectionFlags = getRegValue(Fossibot::StatusReg::PROTECTION_FLAGS);
+  _data.systemStatusFlags = getRegValue(Fossibot::StatusReg::SYSTEM_STATUS_FLAGS);
+
   // Parse output states from bitmask (register 41)
   uint16_t states = getRegValue(41);
   _data.usbActive = (states & Fossibot::StateBits::USB_BIT) != 0;
@@ -657,6 +662,12 @@ void FossibotBLE::parseStatusData(const uint8_t *data, size_t length) {
   Serial.printf("BLE: SOC=%.1f%% IN=%.0fW OUT=%.0fW TTF=%dm TTE=%dm\n",
                 _data.batteryPercent, _data.inputPower, _data.outputPower,
                 _data.minutesToFull, _data.minutesToEmpty);
+
+  // Log error state if non-zero
+  if (_data.protectionFlags != 0 || _data.errorCode != 0) {
+    Serial.printf("BLE: ERROR DETECTED! ErrCode=%d ProtFlags=0x%04X SysFlags=0x%04X\n",
+                  _data.errorCode, _data.protectionFlags, _data.systemStatusFlags);
+  }
 }
 
 void FossibotBLE::parseSettingsData(const uint8_t *data, size_t length) {

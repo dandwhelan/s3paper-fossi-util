@@ -27,11 +27,14 @@ namespace StatusReg {
 static const uint8_t AC_INPUT_WATTS = 3;    // AC Input power (W)
 static const uint8_t DC_INPUT_WATTS = 4;    // Solar/DC Input (W)
 static const uint8_t TOTAL_INPUT_WATTS = 6; // Sum of AC + DC (W) - Max 1100W
+static const uint8_t ERROR_CODE = 8;        // Numeric error ID (e.g. 79)
 static const uint8_t TOTAL_OUTPUT_POWER =
-    20;                                    // Sum of all outputs (W) - Max 3000W
-static const uint8_t BATTERY_VOLTAGE = 22; // V × 100 (4900 = 49.00V)
-static const uint8_t ACTIVE_OUTPUTS = 41;  // Bitmask for USB/DC/AC states
-static const uint8_t MAIN_SOC = 56;        // State of Charge (0.1%)
+    20;                                        // Sum of all outputs (W) - Max 3000W
+static const uint8_t BATTERY_VOLTAGE = 22;    // V × 100 (4900 = 49.00V)
+static const uint8_t ACTIVE_OUTPUTS = 41;     // Bitmask for USB/DC/AC states
+static const uint8_t PROTECTION_FLAGS = 42;   // 0=OK, non-zero=fault (bitmask)
+static const uint8_t SYSTEM_STATUS_FLAGS = 48; // Operational state flags
+static const uint8_t MAIN_SOC = 56;           // State of Charge (0.1%)
 } // namespace StatusReg
 
 // State flag bit masks for register 41 (Active Outputs)
@@ -40,6 +43,18 @@ static const uint16_t USB_BIT = 512; // bit 9
 static const uint16_t DC_BIT = 1024; // bit 10
 static const uint16_t AC_BIT = 2048; // bit 11
 } // namespace StateBits
+
+// Protection flag bit masks for register 42
+namespace ProtectionBits {
+static const uint16_t CRITICAL_HARDWARE = 0xE000; // bits 13,14,15
+} // namespace ProtectionBits
+
+// System status flag bit masks for register 48
+namespace SystemStatusBits {
+static const uint16_t AC_CHARGING = 0x8000;      // AC Charging active
+static const uint16_t INVERTER_STANDBY = 0x4000; // Inverter Standby/Ready
+static const uint16_t ERROR_PENDING = 0x0008;    // Error Pending condition
+} // namespace SystemStatusBits
 
 // CONTROL Registers (Write)
 namespace ControlReg {
@@ -86,6 +101,20 @@ struct PowerBankData {
   bool dcActive = false;
   bool acActive = false;
 
+  // Error & Protection state (from status registers)
+  uint16_t errorCode = 0;        // Reg 8: numeric error ID (0 = no error)
+  uint16_t protectionFlags = 0;  // Reg 42: 0 = OK, non-zero = active fault
+  uint16_t systemStatusFlags = 0; // Reg 48: operational state bitmask
+  bool simulatedError = false;    // Debug: simulated error injection
+
+  bool hasError() const {
+    return protectionFlags != 0 || simulatedError;
+  }
+
+  bool hasErrorPending() const {
+    return (systemStatusFlags & SystemStatusBits::ERROR_PENDING) != 0;
+  }
+
   // Calculated times
   int minutesToFull = -1;  // -1 = not charging
   int minutesToEmpty = -1; // -1 = not discharging
@@ -108,6 +137,8 @@ struct PowerBankData {
   float lastBatteryPercent = -1.0f;
   float lastInputPower = -1.0f;
   float lastOutputPower = -1.0f;
+  uint16_t lastProtectionFlags = 0;
+  uint16_t lastSystemStatusFlags = 0;
 
   /**
    * Calculate time remaining
@@ -149,6 +180,10 @@ struct PowerBankData {
       return true;
     if (abs(outputPower - lastOutputPower) >= powerThreshold)
       return true;
+    if (protectionFlags != lastProtectionFlags)
+      return true;
+    if (systemStatusFlags != lastSystemStatusFlags)
+      return true;
 
     return false;
   }
@@ -160,6 +195,8 @@ struct PowerBankData {
     lastBatteryPercent = batteryPercent;
     lastInputPower = inputPower;
     lastOutputPower = outputPower;
+    lastProtectionFlags = protectionFlags;
+    lastSystemStatusFlags = systemStatusFlags;
   }
 };
 
