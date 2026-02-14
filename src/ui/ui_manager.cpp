@@ -510,7 +510,15 @@ void UIManager::goBack() { navigateTo(_previousScreen); }
 void UIManager::updatePowerBankData(const Fossibot::PowerBankData &data) {
   // Serial.printf("UI::updatePowerBankData() called - soc=%.1f connected=%d\n",
   //               data.batteryPercent, data.connected ? 1 : 0);
+  bool wasSimulated = _powerData.simulatedError;
   _powerData = data;
+  // Preserve simulated error state across BLE updates
+  if (wasSimulated) {
+    _powerData.simulatedError = true;
+    _powerData.errorCode = 79;
+    _powerData.protectionFlags = 0xE000;
+    _powerData.systemStatusFlags |= Fossibot::SystemStatusBits::ERROR_PENDING;
+  }
   _powerDataDirty = true;
 
   // Sync Fossibot settings to local UI variables (for preset highlighting)
@@ -541,6 +549,7 @@ void UIManager::updatePowerBankData(const Fossibot::PowerBankData &data) {
   // Smart Refresh: Only update if data changed significantly
   if (shouldUpdateDashboard(data) ||
       (data.connected != _lastRenderedData.connected) ||
+      (_powerData.hasError() != _lastRenderedData.hasError()) ||
       (onTimersWithActiveTimer && data.scheduleCharge != _lastRenderedData.scheduleCharge)) {
     // Serial.println("UI::updatePowerBankData() - SETTING _needsRefresh =
     // true!");
@@ -620,6 +629,60 @@ void UIManager::drawBatteryBar(float percent) {
   int barHeight = BATTERY_BAR_HEIGHT - 10;
   int barWidth = SCREEN_WIDTH - 10; // Full width with small margin
 
+  // === ERROR BANNER: Replace battery bar when device has active fault ===
+  if (_powerData.hasError()) {
+    // Solid black background - inverted for maximum visibility on e-ink
+    M5.Display.fillRect(5, barY, barWidth, barHeight, COLOR_BLACK);
+    M5.Display.drawRect(5, barY, barWidth, barHeight, COLOR_BLACK);
+
+    M5.Display.setTextColor(COLOR_WHITE);
+    M5.Display.setTextSize(2);
+
+    // Center the error message
+    const char *errMsg = "DEVICE ERROR - GOTO FOSSI";
+    int textW = M5.Display.textWidth(errMsg);
+    int textX = (SCREEN_WIDTH - textW) / 2;
+    int textY = barY + (barHeight / 2) - 16;
+
+    // Draw warning triangles and message
+    // Left warning triangle (manual draw for e-ink compatibility)
+    int triX = textX - 45;
+    int triCY = barY + barHeight / 2;
+    M5.Display.fillTriangle(triX, triCY + 12, triX + 12, triCY - 12,
+                            triX + 24, triCY + 12, COLOR_WHITE);
+    M5.Display.fillTriangle(triX + 4, triCY + 8, triX + 12, triCY - 6,
+                            triX + 20, triCY + 8, COLOR_BLACK);
+    // Exclamation mark in triangle
+    M5.Display.fillRect(triX + 11, triCY - 3, 3, 8, COLOR_WHITE);
+    M5.Display.fillRect(triX + 11, triCY + 7, 3, 3, COLOR_WHITE);
+
+    M5.Display.setCursor(textX, textY);
+    M5.Display.print(errMsg);
+
+    // Right warning triangle
+    int triX2 = textX + textW + 20;
+    M5.Display.fillTriangle(triX2, triCY + 12, triX2 + 12, triCY - 12,
+                            triX2 + 24, triCY + 12, COLOR_WHITE);
+    M5.Display.fillTriangle(triX2 + 4, triCY + 8, triX2 + 12, triCY - 6,
+                            triX2 + 20, triCY + 8, COLOR_BLACK);
+    M5.Display.fillRect(triX2 + 11, triCY - 3, 3, 8, COLOR_WHITE);
+    M5.Display.fillRect(triX2 + 11, triCY + 7, 3, 3, COLOR_WHITE);
+
+    // Show error code and protection flags on second line (smaller)
+    M5.Display.setTextSize(1);
+    char detailStr[48];
+    snprintf(detailStr, sizeof(detailStr), "Code: %d  Flags: 0x%04X",
+             _powerData.errorCode, _powerData.protectionFlags);
+    int detailW = M5.Display.textWidth(detailStr);
+    M5.Display.setCursor((SCREEN_WIDTH - detailW) / 2, textY + 35);
+    M5.Display.print(detailStr);
+
+    Serial.printf("UI: Drawing ERROR banner - Code=%d Flags=0x%04X\n",
+                  _powerData.errorCode, _powerData.protectionFlags);
+    return;
+  }
+
+  // === Normal battery bar ===
   // Draw border
   M5.Display.drawRect(5, barY, barWidth, barHeight, COLOR_BLACK);
   M5.Display.drawRect(6, barY + 1, barWidth - 2, barHeight - 2, COLOR_BLACK);
@@ -705,6 +768,18 @@ void UIManager::drawStatusPanel(int x, int y, int w, int h) {
   } else {
     M5.Display.drawCircle(x + w - 30, y + 25, 6, COLOR_BLACK);
     M5.Display.drawLine(x + w - 36, y + 19, x + w - 24, y + 31, COLOR_BLACK);
+  }
+
+  // Error pending indicator (Reg 48 bit 0x0008) - small warning triangle
+  if (_powerData.hasErrorPending()) {
+    int warnX = x + w - 60;
+    int warnY = y + 18;
+    M5.Display.fillTriangle(warnX, warnY + 14, warnX + 7, warnY,
+                            warnX + 14, warnY + 14, COLOR_BLACK);
+    M5.Display.setTextColor(COLOR_WHITE);
+    M5.Display.setTextSize(1);
+    M5.Display.setCursor(warnX + 5, warnY + 5);
+    M5.Display.print("!");
   }
 
   // Output toggles - HORIZONTAL layout centered in panel
@@ -1395,6 +1470,15 @@ void UIManager::drawFossibotSettingsScreen() {
   // === Power Off Button ===
   drawButton(col2X, col2Y + 120, 200, 60, "POWER OFF", true);
 
+  // === Simulate Error Button (for testing error banner) ===
+  drawButton(col2X, col2Y + 200, 200, 60,
+             _powerData.simulatedError ? "CLR ERROR" : "SIM ERROR",
+             _powerData.simulatedError);
+  M5.Display.setTextSize(1);
+  M5.Display.setTextColor(COLOR_DARK_GRAY);
+  M5.Display.setCursor(col2X + 10, col2Y + 270);
+  M5.Display.print("Test error banner");
+
   // --- Action Buttons ---
   y = 420;
   drawButton(320, y, 200, 55, "SAVE", true);
@@ -1554,6 +1638,25 @@ void UIManager::handleFossibotSettingsTouch(int x, int y) {
   // === Power Off Button ===
   if (isHit(col2X, col2Y + 120, 200, 60)) {
     _showPowerOffConfirmation = true;
+    forceRefresh();
+    return;
+  }
+
+  // === Simulate Error Button ===
+  if (isHit(col2X, col2Y + 200, 200, 60)) {
+    _powerData.simulatedError = !_powerData.simulatedError;
+    if (_powerData.simulatedError) {
+      // Inject fake error values matching real-world fault pattern
+      _powerData.errorCode = 79;
+      _powerData.protectionFlags = 0xE000;
+      _powerData.systemStatusFlags |= Fossibot::SystemStatusBits::ERROR_PENDING;
+      Serial.println("UI: Simulated error ENABLED (Code=79, Flags=0xE000)");
+    } else {
+      _powerData.errorCode = 0;
+      _powerData.protectionFlags = 0;
+      _powerData.systemStatusFlags &= ~Fossibot::SystemStatusBits::ERROR_PENDING;
+      Serial.println("UI: Simulated error CLEARED");
+    }
     forceRefresh();
     return;
   }
