@@ -555,7 +555,9 @@ void UIManager::updatePowerBankData(const Fossibot::PowerBankData &data) {
     // true!");
     _needsRefresh = true;
     _lastRefresh = 0; // Bypass rate limiting for BLE updates
-    _lastRenderedData = data;
+    // Store _powerData (includes simulated error state) to prevent
+    // constant refresh loop when simulated error is active
+    _lastRenderedData = _powerData;
     _lastDashboardUpdate = millis();
   } else {
     // Serial.println("UI::updatePowerBankData() - shouldUpdateDashboard
@@ -1376,7 +1378,10 @@ void UIManager::drawFossibotSettingsScreen() {
   M5.Display.print(title);
 
   // Sync values from BLE data if available
-  if (bleClient && bleClient->isConnected()) {
+  // Suppress sync for 5 seconds after user interaction to prevent
+  // overwriting user's changes with stale BLE data
+  bool suppressSettingsSync = (millis() - _lastTimerSetTime < 5000);
+  if (!suppressSettingsSync && bleClient && bleClient->isConnected()) {
     const auto &data = bleClient->getData();
     if (data.settingsReceived) {
       _fossiBuzzerEnabled = data.buzzerEnabled;
@@ -1550,6 +1555,7 @@ void UIManager::handleFossibotSettingsTouch(int x, int y) {
   // Buzzer toggle
   if (isHit(toggleX, baseY - 10, 100, 40)) {
     _fossiBuzzerEnabled = !_fossiBuzzerEnabled;
+    _lastTimerSetTime = millis(); // Prevent BLE sync from overwriting
     if (bleClient && bleClient->isConnected()) {
       bleClient->setBuzzerEnabled(_fossiBuzzerEnabled);
     }
@@ -1561,6 +1567,7 @@ void UIManager::handleFossibotSettingsTouch(int x, int y) {
   // Silent Charging toggle
   if (isHit(toggleX, baseY - 10, 100, 40)) {
     _fossiSilentCharging = !_fossiSilentCharging;
+    _lastTimerSetTime = millis(); // Prevent BLE sync from overwriting
     if (bleClient && bleClient->isConnected()) {
       bleClient->setSilentCharging(_fossiSilentCharging);
     }
@@ -1572,6 +1579,7 @@ void UIManager::handleFossibotSettingsTouch(int x, int y) {
   // LED Light cycle (0->1->2->3->0)
   if (isHit(toggleX, baseY - 10, 100, 40)) {
     _fossiLightMode = (_fossiLightMode + 1) % 4;
+    _lastTimerSetTime = millis(); // Prevent BLE sync from overwriting
     if (bleClient && bleClient->isConnected()) {
       bleClient->setLightMode(_fossiLightMode);
     }
@@ -1585,6 +1593,7 @@ void UIManager::handleFossibotSettingsTouch(int x, int y) {
     _fossiChargeLimit -= 10;
     if (_fossiChargeLimit < 60)
       _fossiChargeLimit = 60;
+    _lastTimerSetTime = millis(); // Prevent BLE sync from overwriting
     if (bleClient && bleClient->isConnected()) {
       bleClient->setChargeLimit(_fossiChargeLimit);
     }
@@ -1596,6 +1605,7 @@ void UIManager::handleFossibotSettingsTouch(int x, int y) {
     _fossiChargeLimit += 10;
     if (_fossiChargeLimit > 100)
       _fossiChargeLimit = 100;
+    _lastTimerSetTime = millis(); // Prevent BLE sync from overwriting
     if (bleClient && bleClient->isConnected()) {
       bleClient->setChargeLimit(_fossiChargeLimit);
     }
@@ -1609,6 +1619,7 @@ void UIManager::handleFossibotSettingsTouch(int x, int y) {
     _fossiDischargeLimit -= 5;
     if (_fossiDischargeLimit < 0)
       _fossiDischargeLimit = 0;
+    _lastTimerSetTime = millis(); // Prevent BLE sync from overwriting
     if (bleClient && bleClient->isConnected()) {
       bleClient->setDischargeLimit(_fossiDischargeLimit);
     }
@@ -1620,6 +1631,7 @@ void UIManager::handleFossibotSettingsTouch(int x, int y) {
     _fossiDischargeLimit += 5;
     if (_fossiDischargeLimit > 30)
       _fossiDischargeLimit = 30;
+    _lastTimerSetTime = millis(); // Prevent BLE sync from overwriting
     if (bleClient && bleClient->isConnected()) {
       bleClient->setDischargeLimit(_fossiDischargeLimit);
     }
@@ -3437,13 +3449,24 @@ void UIManager::exitEcoMode() {
 }
 
 void UIManager::showSleepImage() {
+  // GHOSTING FIX: Use quality EPD mode for deep sleep image
+  // E-ink needs a full quality refresh cycle to properly set pixels
+  // before entering deep sleep (no further updates possible after sleep)
+  M5.Display.setEpdMode(epd_mode_t::epd_quality);
+
   extern SDManager *sdManager;
   if (!sdManager || !sdManager->isAvailable()) {
+    // Even without an image, do a clean white refresh to clear ghosting
+    M5.Display.fillScreen(COLOR_WHITE);
+    M5.Display.display();
     return;
   }
 
   String imagePath = sdManager->getRandomPictureForSleep();
   if (imagePath.isEmpty()) {
+    // No image available, do a clean white refresh
+    M5.Display.fillScreen(COLOR_WHITE);
+    M5.Display.display();
     return;
   }
 
