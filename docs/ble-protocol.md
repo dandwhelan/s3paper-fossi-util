@@ -138,32 +138,42 @@ Full Command: [0x11, 0x06, 0x00, 0x18, 0x00, 0x01, 0x09, 0xCA]
 
 ## Register Map
 
-### Status Registers (Read)
+### Input Registers (Read via OpCode 0x1104)
 
-These registers are read using function code `0x03`.
+These registers are read using function code `0x04`.
 
-| Register | Offset | Name | Description | Unit |
-|----------|--------|------|-------------|------|
+| Reg | Offset | Name | Description | Unit |
+|-----|--------|------|-------------|------|
+| 2 | 4 | AC Charge Speed | AC charge speed status | 1-5 |
 | 3 | 6 | AC Input Power | AC charging power | W |
 | 4 | 8 | DC Input Power | Solar/DC input | W |
-| 6 | 12 | Total Input Power | Sum of all inputs | W |
-| 20 | 40 | Total System Power | Including internal | W |
+| 6 | 12 | Total Input Power | Sum of AC + DC inputs | W |
+| 8 | 16 | Error Code | 0=OK, 78=Inverter, 79=Safety Lockout | code |
+| 18 | 36 | AC Output Voltage | AC output voltage | V×10 |
+| 19 | 38 | AC Output Frequency | AC output frequency | Hz×10 |
+| 20 | 40 | Total Output Watts | Sum of all outputs | W |
+| 21 | 42 | Bus Voltage | **Multiplexed**: charging=AC input V×10, discharging=DC bus V | V |
 | 22 | 44 | Battery Voltage | ÷ 100 for volts | V×100 |
+| 30 | 60 | USB-A1 Watts | USB-A port 1 power | W×10 |
+| 31 | 62 | USB-A2 Watts | USB-A port 2 power | W×10 |
 | 39 | 78 | Output Power | Active output | W |
-| 41 | 82 | Active Outputs | Bitmask (see below) | - |
+| 41 | 82 | Active Port Flags | Bitmask for USB/DC/AC icons | bitmask |
+| 42 | 84 | Protection Flags | **Bitmask** (see fault detection below) | bitmask |
+| 47 | 94 | Protocol Version | Always 12288 | - |
+| 48 | 96 | System Status | 0x8000=Charging, 0x4000=Standby, 0x0008=Error | bitmask |
+| 52 | 104 | Model Constant | 180=Fossibot, 0=Aferiy (**NOT temperature**) | - |
+| 54 | 108 | Battery Full Capacity | Full battery capacity | Ah×10 |
 | 56 | 112 | State of Charge | ÷ 10 for percent | %×10 |
 | 58 | 116 | Time to Full | When charging | minutes |
 | 59 | 118 | Time to Empty | When discharging | minutes |
 
-### Active Outputs Bitmask (Register 41)
+### Active Port Flags Bitmask (Register 41)
 
 | Bit | Value | Output |
 |-----|-------|--------|
 | 9 | 512 | USB |
 | 10 | 1024 | DC (12V) |
 | 11 | 2048 | AC (Inverter) |
-
-**Example:**
 
 ```cpp
 uint16_t states = getRegValue(41);
@@ -172,15 +182,59 @@ bool dcActive = (states & 1024) != 0;   // Bit 10
 bool acActive = (states & 2048) != 0;   // Bit 11
 ```
 
-### Control Registers (Write)
+### Protection Flags Bitmask (Register 42)
 
-These registers are written using function code `0x06`.
+> **CRITICAL:** Register 42 is "Hardware GPIO & Fault Mask". It mixes status bits with fault bits. You **cannot** check `if (Reg42 > 0)` — you **must** use a bitmask!
 
-| Register | Name | Values | Description |
-|----------|------|--------|-------------|
+| Bits | Mask | Name | Description |
+|------|------|------|-------------|
+| 0-12 | 0x1FFF | MOSFET Status | Output MOSFET status (e.g., ~984 when USB/DC on) |
+| 13-14 | 0x6000 | **Critical Fault** | Hardware failure bits |
+| 15 | 0x8000 | Warning Latch | Non-critical, often always on |
+
+```cpp
+// Correct fault detection:
+const bool isCriticalFault = (Reg42 & 0x6000) > 0;
+
+// WRONG - will false-trigger on normal MOSFET status bits:
+// const bool isFault = (Reg42 > 0);  // DO NOT USE
+```
+
+### Error Code Logic (Register 8)
+
+| Code | Name | Description |
+|------|------|-------------|
+| 0 | Normal | No error |
+| 78 | Inverter Fault | AC output failed; DC charging via solar still works |
+| 79 | Safety Lockout | AC charging interrupted |
+
+**Error 79 classification depends on Register 42:**
+- If `(Reg42 & 0x6000) > 0`: **Hardware Failure** — display "DEVICE ERROR"
+- If `(Reg42 & 0x6000) == 0`: **Environmental Protection** (Cold/Hot Temp) — display "TEMP/SAFETY PROTECTION"
+
+### System Status Flags (Register 48)
+
+| Bit | Mask | Name |
+|-----|------|------|
+| 15 | 0x8000 | AC Charging active |
+| 14 | 0x4000 | Inverter Standby/Ready |
+| 3 | 0x0008 | Error Pending |
+
+**Status Text Priority:** Error (bit 3) > Charging (bit 15) > Standby (bit 14)
+
+### Holding Registers (Read via OpCode 0x1103 / Write via 0x06)
+
+| Reg | Name | Values | Description |
+|-----|------|--------|-------------|
+| 5 | Master Enable | 0=Off, 1=On | Master system enable |
+| 11 | Hardware ID | 1536=US, 512=EU | Device model identification |
+| 13 | AC Charge Speed | 1-5 | AC charge speed setpoint |
+| 14 | Max Charge Wattage | 1500=US, 1100=EU | Maximum charge power |
+| 19 | Max AC Input Current | 1600=US, 500=EU | Maximum AC input |
 | 24 | USB Output | 0=Off, 1=On | Toggle USB ports |
 | 25 | DC Output | 0=Off, 1=On | Toggle 12V DC |
 | 26 | AC Output | 0=Off, 1=On | Toggle inverter |
+| 27 | Light Mode | 0-3 | off/on/flash/sos |
 | 56 | Key Sound | 0=Off, 1=On | Button beep |
 | 57 | Silent Charging | 0=Off, 1=On | Quiet mode |
 | 66 | Discharge Limit | %×10 | Lower SOC limit |

@@ -663,10 +663,14 @@ void FossibotBLE::parseStatusData(const uint8_t *data, size_t length) {
                 _data.batteryPercent, _data.inputPower, _data.outputPower,
                 _data.minutesToFull, _data.minutesToEmpty);
 
-  // Log error state if non-zero
-  if (_data.protectionFlags != 0 || _data.errorCode != 0) {
-    Serial.printf("BLE: ERROR DETECTED! ErrCode=%d ProtFlags=0x%04X SysFlags=0x%04X\n",
-                  _data.errorCode, _data.protectionFlags, _data.systemStatusFlags);
+  // Log error state with detailed classification
+  if (_data.errorCode != 0 || (_data.protectionFlags & Fossibot::ProtectionBits::CRITICAL_FAULT) != 0) {
+    bool isCriticalFault = (_data.protectionFlags & Fossibot::ProtectionBits::CRITICAL_FAULT) != 0;
+    bool isEnvProtection = _data.isEnvironmentalProtection();
+    Serial.printf("BLE: ERROR DETECTED! ErrCode=%d ProtFlags=0x%04X SysFlags=0x%04X [%s]\n",
+                  _data.errorCode, _data.protectionFlags, _data.systemStatusFlags,
+                  isEnvProtection ? "TEMP/SAFETY" :
+                  isCriticalFault ? "HARDWARE FAULT" : "INVERTER FAULT");
   }
 }
 

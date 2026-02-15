@@ -640,8 +640,18 @@ void UIManager::drawBatteryBar(float percent) {
     M5.Display.setTextColor(COLOR_WHITE);
     M5.Display.setTextSize(2);
 
-    // Center the error message
-    const char *errMsg = "DEVICE ERROR - GOTO FOSSI";
+    // Error message varies by type:
+    // Error 79 with NO critical bits (0x6000) in Reg 42 = Temp/Safety Protection
+    // Error 79 WITH critical bits = Hardware Failure
+    // Error 78 = Inverter Fault (DC charging via solar still works)
+    const char *errMsg;
+    if (_powerData.isEnvironmentalProtection()) {
+      errMsg = "TEMP/SAFETY PROTECTION";
+    } else if (_powerData.errorCode == 78) {
+      errMsg = "INVERTER FAULT - DC OK";
+    } else {
+      errMsg = "DEVICE ERROR - GOTO FOSSI";
+    }
     int textW = M5.Display.textWidth(errMsg);
     int textX = (SCREEN_WIDTH - textW) / 2;
     int textY = barY + (barHeight / 2) - 16;
@@ -670,17 +680,20 @@ void UIManager::drawBatteryBar(float percent) {
     M5.Display.fillRect(triX2 + 11, triCY - 3, 3, 8, COLOR_WHITE);
     M5.Display.fillRect(triX2 + 11, triCY + 7, 3, 3, COLOR_WHITE);
 
-    // Show error code and protection flags on second line (smaller)
+    // Show error code, protection flags, and classification on second line
     M5.Display.setTextSize(1);
-    char detailStr[48];
-    snprintf(detailStr, sizeof(detailStr), "Code: %d  Flags: 0x%04X",
-             _powerData.errorCode, _powerData.protectionFlags);
+    char detailStr[64];
+    const char *classification =
+        _powerData.isEnvironmentalProtection() ? "Temp/Safety" :
+        _powerData.hasCriticalHardwareFault()  ? "Hardware" : "Fault";
+    snprintf(detailStr, sizeof(detailStr), "Code: %d  Flags: 0x%04X  [%s]",
+             _powerData.errorCode, _powerData.protectionFlags, classification);
     int detailW = M5.Display.textWidth(detailStr);
     M5.Display.setCursor((SCREEN_WIDTH - detailW) / 2, textY + 35);
     M5.Display.print(detailStr);
 
-    Serial.printf("UI: Drawing ERROR banner - Code=%d Flags=0x%04X\n",
-                  _powerData.errorCode, _powerData.protectionFlags);
+    Serial.printf("UI: Drawing ERROR banner - Code=%d Flags=0x%04X [%s]\n",
+                  _powerData.errorCode, _powerData.protectionFlags, classification);
     return;
   }
 
