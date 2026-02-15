@@ -22,19 +22,54 @@ static const char *NOTIFY_CHAR_UUID = "0000c305-0000-1000-8000-00805f9b34fb";
 static const uint16_t OPCODE_STATUS = 0x1104;   // Real-time telemetry
 static const uint16_t OPCODE_SETTINGS = 0x1103; // Device configuration
 
-// STATUS Registers (OpCode 0x1104) - Read only
+// STATUS Registers (OpCode 0x1104 / Read Input Registers) - Read only
+//
+// FINAL VERIFIED REGISTER MAP:
+//   Reg 02: AC Charge Speed Status (1-5)
+//   Reg 03: AC Input Watts (actual)
+//   Reg 04: DC Input Watts (Solar/Car)
+//   Reg 06: Total Input Watts
+//   Reg 08: Active Error Code (0=OK, 78=Inverter Fault, 79=Safety Lockout)
+//   Reg 18: AC Output Voltage (×10, e.g. 1200 = 120.0V)
+//   Reg 19: AC Output Frequency (×10, e.g. 600 = 60.0Hz)
+//   Reg 20: Total Output Watts
+//   Reg 21: System Bus Voltage (MULTIPLEXED: charging=AC input V×10, discharging=DC bus V)
+//   Reg 22: Battery Voltage (÷100 for volts)
+//   Reg 30: USB-A1 Watts (×10)
+//   Reg 31: USB-A2 Watts (×10)
+//   Reg 39: Output Power (W)
+//   Reg 41: Active Port Flags (bitmask for USB/DC/AC icons)
+//   Reg 42: Protection Flags (BITMASK - check 0x6000 for critical faults)
+//   Reg 47: Protocol Version (always 12288)
+//   Reg 48: System Status Flags (0x8000=Charging, 0x4000=Standby, 0x0008=Error)
+//   Reg 52: Model Constant (180=Fossibot, 0=Aferiy) - NOT temperature!
+//   Reg 54: Battery Full Capacity (0.1 Ah)
+//   Reg 56: Main SoC (÷10 for %)
+//   Reg 58: Time to Full (minutes)
+//   Reg 59: Time to Empty (minutes)
+//
 namespace StatusReg {
-static const uint8_t AC_INPUT_WATTS = 3;    // AC Input power (W)
-static const uint8_t DC_INPUT_WATTS = 4;    // Solar/DC Input (W)
-static const uint8_t TOTAL_INPUT_WATTS = 6; // Sum of AC + DC (W) - Max 1100W
-static const uint8_t ERROR_CODE = 8;        // Numeric error ID (e.g. 79)
-static const uint8_t TOTAL_OUTPUT_POWER =
-    20;                                        // Sum of all outputs (W) - Max 3000W
-static const uint8_t BATTERY_VOLTAGE = 22;    // V × 100 (4900 = 49.00V)
-static const uint8_t ACTIVE_OUTPUTS = 41;     // Bitmask for USB/DC/AC states
-static const uint8_t PROTECTION_FLAGS = 42;   // 0=OK, non-zero=fault (bitmask)
-static const uint8_t SYSTEM_STATUS_FLAGS = 48; // Operational state flags
-static const uint8_t MAIN_SOC = 56;           // State of Charge (0.1%)
+static const uint8_t AC_CHARGE_SPEED = 2;      // AC charge speed status (1-5)
+static const uint8_t AC_INPUT_WATTS = 3;        // AC Input power (W)
+static const uint8_t DC_INPUT_WATTS = 4;        // Solar/DC Input (W)
+static const uint8_t TOTAL_INPUT_WATTS = 6;     // Sum of AC + DC (W) - Max 1100W
+static const uint8_t ERROR_CODE = 8;            // Error code: 0=OK, 78=Inverter, 79=Safety Lockout
+static const uint8_t AC_OUTPUT_VOLTAGE = 18;    // AC Output Voltage (×10)
+static const uint8_t AC_OUTPUT_FREQ = 19;       // AC Output Frequency (×10)
+static const uint8_t TOTAL_OUTPUT_POWER = 20;   // Sum of all outputs (W) - Max 3000W
+static const uint8_t BUS_VOLTAGE = 21;          // Multiplexed: charging=AC input V×10, discharging=DC bus V
+static const uint8_t BATTERY_VOLTAGE = 22;      // V × 100 (4900 = 49.00V)
+static const uint8_t USB_A1_WATTS = 30;         // USB-A1 power (×10)
+static const uint8_t USB_A2_WATTS = 31;         // USB-A2 power (×10)
+static const uint8_t ACTIVE_OUTPUTS = 41;       // Bitmask for USB/DC/AC states
+static const uint8_t PROTECTION_FLAGS = 42;     // Bitmask: 0x6000=Critical Fault, 0x8000=Warning latch
+static const uint8_t PROTOCOL_VERSION = 47;     // Always 12288
+static const uint8_t SYSTEM_STATUS_FLAGS = 48;  // 0x8000=Charging, 0x4000=Standby, 0x0008=Error
+static const uint8_t MODEL_CONSTANT = 52;       // 180=Fossibot, 0=Aferiy (NOT temperature)
+static const uint8_t BATTERY_FULL_CAPACITY = 54;// Battery full capacity (0.1 Ah)
+static const uint8_t MAIN_SOC = 56;             // State of Charge (0.1%)
+static const uint8_t TIME_TO_FULL = 58;         // Minutes until full
+static const uint8_t TIME_TO_EMPTY = 59;        // Minutes until empty
 } // namespace StatusReg
 
 // State flag bit masks for register 41 (Active Outputs)
@@ -45,8 +80,15 @@ static const uint16_t AC_BIT = 2048; // bit 11
 } // namespace StateBits
 
 // Protection flag bit masks for register 42
+// Reg 42 is "Hardware GPIO & Fault Mask" - mixes status bits with fault bits.
+// You CANNOT check `if (Reg42 > 0)` - must use bitmask!
+//   Bit 15 (0x8000): System Warning / Non-Critical Latch (often always on)
+//   Bits 13 & 14 (0x6000): CRITICAL FAULT MASK
+//   Bits 0-12: Output MOSFET Status (e.g., +984 when USB/DC is On)
 namespace ProtectionBits {
-static const uint16_t CRITICAL_HARDWARE = 0xE000; // bits 13,14,15
+static const uint16_t CRITICAL_FAULT = 0x6000;   // bits 13,14 - ACTUAL critical faults
+static const uint16_t WARNING_LATCH = 0x8000;    // bit 15 - non-critical, often always on
+static const uint16_t CRITICAL_HARDWARE = 0xE000; // bits 13,14,15 (legacy compat)
 } // namespace ProtectionBits
 
 // System status flag bit masks for register 48
@@ -56,7 +98,23 @@ static const uint16_t INVERTER_STANDBY = 0x4000; // Inverter Standby/Ready
 static const uint16_t ERROR_PENDING = 0x0008;    // Error Pending condition
 } // namespace SystemStatusBits
 
-// CONTROL Registers (Write)
+// CONTROL / HOLDING Registers (OpCode 0x1103 / Write via 0x06)
+//
+// FINAL VERIFIED HOLDING REGISTER MAP:
+//   Reg 05: Master System Enable (0=Off, 1=On)
+//   Reg 11: Hardware ID (1536=US Aferiy, 512=EU Fossibot)
+//   Reg 13: AC Charge Speed Setpoint (1-5)
+//   Reg 14: Max Charge Wattage (1500=US, 1100=EU)
+//   Reg 19: Max AC Input Current (1600=US, 500=EU)
+//   Reg 24: USB Toggle (0/1)
+//   Reg 25: DC Toggle (0/1)
+//   Reg 26: AC Toggle (0/1)
+//   Reg 27: Light Mode (0-3: off/on/flash/sos)
+//   Reg 56: Key Sound (0/1)
+//   Reg 57: Silent Charging (0/1)
+//   Reg 66: Discharge Limit (Min SoC % × 10)
+//   Reg 67: Charge Limit (Max SoC % × 10)
+//
 namespace ControlReg {
 static const uint8_t USB_TOGGLE = 24;      // 0/1 - Enable USB ports
 static const uint8_t DC_TOGGLE = 25;       // 0/1 - Enable 12V DC
@@ -73,6 +131,13 @@ static const uint8_t POWER_OFF = 64;       // Write 1 to shutdown
 static const uint8_t DISCHARGE_LIMIT = 66; // % × 10 - Lower SOC limit
 static const uint8_t CHARGE_LIMIT = 67;    // % × 10 - Target charge %
 static const uint8_t SYS_STANDBY = 68;     // Minutes (0=never)
+
+// Read-only holding registers (parsed from 0x1103 response)
+static const uint8_t MASTER_ENABLE = 5;        // Master system enable (0/1)
+static const uint8_t HARDWARE_ID = 11;         // 1536=US Aferiy, 512=EU Fossibot
+static const uint8_t AC_CHARGE_SPEED_SET = 13; // AC charge speed setpoint (1-5)
+static const uint8_t MAX_CHARGE_WATTAGE = 14;  // 1500=US, 1100=EU
+static const uint8_t MAX_AC_INPUT_CURRENT = 19;// 1600=US, 500=EU
 } // namespace ControlReg
 
 // Power limits for progress bar scaling
@@ -102,17 +167,59 @@ struct PowerBankData {
   bool acActive = false;
 
   // Error & Protection state (from status registers)
-  uint16_t errorCode = 0;        // Reg 8: numeric error ID (0 = no error)
-  uint16_t protectionFlags = 0;  // Reg 42: 0 = OK, non-zero = active fault
-  uint16_t systemStatusFlags = 0; // Reg 48: operational state bitmask
+  uint16_t errorCode = 0;         // Reg 8: 0=OK, 78=Inverter Fault, 79=Safety Lockout
+  uint16_t protectionFlags = 0;   // Reg 42: bitmask (check 0x6000 for critical faults)
+  uint16_t systemStatusFlags = 0; // Reg 48: 0x8000=Charging, 0x4000=Standby, 0x0008=Error
   bool simulatedError = false;    // Debug: simulated error injection
 
+  /**
+   * Check if device has a critical fault.
+   * Uses bitmask on Reg 42 (bits 13&14 = 0x6000) instead of checking != 0,
+   * because lower bits are MOSFET status and bit 15 is a non-critical latch.
+   * Also triggers on error codes 78/79 from Reg 8.
+   */
   bool hasError() const {
-    return protectionFlags != 0 || simulatedError;
+    if (simulatedError) return true;
+    // Critical fault bits in protection flags
+    if ((protectionFlags & ProtectionBits::CRITICAL_FAULT) != 0) return true;
+    // Active error codes (78=inverter fault, 79=safety lockout)
+    if (errorCode == 78 || errorCode == 79) return true;
+    return false;
+  }
+
+  /**
+   * Check if Reg 42 critical fault bits are set (hardware failure).
+   * If Error 79 is present WITHOUT critical bits, it's environmental
+   * protection (cold/hot temp) rather than hardware failure.
+   */
+  bool hasCriticalHardwareFault() const {
+    return (protectionFlags & ProtectionBits::CRITICAL_FAULT) != 0;
+  }
+
+  /**
+   * Check if error is environmental protection (temp safety) vs hardware.
+   * Error 79 with no critical fault bits in Reg 42 = Temp/Safety Protection.
+   */
+  bool isEnvironmentalProtection() const {
+    return errorCode == 79 && !hasCriticalHardwareFault();
   }
 
   bool hasErrorPending() const {
     return (systemStatusFlags & SystemStatusBits::ERROR_PENDING) != 0;
+  }
+
+  /**
+   * Check if device is actively charging (Reg 48 bit 15).
+   */
+  bool isCharging() const {
+    return (systemStatusFlags & SystemStatusBits::AC_CHARGING) != 0;
+  }
+
+  /**
+   * Check if inverter is in standby (Reg 48 bit 14).
+   */
+  bool isStandby() const {
+    return (systemStatusFlags & SystemStatusBits::INVERTER_STANDBY) != 0;
   }
 
   // Calculated times
@@ -137,6 +244,7 @@ struct PowerBankData {
   float lastBatteryPercent = -1.0f;
   float lastInputPower = -1.0f;
   float lastOutputPower = -1.0f;
+  uint16_t lastErrorCode = 0;
   uint16_t lastProtectionFlags = 0;
   uint16_t lastSystemStatusFlags = 0;
 
@@ -180,6 +288,8 @@ struct PowerBankData {
       return true;
     if (abs(outputPower - lastOutputPower) >= powerThreshold)
       return true;
+    if (errorCode != lastErrorCode)
+      return true;
     if (protectionFlags != lastProtectionFlags)
       return true;
     if (systemStatusFlags != lastSystemStatusFlags)
@@ -195,6 +305,7 @@ struct PowerBankData {
     lastBatteryPercent = batteryPercent;
     lastInputPower = inputPower;
     lastOutputPower = outputPower;
+    lastErrorCode = errorCode;
     lastProtectionFlags = protectionFlags;
     lastSystemStatusFlags = systemStatusFlags;
   }
