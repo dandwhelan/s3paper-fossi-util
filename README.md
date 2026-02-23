@@ -105,6 +105,7 @@ For detailed developer instructions, see the [Developer Guide](docs/DEVELOPMENT.
 * [**EPUB Reader Guide**](docs/EPUB_READER.md) - Loading hooks, gestures, fonts.
 * [**Productivity Tools**](docs/PRODUCTIVITY.md) - Notes, Calculator, Games.
 * [**Developer Guide**](docs/DEVELOPMENT.md) - Architecture, building, contributing.
+* [**AI Context Guide**](docs/AI_CONTEXT.md) - Technical overview for AI assistants.
 
 ## License
 

@@ -87,7 +87,7 @@ void UIManager::init() {
   _lastActivityTime = millis();
 }
 
-const m5gfx::IFont* UIManager::getReaderFont() {
+const m5gfx::IFont *UIManager::getReaderFont() {
   // Return font based on current family and size selection
   if (_readerFontSize == 2) {
     // Medium size
@@ -180,7 +180,7 @@ void UIManager::update() {
   // Auto-refresh Clock screen every second when Pomodoro or Timer is running
   if (_currentScreen == ScreenID::CLOCK && (millis() - _lastRefresh > 1000)) {
     bool pomodoroRunning = (_clockMode == ClockMode::POMODORO &&
-                           _pomodoroState == PomodoroState::RUNNING);
+                            _pomodoroState == PomodoroState::RUNNING);
     bool timerRunning = (_clockMode == ClockMode::TIMER && _timerRunning);
     if (pomodoroRunning || timerRunning) {
       _needsRefresh = true;
@@ -539,9 +539,11 @@ void UIManager::updatePowerBankData(const Fossibot::PowerBankData &data) {
     _fossiScheduleChargeRemaining = data.scheduleCharge;
   }
 
-  // Only trigger auto-refresh on HOME screen or Timers screen (when timer active)
-  bool onTimersWithActiveTimer = (_currentScreen == ScreenID::SETTINGS_FOSSIBOT_TIMERS &&
-                                   _fossiScheduleChargeRemaining > 0);
+  // Only trigger auto-refresh on HOME screen or Timers screen (when timer
+  // active)
+  bool onTimersWithActiveTimer =
+      (_currentScreen == ScreenID::SETTINGS_FOSSIBOT_TIMERS &&
+       _fossiScheduleChargeRemaining > 0);
   if (_currentScreen != ScreenID::HOME && !onTimersWithActiveTimer) {
     return;
   }
@@ -550,7 +552,8 @@ void UIManager::updatePowerBankData(const Fossibot::PowerBankData &data) {
   if (shouldUpdateDashboard(data) ||
       (data.connected != _lastRenderedData.connected) ||
       (_powerData.hasError() != _lastRenderedData.hasError()) ||
-      (onTimersWithActiveTimer && data.scheduleCharge != _lastRenderedData.scheduleCharge)) {
+      (onTimersWithActiveTimer &&
+       data.scheduleCharge != _lastRenderedData.scheduleCharge)) {
     // Serial.println("UI::updatePowerBankData() - SETTING _needsRefresh =
     // true!");
     _needsRefresh = true;
@@ -641,9 +644,9 @@ void UIManager::drawBatteryBar(float percent) {
     M5.Display.setTextSize(2);
 
     // Error message varies by type:
-    // Error 79 with NO critical bits (0x6000) in Reg 42 = Temp/Safety Protection
-    // Error 79 WITH critical bits = Hardware Failure
-    // Error 78 = Inverter Fault (DC charging via solar still works)
+    // Error 79 with NO critical bits (0x6000) in Reg 42 = Temp/Safety
+    // Protection Error 79 WITH critical bits = Hardware Failure Error 78 =
+    // Inverter Fault (DC charging via solar still works)
     const char *errMsg;
     if (_powerData.isEnvironmentalProtection()) {
       errMsg = "TEMP/SAFETY PROTECTION";
@@ -660,8 +663,8 @@ void UIManager::drawBatteryBar(float percent) {
     // Left warning triangle (manual draw for e-ink compatibility)
     int triX = textX - 45;
     int triCY = barY + barHeight / 2;
-    M5.Display.fillTriangle(triX, triCY + 12, triX + 12, triCY - 12,
-                            triX + 24, triCY + 12, COLOR_WHITE);
+    M5.Display.fillTriangle(triX, triCY + 12, triX + 12, triCY - 12, triX + 24,
+                            triCY + 12, COLOR_WHITE);
     M5.Display.fillTriangle(triX + 4, triCY + 8, triX + 12, triCY - 6,
                             triX + 20, triCY + 8, COLOR_BLACK);
     // Exclamation mark in triangle
@@ -684,8 +687,9 @@ void UIManager::drawBatteryBar(float percent) {
     M5.Display.setTextSize(1);
     char detailStr[64];
     const char *classification =
-        _powerData.isEnvironmentalProtection() ? "Temp/Safety" :
-        _powerData.hasCriticalHardwareFault()  ? "Hardware" : "Fault";
+        _powerData.isEnvironmentalProtection()  ? "Temp/Safety"
+        : _powerData.hasCriticalHardwareFault() ? "Hardware"
+                                                : "Fault";
     snprintf(detailStr, sizeof(detailStr), "Code: %d  Flags: 0x%04X  [%s]",
              _powerData.errorCode, _powerData.protectionFlags, classification);
     int detailW = M5.Display.textWidth(detailStr);
@@ -693,7 +697,8 @@ void UIManager::drawBatteryBar(float percent) {
     M5.Display.print(detailStr);
 
     Serial.printf("UI: Drawing ERROR banner - Code=%d Flags=0x%04X [%s]\n",
-                  _powerData.errorCode, _powerData.protectionFlags, classification);
+                  _powerData.errorCode, _powerData.protectionFlags,
+                  classification);
     return;
   }
 
@@ -789,8 +794,8 @@ void UIManager::drawStatusPanel(int x, int y, int w, int h) {
   if (_powerData.hasErrorPending()) {
     int warnX = x + w - 60;
     int warnY = y + 18;
-    M5.Display.fillTriangle(warnX, warnY + 14, warnX + 7, warnY,
-                            warnX + 14, warnY + 14, COLOR_BLACK);
+    M5.Display.fillTriangle(warnX, warnY + 14, warnX + 7, warnY, warnX + 14,
+                            warnY + 14, COLOR_BLACK);
     M5.Display.setTextColor(COLOR_WHITE);
     M5.Display.setTextSize(1);
     M5.Display.setCursor(warnX + 5, warnY + 5);
@@ -1008,8 +1013,9 @@ void UIManager::handleHomeTouch(int x, int y, TouchEvent event) {
     int acCenter =
         statusX + 20 + toggleSpacing * 2 + (toggleSpacing - 70) / 2 + 35;
 
-    // Y hit zone: buttonY +/- 30 (covering label + button)
-    if (y >= buttonY - 30 && y <= buttonY + 50) {
+    // Y hit zone: buttonY +/- 30 for top, extend down to +80 to cover the whole
+    // square box
+    if (y >= buttonY - 30 && y <= buttonY + 80) {
       if (abs(x - usbCenter) < 50) {
         if (bleClient && bleClient->isConnected()) {
           Serial.println("Toggle USB");
@@ -1148,7 +1154,8 @@ void UIManager::handleSettingsTouch(int x, int y) {
 // ============================================================================
 
 void UIManager::drawDeviceSettingsScreen() {
-  // Ultra-fast refresh for responsive button feedback (like Timer/Notes screens)
+  // Ultra-fast refresh for responsive button feedback (like Timer/Notes
+  // screens)
   M5.Display.setEpdMode(epd_mode_t::epd_fastest);
   M5.Display.fillScreen(COLOR_WHITE);
   drawMenuBar();
@@ -1679,7 +1686,8 @@ void UIManager::handleFossibotSettingsTouch(int x, int y) {
     } else {
       _powerData.errorCode = 0;
       _powerData.protectionFlags = 0;
-      _powerData.systemStatusFlags &= ~Fossibot::SystemStatusBits::ERROR_PENDING;
+      _powerData.systemStatusFlags &=
+          ~Fossibot::SystemStatusBits::ERROR_PENDING;
       Serial.println("UI: Simulated error CLEARED");
     }
     forceRefresh();
@@ -2053,15 +2061,17 @@ void UIManager::drawClockScreen() {
 
   // Check if this is a timer auto-refresh (partial update only)
   bool pomodoroRunning = (_clockMode == ClockMode::POMODORO &&
-                         _pomodoroState == PomodoroState::RUNNING);
+                          _pomodoroState == PomodoroState::RUNNING);
   bool timerRunning = (_clockMode == ClockMode::TIMER && _timerRunning);
-  bool isTimerAutoRefresh = (_lastRefresh != 0) && (pomodoroRunning || timerRunning);
+  bool isTimerAutoRefresh =
+      (_lastRefresh != 0) && (pomodoroRunning || timerRunning);
 
   if (isTimerAutoRefresh) {
     // PARTIAL REFRESH: Only update content area with fast mode (no blink)
     M5.Display.setEpdMode(epd_mode_t::epd_fastest);
     // Clear only the content area
-    M5.Display.fillRect(CONTENT_X, 0, CONTENT_WIDTH, CONTENT_HEIGHT, COLOR_WHITE);
+    M5.Display.fillRect(CONTENT_X, 0, CONTENT_WIDTH, CONTENT_HEIGHT,
+                        COLOR_WHITE);
   } else {
     // FULL REFRESH: Redraw everything
     if (_lastRefresh == 0) {
@@ -3378,6 +3388,34 @@ bool UIManager::shouldUpdateDashboard(const Fossibot::PowerBankData &newData) {
 }
 
 void UIManager::checkPowerManagement() {
+  // 1. CRITICAL: Check Device Battery (3.3V Cutoff)
+  // Low battery shutdown to protect LiPo and ensure clean state
+  float vBat = Battery::getVoltage();
+  if (vBat > 0.5f && vBat <= 3.30f) {
+    Serial.printf("CRITICAL: Battery Low (%.2fV). Shutting down.\n", vBat);
+
+    // Play distinctive alarm beep
+    Buzzer::alarm(3);
+
+    // Visual feedback
+    M5.Display.clear(COLOR_WHITE);
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setTextDatum(middle_center);
+    M5.Display.drawString("LOW POWER", SCREEN_WIDTH / 2,
+                          SCREEN_HEIGHT / 2 - 40);
+    M5.Display.drawString("Shutting down...", SCREEN_WIDTH / 2,
+                          SCREEN_HEIGHT / 2 + 40);
+    M5.Display.display();
+
+    delay(3000); // Give user time to see message
+
+    // Skip showSleepImage() to save power and go directly to sleep
+    Serial.println("Entering Deep Sleep (Low Power)...");
+    M5.Display.sleep();
+    esp_deep_sleep_start();
+    return;
+  }
+
   // BLE connection status
   extern FossibotBLE *bleClient;
   bool bleConnected = (bleClient && bleClient->isConnected());
@@ -3400,8 +3438,8 @@ void UIManager::checkPowerManagement() {
                          _pomodoroState == PomodoroState::RUNNING);
 
   unsigned long bleDisconnectDuration = 60 * 60 * 1000UL; // 1 hour
-  if (!sleepDisabled && !timerActive && !pomodoroActive &&
-      !bleConnected && _bleDisconnectedTime > 0 &&
+  if (!sleepDisabled && !timerActive && !pomodoroActive && !bleConnected &&
+      _bleDisconnectedTime > 0 &&
       (millis() - _bleDisconnectedTime > bleDisconnectDuration)) {
     Serial.println("BLE disconnected for 1 hour, entering deep sleep...");
     enterDeepSleep();
@@ -5453,6 +5491,95 @@ void UIManager::drawHistoryScreen() {
     }
   }
 
+  // --- Draw Tooltip if selected ---
+  if (_historySelectedMinute >= 0 && sampleCount > 0) {
+    int closestDiff = 9999;
+    PowerSample bestSample = {0, 0, 0, 0};
+    int bestMinute = -1;
+
+    // Find closest sample to the touched X coordinate minute
+    for (uint16_t i = 0; i < sampleCount; i++) {
+      PowerSample s = _powerHistory.getSample(_historyViewDay, i);
+      if (s.timestamp == 0)
+        continue;
+
+      struct tm st;
+      time_t ts = s.timestamp;
+      localtime_r(&ts, &st);
+      int m = st.tm_hour * 60 + st.tm_min;
+
+      int diff = abs(m - _historySelectedMinute);
+      if (diff < closestDiff) {
+        closestDiff = diff;
+        bestSample = s;
+        bestMinute = m;
+      }
+    }
+
+    if (closestDiff <= 30 && bestMinute >= 0) { // Limit snap distance
+      int x = graphX + (bestMinute * graphW / 1440);
+
+      // Draw vertical indicator line
+      M5.Display.drawLine(x, graphY, x, graphY + graphH, COLOR_BLACK);
+      M5.Display.drawLine(x - 1, graphY, x - 1, graphY + graphH, COLOR_BLACK);
+      M5.Display.drawLine(x + 1, graphY, x + 1, graphY + graphH, COLOR_BLACK);
+
+      // Calculate Y positions for labels
+      int yBatt = graphY + graphH - (bestSample.batteryPct * graphH / 100);
+
+      int safeIn = (int)bestSample.inputW;
+      if (safeIn > graphMax)
+        safeIn = graphMax;
+      int yIn = graphY + graphH - (safeIn * graphH / graphMax);
+
+      int safeOut = (int)bestSample.outputW;
+      if (safeOut > graphMax)
+        safeOut = graphMax;
+      int yOut = graphY + graphH - (safeOut * graphH / graphMax);
+
+      M5.Display.setTextSize(2);
+
+      // Helper lambda to draw a text label with a white background
+      auto drawLabel = [&](int lx, int ly, const char *text) {
+        int tw = M5.Display.textWidth(text);
+        int th = 16; // height for text size 2
+
+        // Prevent drawing off right edge
+        if (lx + tw + 4 > SCREEN_WIDTH) {
+          lx = lx - tw - 12; // flip to left side of the line
+        }
+
+        M5.Display.fillRect(lx, ly - th / 2, tw + 4, th + 4, COLOR_WHITE);
+        M5.Display.drawRect(lx, ly - th / 2, tw + 4, th + 4, COLOR_BLACK);
+        M5.Display.setTextColor(COLOR_BLACK);
+        M5.Display.setCursor(lx + 2, ly - th / 2 + 2);
+        M5.Display.print(text);
+      };
+
+      char buf[32];
+
+      // Time label at the top of the line
+      snprintf(buf, sizeof(buf), "%02d:%02d", bestMinute / 60, bestMinute % 60);
+      drawLabel(x + 6, graphY + 10, buf);
+
+      // Draw labels near their respective lines if the filter allows it
+      if ((_historyFilter & 0x01) || _historyFilter == 0x07) {
+        snprintf(buf, sizeof(buf), "%d%%", bestSample.batteryPct);
+        drawLabel(x + 6, yBatt, buf);
+      }
+
+      if ((_historyFilter & 0x02) || _historyFilter == 0x07) {
+        snprintf(buf, sizeof(buf), "%dW In", bestSample.inputW);
+        drawLabel(x + 6, yIn, buf);
+      }
+
+      if ((_historyFilter & 0x04) || _historyFilter == 0x07) {
+        snprintf(buf, sizeof(buf), "%dW Out", bestSample.outputW);
+        drawLabel(x + 6, yOut, buf);
+      }
+    }
+  }
+
   // --- Navigation Bar (User Request: Replaces filters to allow navigation) ---
   // Draw Navigation/Filter Bar
   int btnY = SCREEN_HEIGHT - 60;
@@ -5471,6 +5598,24 @@ void UIManager::drawHistoryScreen() {
 void UIManager::handleHistoryTouch(int x, int y, TouchEvent event) {
   if (event != TouchEvent::RELEASE)
     return;
+
+  // --- Graph Touch & Tooltip ---
+  const int graphX = 80;
+  const int graphY = 100;
+  const int graphW = SCREEN_WIDTH - 120;
+  const int graphH = 300;
+
+  // Flag to know if we should clear the tooltip
+  bool clearSelected = true;
+
+  if (y >= graphY && y <= graphY + graphH && x >= graphX &&
+      x <= graphX + graphW) {
+    Buzzer::click();
+    int minuteOfDay = (x - graphX) * 1440 / graphW;
+    _historySelectedMinute = minuteOfDay;
+    clearSelected = false; // Kept tooltip alive
+    forceRefresh();
+  }
 
   // --- Filter Buttons (bottom bar layout) ---
   int btnY = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
@@ -5518,6 +5663,12 @@ void UIManager::handleHistoryTouch(int x, int y, TouchEvent event) {
   if (y < 50 && x > SCREEN_WIDTH - 100) {
     Buzzer::click();
     navigateTo(ScreenID::HOME);
+    clearSelected = true;
+  }
+
+  if (clearSelected && _historySelectedMinute >= 0) {
+    _historySelectedMinute = -1;
+    forceRefresh(); // Force refresh to erase the tooltip
   }
 }
 
@@ -5675,8 +5826,9 @@ void UIManager::drawReaderScreen() {
           [](void *param) {
             UIManager *self = (UIManager *)param;
 
-            Serial.printf("Relayout task: Starting (fontFamily=%d, fontSize=%d)\n",
-                          self->_readerFontFamily, self->_readerFontSize);
+            Serial.printf(
+                "Relayout task: Starting (fontFamily=%d, fontSize=%d)\n",
+                self->_readerFontFamily, self->_readerFontSize);
 
             // SET RENDERER STATE FIRST - use font based on family + size
             const m5gfx::IFont *layoutFont = self->getReaderFont();
@@ -6205,7 +6357,8 @@ void UIManager::readerLoadSettings() {
       } else if (line.startsWith("fontFamily=")) {
         _readerFontFamily = line.substring(11).toInt();
         // Validate: 0=Serif, 1=Sans, 2=Dyslexic
-        if (_readerFontFamily < 0 || _readerFontFamily >= READER_FONT_FAMILY_COUNT) {
+        if (_readerFontFamily < 0 ||
+            _readerFontFamily >= READER_FONT_FAMILY_COUNT) {
           _readerFontFamily = 0;
         }
       } else if (line.startsWith("lineSpacing=")) {

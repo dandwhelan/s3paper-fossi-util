@@ -94,22 +94,20 @@ const PowerSample *PowerHistory::getDaySamples(uint8_t dayOffset) {
 }
 
 uint16_t PowerHistory::getSampleCount(uint8_t dayOffset) {
-  // For today (dayOffset=0), return actual count
-  // For past days, return full day (1440) or count non-zero timestamps
-  if (dayOffset == 0) {
-    return _currentSampleIndex;
-  }
-
-  // For past days, count valid samples
   uint8_t dayIndex =
       (_currentDayIndex - dayOffset + HISTORY_DAYS) % HISTORY_DAYS;
-  uint16_t count = 0;
+
+  bool hasData = false;
   for (uint16_t i = 0; i < SAMPLES_PER_DAY; i++) {
     if (_historyData[dayIndex][i].timestamp > 0) {
-      count++;
+      hasData = true;
+      break;
     }
   }
-  return count;
+
+  // Return SAMPLES_PER_DAY if any data exists so the UI can iterate the full
+  // sparse array
+  return hasData ? SAMPLES_PER_DAY : 0;
 }
 
 bool PowerHistory::shouldFlush() {
@@ -194,8 +192,9 @@ bool PowerHistory::loadFromSD() {
     return false;
   }
 
-  // Load last 7 days
+  // Load last 7 days using exact day calculation based on the device clock.
   int samplesLoaded = 0;
+
   for (uint8_t dayOffset = 0; dayOffset < HISTORY_DAYS; dayOffset++) {
     String filename = getFilenameForDay(dayOffset);
 
@@ -205,21 +204,24 @@ bool PowerHistory::loadFromSD() {
 
     File file = SD.open(filename, FILE_READ);
     if (!file) {
+      Serial.printf("[PowerHistory] Failed to open %s\n", filename.c_str());
       continue;
     }
+
+    Serial.printf("[PowerHistory] Opened %s\n", filename.c_str());
 
     // Skip CSV header
     file.readStringUntil('\n');
 
-    // Read samples
+    // i is the logical dayOffset (0 is newest file, 1 is 2nd newest, etc)
     uint8_t dayIndex =
         (_currentDayIndex - dayOffset + HISTORY_DAYS) % HISTORY_DAYS;
-    uint16_t sampleIdx = 0;
 
-    while (file.available() && sampleIdx < SAMPLES_PER_DAY) {
+    while (file.available()) {
       String line = file.readStringUntil('\n');
+      line.trim();
       if (line.length() == 0)
-        break;
+        continue;
 
       // Parse CSV: timestamp,battery,input,output
       int comma1 = line.indexOf(',');
@@ -227,17 +229,30 @@ bool PowerHistory::loadFromSD() {
       int comma3 = line.indexOf(',', comma2 + 1);
 
       if (comma1 > 0 && comma2 > 0 && comma3 > 0) {
-        PowerSample &sample = _historyData[dayIndex][sampleIdx];
-        sample.timestamp = line.substring(0, comma1).toInt();
-        sample.batteryPct = line.substring(comma1 + 1, comma2).toInt();
-        sample.inputW = line.substring(comma2 + 1, comma3).toInt();
-        sample.outputW = line.substring(comma3 + 1).toInt();
-        sampleIdx++;
-        samplesLoaded++;
+        uint32_t ts = line.substring(0, comma1).toInt();
+
+        if (ts > 0) {
+          struct tm st;
+          time_t timeTs = ts;
+          localtime_r(&timeTs, &st);
+
+          uint16_t minuteIndex = st.tm_hour * 60 + st.tm_min;
+
+          if (minuteIndex < SAMPLES_PER_DAY) {
+            PowerSample &sample = _historyData[dayIndex][minuteIndex];
+            sample.timestamp = ts;
+            sample.batteryPct = line.substring(comma1 + 1, comma2).toInt();
+            sample.inputW = line.substring(comma2 + 1, comma3).toInt();
+            sample.outputW = line.substring(comma3 + 1).toInt();
+            samplesLoaded++;
+          }
+        }
       }
     }
 
     file.close();
+    Serial.printf("[PowerHistory] Closed %s. Samples loaded: %d\n",
+                  filename.c_str(), samplesLoaded);
   }
 
   Serial.printf("[PowerHistory] Loaded %d samples from SD\n", samplesLoaded);

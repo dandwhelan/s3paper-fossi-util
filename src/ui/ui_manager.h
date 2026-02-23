@@ -410,8 +410,9 @@ private:
 
   // History UI state
   unsigned long _lastHistorySample = 0;
-  uint8_t _historyViewDay = 0;   // 0=today, 1=yesterday, etc.
-  uint8_t _historyFilter = 0x00; // Bitfield: 0=None (default for speed)
+  uint8_t _historyViewDay = 0;         // 0=today, 1=yesterday, etc.
+  uint8_t _historyFilter = 0x00;       // Bitfield: 0=None (default for speed)
+  int16_t _historySelectedMinute = -1; // -1 = no selection
 
   // ============================================================
   // Reader (E-Book)
@@ -429,7 +430,7 @@ private:
   int _readerListIndex = 0;
   int _readerFontSize = 3; // Default Large (3). Values: 1=Small, 2=Med, 3=Large
   int _readerLineSpacing = 1; // pixels between lines
-  int _readerFontFamily = 0; // Font family: 0=Serif, 1=Sans, 2=Dyslexic
+  int _readerFontFamily = 0;  // Font family: 0=Serif, 1=Sans, 2=Dyslexic
   // Portrait mode is now enforced hardcoded
   bool _readerMenuOpen = false;             // Settings menu overlay
   std::vector<uint32_t> _readerPageOffsets; // Byte offset of each page start
@@ -439,7 +440,7 @@ private:
   void drawReaderBrowser(); // File browser when no book open
   void drawReaderMenu();    // Settings overlay
   void handleReaderTouch(int x, int y, TouchEvent event);
-  const m5gfx::IFont* getReaderFont(); // Get font based on family + size
+  const m5gfx::IFont *getReaderFont(); // Get font based on family + size
   void readerOpenFile(const String &path);
   void readerCloseFile();
   void readerNextPage();
