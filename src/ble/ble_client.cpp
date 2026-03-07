@@ -664,7 +664,7 @@ void FossibotBLE::parseStatusData(const uint8_t *data, size_t length) {
                 _data.minutesToFull, _data.minutesToEmpty);
 
   // Log error state with detailed classification
-  if (_data.errorCode != 0 || (_data.protectionFlags & Fossibot::ProtectionBits::CRITICAL_FAULT) != 0) {
+  if (_data.errorCode != 0) {
     bool isCriticalFault = (_data.protectionFlags & Fossibot::ProtectionBits::CRITICAL_FAULT) != 0;
     bool isEnvProtection = _data.isEnvironmentalProtection();
     Serial.printf("BLE: ERROR DETECTED! ErrCode=%d ProtFlags=0x%04X SysFlags=0x%04X [%s]\n",

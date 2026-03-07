@@ -174,14 +174,14 @@ struct PowerBankData {
 
   /**
    * Check if device has a critical fault.
-   * Uses bitmask on Reg 42 (bits 13&14 = 0x6000) instead of checking != 0,
-   * because lower bits are MOSFET status and bit 15 is a non-critical latch.
-   * Also triggers on error codes 78/79 from Reg 8.
+   * Only triggers on explicit error codes from Reg 8 (78/79).
+   * Reg 42 protection flags are NOT checked independently because
+   * MOSFET status bits (0-12) can extend into bits 13-14 when outputs
+   * (DC/USB/AC) are active, causing false positives. Protection flags
+   * are used only for error classification (see hasCriticalHardwareFault).
    */
   bool hasError() const {
     if (simulatedError) return true;
-    // Critical fault bits in protection flags
-    if ((protectionFlags & ProtectionBits::CRITICAL_FAULT) != 0) return true;
     // Active error codes (78=inverter fault, 79=safety lockout)
     if (errorCode == 78 || errorCode == 79) return true;
     return false;
