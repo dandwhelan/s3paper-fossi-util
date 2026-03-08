@@ -37,6 +37,10 @@ static const uint16_t OPCODE_SETTINGS = 0x1103; // Device configuration
 //   Reg 22: Battery Voltage (÷100 for volts)
 //   Reg 30: USB-A1 Watts (×10)
 //   Reg 31: USB-A2 Watts (×10)
+//   Reg 34: USB-C1 Watts (×10)
+//   Reg 35: USB-C2 Watts (×10)
+//   Reg 36: USB-C3 Watts (×10)
+//   Reg 37: USB-C4 Watts (×10)
 //   Reg 39: Output Power (W)
 //   Reg 41: Active Port Flags (bitmask for USB/DC/AC icons)
 //   Reg 42: Protection Flags (BITMASK - check 0x6000 for critical faults)
@@ -61,6 +65,10 @@ static const uint8_t BUS_VOLTAGE = 21;          // Multiplexed: charging=AC inpu
 static const uint8_t BATTERY_VOLTAGE = 22;      // V × 100 (4900 = 49.00V)
 static const uint8_t USB_A1_WATTS = 30;         // USB-A1 power (×10)
 static const uint8_t USB_A2_WATTS = 31;         // USB-A2 power (×10)
+static const uint8_t USB_C1_WATTS = 34;         // USB-C1 power (×10)
+static const uint8_t USB_C2_WATTS = 35;         // USB-C2 power (×10)
+static const uint8_t USB_C3_WATTS = 36;         // USB-C3 power (×10)
+static const uint8_t USB_C4_WATTS = 37;         // USB-C4 power (×10)
 static const uint8_t ACTIVE_OUTPUTS = 41;       // Bitmask for USB/DC/AC states
 static const uint8_t PROTECTION_FLAGS = 42;     // Bitmask: 0x6000=Critical Fault, 0x8000=Warning latch
 static const uint8_t PROTOCOL_VERSION = 47;     // Always 12288
@@ -160,6 +168,10 @@ struct PowerBankData {
   float outputPower = 0.0f;  // Output watts (0-3000W)
   float acInputPower = 0.0f; // AC input component
   float dcInputPower = 0.0f; // DC/Solar input component
+
+  // Output breakdown (derived from per-port registers)
+  float usbOutputPower = 0.0f;  // Sum of all 6 USB ports (regs 30,31,34-37 ÷10)
+  float acDcOutputPower = 0.0f; // Derived: totalOutput - usbTotal (AC+DC combined)
 
   // Output states
   bool usbActive = false;

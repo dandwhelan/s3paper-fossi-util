@@ -593,6 +593,8 @@ void UIManager::drawHomeScreen() {
     drawHomeCompactStatus();
   } else if (theme == "horizontal_bars") {
     drawHomeHorizontalBars();
+  } else if (theme == "sector") {
+    drawHomeSector();
   } else {
     drawHomeClassicGrid();
   }
@@ -926,6 +928,136 @@ void UIManager::drawHomeHorizontalBars() {
   } else {
     M5.Display.drawCircle(connX, toggleCenterY, 6, COLOR_BLACK);
     M5.Display.drawLine(connX - 6, toggleCenterY - 6, connX + 6, toggleCenterY + 6, COLOR_BLACK);
+  }
+}
+
+// ============================================================================
+// Theme: Sector (output power breakdown by USB / AC / DC)
+// ============================================================================
+void UIManager::drawHomeSector() {
+  int contentBottom = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
+  int margin = 10;
+
+  drawBatteryBar(_powerData.batteryPercent);
+
+  int topY = BATTERY_BAR_HEIGHT + margin;
+  int availH = contentBottom - topY - margin;
+
+  // --- Left half: Total IN / Total OUT with time ---
+  int leftW = SCREEN_WIDTH / 2 - margin * 2;
+  int panelH = (availH - margin) / 2;
+
+  // IN panel
+  drawPowerPanel(margin, topY, leftW, panelH, "IN",
+                 _powerData.inputPower, 1100.0f, "to full",
+                 _powerData.minutesToFull, true);
+
+  // OUT panel
+  drawPowerPanel(margin, topY + panelH + margin, leftW, panelH, "OUT",
+                 _powerData.outputPower, 3000.0f, "remaining",
+                 _powerData.minutesToEmpty, false);
+
+  // --- Right half: Output breakdown sectors ---
+  int rightX = SCREEN_WIDTH / 2 + margin;
+  int rightW = SCREEN_WIDTH / 2 - margin * 2;
+  int sectorH = (availH - margin * 2) / 3; // 3 rows: USB, AC, DC
+
+  M5.Display.setTextColor(COLOR_BLACK);
+
+  // Determine what label to show for the non-USB power
+  // If only AC active: label it "AC"
+  // If only DC active: label it "DC"
+  // If both: label it "AC+DC"
+  // If neither: show 0 for both
+  bool acOn = _powerData.acActive;
+  bool dcOn = _powerData.dcActive;
+
+  // --- USB Sector ---
+  int usbY = topY;
+  M5.Display.drawRect(rightX, usbY, rightW, sectorH, COLOR_BLACK);
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(rightX + 15, usbY + 12);
+  M5.Display.print("USB");
+  M5.Display.setTextSize(3);
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%.1fW", _powerData.usbOutputPower);
+  int tw = M5.Display.textWidth(buf);
+  M5.Display.setCursor(rightX + rightW - tw - 15, usbY + 10);
+  M5.Display.print(buf);
+  // Progress bar
+  int pbY = usbY + sectorH - 20;
+  drawProgressBar(rightX + 15, pbY, rightW - 30, 12,
+                  _powerData.usbOutputPower / 500.0f, false);
+
+  // --- AC Sector ---
+  int acY = usbY + sectorH + margin;
+  M5.Display.drawRect(rightX, acY, rightW, sectorH, COLOR_BLACK);
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(rightX + 15, acY + 12);
+  M5.Display.print("AC");
+
+  float acPower = 0.0f;
+  if (acOn && !dcOn) {
+    acPower = _powerData.acDcOutputPower;
+  } else if (acOn && dcOn) {
+    // Both on — can't split, show nothing here (combined shown in DC row)
+    acPower = 0.0f;
+  }
+  M5.Display.setTextSize(3);
+  snprintf(buf, sizeof(buf), "%.0fW", acPower);
+  tw = M5.Display.textWidth(buf);
+  M5.Display.setCursor(rightX + rightW - tw - 15, acY + 10);
+  M5.Display.print(buf);
+  if (!acOn) {
+    M5.Display.setTextSize(1);
+    M5.Display.setCursor(rightX + 15, acY + sectorH - 22);
+    M5.Display.print("OFF");
+  } else {
+    drawProgressBar(rightX + 15, acY + sectorH - 20, rightW - 30, 12,
+                    acPower / 3000.0f, false);
+  }
+
+  // --- DC Sector ---
+  int dcY = acY + sectorH + margin;
+  M5.Display.drawRect(rightX, dcY, rightW, sectorH, COLOR_BLACK);
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(rightX + 15, dcY + 12);
+  if (acOn && dcOn) {
+    M5.Display.print("AC+DC");
+  } else {
+    M5.Display.print("DC");
+  }
+
+  float dcPower = 0.0f;
+  if (dcOn && !acOn) {
+    dcPower = _powerData.acDcOutputPower;
+  } else if (acOn && dcOn) {
+    // Both on — show combined non-USB power here
+    dcPower = _powerData.acDcOutputPower;
+  }
+  M5.Display.setTextSize(3);
+  snprintf(buf, sizeof(buf), "%.0fW", dcPower);
+  tw = M5.Display.textWidth(buf);
+  M5.Display.setCursor(rightX + rightW - tw - 15, dcY + 10);
+  M5.Display.print(buf);
+  if (!dcOn && !acOn) {
+    M5.Display.setTextSize(1);
+    M5.Display.setCursor(rightX + 15, dcY + sectorH - 22);
+    M5.Display.print("OFF");
+  } else {
+    float maxDc = (acOn && dcOn) ? 3000.0f : 1000.0f;
+    drawProgressBar(rightX + 15, dcY + sectorH - 20, rightW - 30, 12,
+                    dcPower / maxDc, false);
+  }
+
+  // Connection indicator (bottom-right corner)
+  int connX = SCREEN_WIDTH - 25;
+  int connY = contentBottom - 20;
+  if (_powerData.connected) {
+    M5.Display.fillCircle(connX, connY, 6, COLOR_BLACK);
+  } else {
+    M5.Display.drawCircle(connX, connY, 6, COLOR_BLACK);
+    M5.Display.drawLine(connX - 6, connY - 6, connX + 6, connY + 6, COLOR_BLACK);
   }
 }
 
@@ -1319,6 +1451,8 @@ void UIManager::handleHomeTouch(int x, int y, TouchEvent event) {
     handleHomeCompactStatusTouch(x, y);
   } else if (theme == "horizontal_bars") {
     handleHomeHorizontalBarsTouch(x, y);
+  } else if (theme == "sector") {
+    handleHomeSectorTouch(x, y);
   } else {
     handleHomeClassicGridTouch(x, y);
   }
@@ -1478,6 +1612,52 @@ void UIManager::handleHomeHorizontalBarsTouch(int x, int y) {
   }
 }
 
+void UIManager::handleHomeSectorTouch(int x, int y) {
+  // Right-side sector panels act as toggle buttons
+  int margin = 10;
+  int topY = BATTERY_BAR_HEIGHT + margin;
+  int contentBottom = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
+  int availH = contentBottom - topY - margin;
+  int rightX = SCREEN_WIDTH / 2 + margin;
+  int rightW = SCREEN_WIDTH / 2 - margin * 2;
+  int sectorH = (availH - margin * 2) / 3;
+
+  if (x < rightX || x > rightX + rightW) return;
+
+  int usbY = topY;
+  int acY = usbY + sectorH + margin;
+  int dcY = acY + sectorH + margin;
+
+  if (y >= usbY && y < usbY + sectorH) {
+    if (bleClient && bleClient->isConnected()) {
+      Serial.println("Toggle USB");
+      bleClient->toggleUSB();
+      Buzzer::click();
+      _powerData.usbActive = !_powerData.usbActive;
+      _needsRefresh = true;
+      _lastRefresh = 0;
+    }
+  } else if (y >= acY && y < acY + sectorH) {
+    if (bleClient && bleClient->isConnected()) {
+      Serial.println("Toggle AC");
+      bleClient->toggleAC();
+      Buzzer::click();
+      _powerData.acActive = !_powerData.acActive;
+      _needsRefresh = true;
+      _lastRefresh = 0;
+    }
+  } else if (y >= dcY && y < dcY + sectorH) {
+    if (bleClient && bleClient->isConnected()) {
+      Serial.println("Toggle DC");
+      bleClient->toggleDC();
+      Buzzer::click();
+      _powerData.dcActive = !_powerData.dcActive;
+      _needsRefresh = true;
+      _lastRefresh = 0;
+    }
+  }
+}
+
 void UIManager::drawSettingsScreen() {
   // Main Settings Menu - tile navigation to sub-screens
   M5.Display.fillScreen(COLOR_WHITE);
@@ -1515,6 +1695,7 @@ void UIManager::drawSettingsScreen() {
     const char *themeName = "Classic";
     if (theme == "compact_status") themeName = "Compact";
     else if (theme == "horizontal_bars") themeName = "H-Bars";
+    else if (theme == "sector") themeName = "Sector";
     char themeLabel[24];
     snprintf(themeLabel, sizeof(themeLabel), "Theme: %s", themeName);
     drawButton(col1X, row3Y, btnW, btnH, themeLabel);
@@ -1577,6 +1758,8 @@ void UIManager::handleSettingsTouch(int x, int y) {
         config->setTheme("compact_status");
       } else if (theme == "compact_status") {
         config->setTheme("horizontal_bars");
+      } else if (theme == "horizontal_bars") {
+        config->setTheme("sector");
       } else {
         config->setTheme("classic_grid");
       }

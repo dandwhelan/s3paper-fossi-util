@@ -214,6 +214,7 @@ private:
   void drawHomeClassicGrid();
   void drawHomeCompactStatus();
   void drawHomeHorizontalBars();
+  void drawHomeSector();
   void drawButton(int x, int y, int w, int h, const char *label,
                   bool selected = false);
   void drawProgressBar(int x, int y, int w, int h, float percent,
@@ -230,6 +231,7 @@ private:
   void handleHomeClassicGridTouch(int x, int y);
   void handleHomeCompactStatusTouch(int x, int y);
   void handleHomeHorizontalBarsTouch(int x, int y);
+  void handleHomeSectorTouch(int x, int y);
   void handleSettingsTouch(int x, int y);         // Main settings menu touch
   void handleDeviceSettingsTouch(int x, int y);   // Device settings touch
   void handleFossibotSettingsTouch(int x, int y); // Fossibot settings touch
