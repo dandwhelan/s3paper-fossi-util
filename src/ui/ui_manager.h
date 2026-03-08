@@ -202,12 +202,18 @@ private:
 
   // Drawing methods
   void drawBatteryBar(float percent);
+  void drawErrorBanner(int x, int y, int w, int h);
   void drawPowerPanel(int x, int y, int w, int h, const char *title,
                       float power, float maxPower, const char *timeLabel,
                       int minutes, bool isInput);
   void drawStatusPanel(int x, int y, int w, int h);
   void drawClockWeatherPanel(int x, int y, int w, int h);
   void drawMenuBar();
+
+  // Theme-specific home screen drawing
+  void drawHomeClassicGrid();
+  void drawHomeCompactStatus();
+  void drawHomeHorizontalBars();
   void drawButton(int x, int y, int w, int h, const char *label,
                   bool selected = false);
   void drawProgressBar(int x, int y, int w, int h, float percent,
@@ -221,6 +227,9 @@ private:
 
   // Screen-specific handlers
   void handleHomeTouch(int x, int y, TouchEvent event);
+  void handleHomeClassicGridTouch(int x, int y);
+  void handleHomeCompactStatusTouch(int x, int y);
+  void handleHomeHorizontalBarsTouch(int x, int y);
   void handleSettingsTouch(int x, int y);         // Main settings menu touch
   void handleDeviceSettingsTouch(int x, int y);   // Device settings touch
   void handleFossibotSettingsTouch(int x, int y); // Fossibot settings touch

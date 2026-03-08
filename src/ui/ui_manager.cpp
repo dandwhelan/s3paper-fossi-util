@@ -582,51 +582,385 @@ void UIManager::forceRefresh() {
 // ============================================================================
 
 void UIManager::drawHomeScreen() {
-  Serial.println("UI: Drawing home screen (redesigned layout)");
+  extern Config *config;
+  Serial.println("UI: Drawing home screen");
 
-  // Clear screen
   M5.Display.fillScreen(COLOR_WHITE);
 
-  // Layout calculations
+  // Dispatch to active theme
+  String theme = config ? config->getTheme() : "classic_grid";
+  if (theme == "compact_status") {
+    drawHomeCompactStatus();
+  } else if (theme == "horizontal_bars") {
+    drawHomeHorizontalBars();
+  } else {
+    drawHomeClassicGrid();
+  }
+
+  drawMenuBar();
+  M5.Display.display();
+}
+
+// ============================================================================
+// Theme: Classic Grid (original 2x2 layout)
+// ============================================================================
+void UIManager::drawHomeClassicGrid() {
   int contentY = BATTERY_BAR_HEIGHT + PANEL_MARGIN;
   int contentHeight =
       SCREEN_HEIGHT - BATTERY_BAR_HEIGHT - MENU_BAR_HEIGHT - PANEL_MARGIN * 3;
   int panelWidth = (SCREEN_WIDTH - PANEL_MARGIN * 3) / 2;
   int panelHeight = (contentHeight - PANEL_MARGIN) / 2;
 
-  // 1. Battery bar (top, full width)
   drawBatteryBar(_powerData.batteryPercent);
-
-  // NEW LAYOUT:
-  // LEFT COLUMN: IN (top) + OUT (bottom) - stacked vertically
-  // RIGHT COLUMN: Status/Toggles (top) + Clock (bottom)
 
   int topRowY = contentY;
   int bottomRowY = topRowY + panelHeight + PANEL_MARGIN;
 
-  // 2. LEFT TOP: Power Input Panel
   drawPowerPanel(PANEL_MARGIN, topRowY, panelWidth, panelHeight, "IN",
                  _powerData.inputPower, 1100.0f, "to full",
                  _powerData.minutesToFull, true);
 
-  // 3. LEFT BOTTOM: Power Output Panel (moved from top-right)
   drawPowerPanel(PANEL_MARGIN, bottomRowY, panelWidth, panelHeight, "OUT",
                  _powerData.outputPower, 3000.0f, "remaining",
                  _powerData.minutesToEmpty, false);
 
-  // 4. RIGHT TOP: Status panel with USB/DC/AC toggles (moved from bottom-left)
   drawStatusPanel(PANEL_MARGIN * 2 + panelWidth, topRowY, panelWidth,
                   panelHeight);
 
-  // 5. RIGHT BOTTOM: Clock/Date panel
   drawClockWeatherPanel(PANEL_MARGIN * 2 + panelWidth, bottomRowY, panelWidth,
                         panelHeight);
+}
 
-  // 6. Menu bar (bottom)
-  drawMenuBar();
+// ============================================================================
+// Theme: Compact Status (large battery circle left, data stacked right)
+// ============================================================================
+void UIManager::drawHomeCompactStatus() {
+  int contentBottom = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
 
-  // Push to display
-  M5.Display.display();
+  // --- Error banner (replaces battery circle area when error active) ---
+  if (_powerData.hasError()) {
+    drawErrorBanner(10, 10, SCREEN_WIDTH - 20, 80);
+  } else {
+    // --- Battery circle (left half) ---
+    int circleX = SCREEN_WIDTH / 4;
+    int circleY = (contentBottom - 70) / 2; // Center vertically, leave room for toggle strip
+    int radius = 120;
+
+    // Draw arc as concentric circles with fill proportional to battery %
+    M5.Display.drawCircle(circleX, circleY, radius, COLOR_BLACK);
+    M5.Display.drawCircle(circleX, circleY, radius - 1, COLOR_BLACK);
+    M5.Display.drawCircle(circleX, circleY, radius - 2, COLOR_GRAY);
+
+    // Inner fill arc — simplified as a filled portion
+    // Draw a thick arc by filling segments
+    float pct = _powerData.batteryPercent / 100.0f;
+    if (pct > 1.0f) pct = 1.0f;
+    if (pct < 0.0f) pct = 0.0f;
+    int innerR = radius - 8;
+    // Fill arc from bottom, sweeping clockwise proportional to %
+    // Simplified: draw filled inner circle with partial coverage
+    int fillH = (int)(2 * innerR * pct);
+    int fillTop = circleY - innerR + (2 * innerR - fillH);
+    if (fillH > 0) {
+      // Clip fill to circle using horizontal slices
+      for (int row = fillTop; row < circleY + innerR; row++) {
+        int dy = row - circleY;
+        int halfW = (int)sqrt((float)(innerR * innerR - dy * dy));
+        if (halfW > 0) {
+          M5.Display.drawFastHLine(circleX - halfW, row, halfW * 2, COLOR_BLACK);
+        }
+      }
+    }
+
+    // Percentage text centered in circle
+    char pctStr[8];
+    snprintf(pctStr, sizeof(pctStr), "%.0f%%", _powerData.batteryPercent);
+    M5.Display.setTextColor(pct > 0.5f ? COLOR_WHITE : COLOR_BLACK);
+    M5.Display.setTextSize(4);
+    int tw = M5.Display.textWidth(pctStr);
+    M5.Display.setCursor(circleX - tw / 2, circleY - 20);
+    M5.Display.print(pctStr);
+  }
+
+  // --- Right half: Power data stacked ---
+  int rightX = SCREEN_WIDTH / 2 + 30;
+  int dataY = 30;
+
+  M5.Display.setTextColor(COLOR_BLACK);
+
+  // IN row
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(rightX, dataY);
+  M5.Display.print("IN");
+  M5.Display.setTextSize(3);
+  M5.Display.setCursor(rightX + 80, dataY - 5);
+  M5.Display.printf("%.0fW", _powerData.inputPower);
+  M5.Display.setTextSize(1);
+  M5.Display.setCursor(rightX + 80, dataY + 45);
+  M5.Display.print(Fossibot::formatTime(_powerData.minutesToFull));
+  M5.Display.print(" to full");
+
+  // Separator
+  int sepY = dataY + 75;
+  M5.Display.drawFastHLine(rightX, sepY, SCREEN_WIDTH / 2 - 60, COLOR_GRAY);
+
+  // OUT row
+  int outY = sepY + 15;
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(rightX, outY);
+  M5.Display.print("OUT");
+  M5.Display.setTextSize(3);
+  M5.Display.setCursor(rightX + 80, outY - 5);
+  M5.Display.printf("%.0fW", _powerData.outputPower);
+  M5.Display.setTextSize(1);
+  M5.Display.setCursor(rightX + 80, outY + 45);
+  M5.Display.print(Fossibot::formatTime(_powerData.minutesToEmpty));
+  M5.Display.print(" remaining");
+
+  // Separator
+  int sep2Y = outY + 75;
+  M5.Display.drawFastHLine(rightX, sep2Y, SCREEN_WIDTH / 2 - 60, COLOR_GRAY);
+
+  // Clock/Date
+  int clockY = sep2Y + 15;
+  int displayHour, displayMinute, displaySecond;
+  RTC::getTime(displayHour, displayMinute, displaySecond);
+  int displayYear, displayMonth, displayDay, displayDow;
+  RTC::getDate(displayYear, displayMonth, displayDay, displayDow);
+
+  const char *dayNames[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+  const char *monthNames[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+  int mon = displayMonth - 1;
+  if (mon < 0 || mon > 11) mon = 0;
+  if (displayDow < 0 || displayDow > 6) displayDow = 0;
+
+  char timeStr[16];
+  snprintf(timeStr, sizeof(timeStr), "%02d:%02d", displayHour, displayMinute);
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(rightX, clockY);
+  M5.Display.print(timeStr);
+
+  char dateStr[32];
+  snprintf(dateStr, sizeof(dateStr), "%s %d %s %d", dayNames[displayDow],
+           displayDay, monthNames[mon], displayYear);
+  M5.Display.setTextSize(1);
+  M5.Display.setCursor(rightX, clockY + 40);
+  M5.Display.print(dateStr);
+
+  // --- Bottom toggle strip (above menu bar) ---
+  int toggleY = contentBottom - 70;
+  M5.Display.drawFastHLine(0, toggleY, SCREEN_WIDTH, COLOR_GRAY);
+
+  int toggleSpacing = SCREEN_WIDTH / 4;
+  M5.Display.setFont(&fonts::DejaVu24);
+
+  // USB
+  int usbCx = toggleSpacing;
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(1.5);
+  int tw = M5.Display.textWidth("USB");
+  M5.Display.setCursor(usbCx - tw / 2, toggleY + 8);
+  M5.Display.print("USB");
+  drawToggle(usbCx - 15, toggleY + 15, "", _powerData.usbActive);
+
+  // DC
+  int dcCx = toggleSpacing * 2;
+  tw = M5.Display.textWidth("DC");
+  M5.Display.setCursor(dcCx - tw / 2, toggleY + 8);
+  M5.Display.print("DC");
+  drawToggle(dcCx - 15, toggleY + 15, "", _powerData.dcActive);
+
+  // AC
+  int acCx = toggleSpacing * 3;
+  tw = M5.Display.textWidth("AC");
+  M5.Display.setCursor(acCx - tw / 2, toggleY + 8);
+  M5.Display.print("AC");
+  drawToggle(acCx - 15, toggleY + 15, "", _powerData.acActive);
+
+  // Connection indicator (far right)
+  int connX = SCREEN_WIDTH - 40;
+  int connY = toggleY + 30;
+  if (_powerData.connected) {
+    M5.Display.fillCircle(connX, connY, 6, COLOR_BLACK);
+  } else {
+    M5.Display.drawCircle(connX, connY, 6, COLOR_BLACK);
+    M5.Display.drawLine(connX - 6, connY - 6, connX + 6, connY + 6, COLOR_BLACK);
+  }
+}
+
+// ============================================================================
+// Theme: Horizontal Bars (full-width rows, HUD style)
+// ============================================================================
+void UIManager::drawHomeHorizontalBars() {
+  int contentBottom = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
+  int margin = 10;
+  int rowH = 70;
+  int barW = SCREEN_WIDTH - margin * 2;
+
+  // Row 1: Battery
+  int row1Y = margin;
+  if (_powerData.hasError()) {
+    drawErrorBanner(margin, row1Y, barW, rowH);
+  } else {
+    M5.Display.drawRect(margin, row1Y, barW, rowH, COLOR_BLACK);
+    // Label
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setTextSize(2);
+    M5.Display.setCursor(margin + 15, row1Y + 22);
+    M5.Display.print("BATTERY");
+    // Progress bar
+    int pbX = margin + 180;
+    int pbW = barW - 350;
+    drawProgressBar(pbX, row1Y + 15, pbW, 40, _powerData.batteryPercent / 100.0f, true);
+    // Percentage
+    M5.Display.setTextSize(3);
+    char pctStr[8];
+    snprintf(pctStr, sizeof(pctStr), "%.0f%%", _powerData.batteryPercent);
+    M5.Display.setCursor(margin + barW - 160, row1Y + 15);
+    M5.Display.print(pctStr);
+  }
+
+  // Row 2: IN
+  int row2Y = row1Y + rowH + 5;
+  M5.Display.drawRect(margin, row2Y, barW, rowH, COLOR_BLACK);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(margin + 15, row2Y + 22);
+  M5.Display.print("IN");
+  // Progress bar
+  int pbX = margin + 180;
+  int pbW = barW - 530;
+  drawProgressBar(pbX, row2Y + 15, pbW, 40,
+                  _powerData.inputPower / 1100.0f, true);
+  // Wattage
+  M5.Display.setTextSize(3);
+  M5.Display.setCursor(pbX + pbW + 20, row2Y + 15);
+  M5.Display.printf("%.0fW", _powerData.inputPower);
+  // Time
+  M5.Display.setTextSize(1);
+  M5.Display.setCursor(margin + barW - 180, row2Y + 25);
+  M5.Display.print(Fossibot::formatTime(_powerData.minutesToFull));
+  M5.Display.print(" to full");
+
+  // Row 3: OUT
+  int row3Y = row2Y + rowH + 5;
+  M5.Display.drawRect(margin, row3Y, barW, rowH, COLOR_BLACK);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(margin + 15, row3Y + 22);
+  M5.Display.print("OUT");
+  drawProgressBar(pbX, row3Y + 15, pbW, 40,
+                  _powerData.outputPower / 3000.0f, true);
+  M5.Display.setTextSize(3);
+  M5.Display.setCursor(pbX + pbW + 20, row3Y + 15);
+  M5.Display.printf("%.0fW", _powerData.outputPower);
+  M5.Display.setTextSize(1);
+  M5.Display.setCursor(margin + barW - 180, row3Y + 25);
+  M5.Display.print(Fossibot::formatTime(_powerData.minutesToEmpty));
+  M5.Display.print(" remaining");
+
+  // Row 4: Clock + Toggles
+  int row4Y = row3Y + rowH + 5;
+  int row4H = contentBottom - row4Y - 5;
+  M5.Display.drawRect(margin, row4Y, barW, row4H, COLOR_BLACK);
+
+  // Clock (left side)
+  int displayHour, displayMinute, displaySecond;
+  RTC::getTime(displayHour, displayMinute, displaySecond);
+  int displayYear, displayMonth, displayDay, displayDow;
+  RTC::getDate(displayYear, displayMonth, displayDay, displayDow);
+
+  const char *dayNames[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+  const char *monthNames[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+  int mon = displayMonth - 1;
+  if (mon < 0 || mon > 11) mon = 0;
+  if (displayDow < 0 || displayDow > 6) displayDow = 0;
+
+  char timeStr[16];
+  snprintf(timeStr, sizeof(timeStr), "%02d:%02d", displayHour, displayMinute);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(3);
+  M5.Display.setCursor(margin + 20, row4Y + (row4H / 2) - 18);
+  M5.Display.print(timeStr);
+
+  char dateStr[32];
+  snprintf(dateStr, sizeof(dateStr), "%s %d %s %d", dayNames[displayDow],
+           displayDay, monthNames[mon], displayYear);
+  M5.Display.setTextSize(1);
+  M5.Display.setCursor(margin + 20, row4Y + (row4H / 2) + 25);
+  M5.Display.print(dateStr);
+
+  // Toggles (right side)
+  int toggleBaseX = SCREEN_WIDTH / 2 + 80;
+  int toggleCenterY = row4Y + row4H / 2;
+  M5.Display.setFont(&fonts::DejaVu24);
+
+  // USB
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(1.5);
+  int tw = M5.Display.textWidth("USB");
+  M5.Display.setCursor(toggleBaseX - tw / 2, toggleCenterY - 25);
+  M5.Display.print("USB");
+  drawToggle(toggleBaseX - 15, toggleCenterY - 18, "", _powerData.usbActive);
+
+  // DC
+  int dcX = toggleBaseX + 130;
+  tw = M5.Display.textWidth("DC");
+  M5.Display.setCursor(dcX - tw / 2, toggleCenterY - 25);
+  M5.Display.print("DC");
+  drawToggle(dcX - 15, toggleCenterY - 18, "", _powerData.dcActive);
+
+  // AC
+  int acX = dcX + 130;
+  tw = M5.Display.textWidth("AC");
+  M5.Display.setCursor(acX - tw / 2, toggleCenterY - 25);
+  M5.Display.print("AC");
+  drawToggle(acX - 15, toggleCenterY - 18, "", _powerData.acActive);
+
+  // Connection indicator
+  int connX = SCREEN_WIDTH - 40;
+  if (_powerData.connected) {
+    M5.Display.fillCircle(connX, toggleCenterY, 6, COLOR_BLACK);
+  } else {
+    M5.Display.drawCircle(connX, toggleCenterY, 6, COLOR_BLACK);
+    M5.Display.drawLine(connX - 6, toggleCenterY - 6, connX + 6, toggleCenterY + 6, COLOR_BLACK);
+  }
+}
+
+void UIManager::drawErrorBanner(int x, int y, int w, int h) {
+  M5.Display.fillRect(x, y, w, h, COLOR_BLACK);
+
+  M5.Display.setTextColor(COLOR_WHITE);
+  M5.Display.setTextSize(2);
+
+  const char *errMsg;
+  if (_powerData.isEnvironmentalProtection()) {
+    errMsg = "TEMP/SAFETY PROTECTION";
+  } else if (_powerData.errorCode == 78) {
+    errMsg = "INVERTER FAULT - DC OK";
+  } else {
+    errMsg = "DEVICE ERROR - GOTO FOSSI";
+  }
+  int textW = M5.Display.textWidth(errMsg);
+  int textX = x + (w - textW) / 2;
+  int textY = y + (h / 2) - 16;
+  M5.Display.setCursor(textX, textY);
+  M5.Display.print(errMsg);
+
+  // Detail line
+  M5.Display.setTextSize(1);
+  char detailStr[64];
+  const char *classification =
+      _powerData.isEnvironmentalProtection()  ? "Temp/Safety"
+      : _powerData.hasCriticalHardwareFault() ? "Hardware"
+                                              : "Fault";
+  snprintf(detailStr, sizeof(detailStr), "Code: %d  Flags: 0x%04X  [%s]",
+           _powerData.errorCode, _powerData.protectionFlags, classification);
+  int detailW = M5.Display.textWidth(detailStr);
+  M5.Display.setCursor(x + (w - detailW) / 2, textY + 30);
+  M5.Display.print(detailStr);
 }
 
 void UIManager::drawBatteryBar(float percent) {
@@ -977,44 +1311,41 @@ extern FossibotBLE *bleClient;
 
 void UIManager::handleHomeTouch(int x, int y, TouchEvent event) {
   if (event != TouchEvent::PRESS && event != TouchEvent::RELEASE)
-    return; // Only act on complete taps (handled in calling function
-            // actually)
+    return;
 
-  // Recalculate layout to find touch zones
+  extern Config *config;
+  String theme = config ? config->getTheme() : "classic_grid";
+  if (theme == "compact_status") {
+    handleHomeCompactStatusTouch(x, y);
+  } else if (theme == "horizontal_bars") {
+    handleHomeHorizontalBarsTouch(x, y);
+  } else {
+    handleHomeClassicGridTouch(x, y);
+  }
+}
+
+void UIManager::handleHomeClassicGridTouch(int x, int y) {
   int contentY = BATTERY_BAR_HEIGHT + PANEL_MARGIN;
   int contentHeight =
       SCREEN_HEIGHT - BATTERY_BAR_HEIGHT - MENU_BAR_HEIGHT - PANEL_MARGIN * 3;
   int panelWidth = (SCREEN_WIDTH - PANEL_MARGIN * 3) / 2;
   int panelHeight = (contentHeight - PANEL_MARGIN) / 2;
 
-  // Status Panel is NOW Top-Right
+  // Status Panel (top-right)
   int statusX = PANEL_MARGIN * 2 + panelWidth;
   int statusY = contentY;
 
-  // DEBUG: ALWAYS PRINT
-  Serial.printf("DEBUG UI: Touch(%d, %d) Screen=%d\n", x, y,
-                (int)_currentScreen);
-  Serial.printf("  StatusPanel: X[%d-%d] Y[%d-%d]\n", statusX,
-                statusX + panelWidth, statusY, statusY + panelHeight);
-
-  // Check if touch is within Status Panel
   if (x >= statusX && x < statusX + panelWidth && y >= statusY &&
       y < statusY + panelHeight) {
-
-    // Status Panel Toggles: HORIZONTAL layout
-    // 3 buttons: USB | DC | AC
     int toggleSpacing = (panelWidth - 40) / 3;
-    int startY = statusY + (panelHeight - 50) / 2; // Center vertically
-    int buttonY = startY + 15;                     // Button part
+    int startY = statusY + (panelHeight - 50) / 2;
+    int buttonY = startY + 15;
 
-    // Approximate X centers
     int usbCenter = statusX + 20 + (toggleSpacing - 70) / 2 + 35;
     int dcCenter = statusX + 20 + toggleSpacing + (toggleSpacing - 70) / 2 + 35;
     int acCenter =
         statusX + 20 + toggleSpacing * 2 + (toggleSpacing - 70) / 2 + 35;
 
-    // Y hit zone: buttonY +/- 30 for top, extend down to +80 to cover the whole
-    // square box
     if (y >= buttonY - 30 && y <= buttonY + 80) {
       if (abs(x - usbCenter) < 50) {
         if (bleClient && bleClient->isConnected()) {
@@ -1047,11 +1378,9 @@ void UIManager::handleHomeTouch(int x, int y, TouchEvent event) {
     }
   }
 
-  // Clock/Weather Panel is Bottom-Right (where HISTORY button now lives)
+  // Clock/Weather Panel is Bottom-Right (HISTORY button)
   int clockX = PANEL_MARGIN * 2 + panelWidth;
   int clockY = contentY + panelHeight + PANEL_MARGIN;
-
-  // HISTORY button (bottom-left corner of clock panel)
   int histBtnX = clockX + 10;
   int histBtnY = clockY + panelHeight - 45;
   if (x >= histBtnX && x < histBtnX + 90 && y >= histBtnY &&
@@ -1060,6 +1389,92 @@ void UIManager::handleHomeTouch(int x, int y, TouchEvent event) {
     Buzzer::click();
     navigateTo(ScreenID::HISTORY);
     return;
+  }
+}
+
+void UIManager::handleHomeCompactStatusTouch(int x, int y) {
+  // Toggle strip is at bottom, above menu bar
+  int contentBottom = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
+  int toggleY = contentBottom - 70;
+
+  if (y >= toggleY && y < contentBottom) {
+    int toggleSpacing = SCREEN_WIDTH / 4;
+    int usbCx = toggleSpacing;
+    int dcCx = toggleSpacing * 2;
+    int acCx = toggleSpacing * 3;
+
+    if (abs(x - usbCx) < 60) {
+      if (bleClient && bleClient->isConnected()) {
+        Serial.println("Toggle USB");
+        bleClient->toggleUSB();
+        Buzzer::click();
+        _powerData.usbActive = !_powerData.usbActive;
+        _needsRefresh = true;
+        _lastRefresh = 0;
+      }
+    } else if (abs(x - dcCx) < 60) {
+      if (bleClient && bleClient->isConnected()) {
+        Serial.println("Toggle DC");
+        bleClient->toggleDC();
+        Buzzer::click();
+        _powerData.dcActive = !_powerData.dcActive;
+        _needsRefresh = true;
+        _lastRefresh = 0;
+      }
+    } else if (abs(x - acCx) < 60) {
+      if (bleClient && bleClient->isConnected()) {
+        Serial.println("Toggle AC");
+        bleClient->toggleAC();
+        Buzzer::click();
+        _powerData.acActive = !_powerData.acActive;
+        _needsRefresh = true;
+        _lastRefresh = 0;
+      }
+    }
+  }
+}
+
+void UIManager::handleHomeHorizontalBarsTouch(int x, int y) {
+  // Row 4 toggles: calculate same positions as drawHomeHorizontalBars
+  int margin = 10;
+  int rowH = 70;
+  int row4Y = margin + (rowH + 5) * 3;
+  int contentBottom = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
+  int row4H = contentBottom - row4Y - 5;
+
+  if (y >= row4Y && y < row4Y + row4H) {
+    int toggleBaseX = SCREEN_WIDTH / 2 + 80;
+    int dcX = toggleBaseX + 130;
+    int acX = dcX + 130;
+
+    if (abs(x - toggleBaseX) < 60) {
+      if (bleClient && bleClient->isConnected()) {
+        Serial.println("Toggle USB");
+        bleClient->toggleUSB();
+        Buzzer::click();
+        _powerData.usbActive = !_powerData.usbActive;
+        _needsRefresh = true;
+        _lastRefresh = 0;
+      }
+    } else if (abs(x - dcX) < 60) {
+      if (bleClient && bleClient->isConnected()) {
+        Serial.println("Toggle DC");
+        bleClient->toggleDC();
+        Buzzer::click();
+        _powerData.dcActive = !_powerData.dcActive;
+        _needsRefresh = true;
+        _lastRefresh = 0;
+      }
+    } else if (abs(x - acX) < 60) {
+      if (bleClient && bleClient->isConnected()) {
+        Serial.println("Toggle AC");
+        bleClient->toggleAC();
+        Buzzer::click();
+        _powerData.acActive = !_powerData.acActive;
+        _needsRefresh = true;
+        _lastRefresh = 0;
+      }
+    }
   }
 }
 
@@ -1091,9 +1506,20 @@ void UIManager::drawSettingsScreen() {
   drawButton(col1X, row2Y, btnW, btnH, "SD Diag");
   drawButton(col2X, row2Y, btnW, btnH, "History");
 
-  // Row 3: Back button centered
+  // Row 3: Theme | Back
   int row3Y = row2Y + btnH + spacing;
-  drawButton(SCREEN_WIDTH / 2 - btnW / 2, row3Y, btnW, btnH, "Back");
+  {
+    extern Config *config;
+    String theme = config ? config->getTheme() : "classic_grid";
+    // Display friendly theme name on button
+    const char *themeName = "Classic";
+    if (theme == "compact_status") themeName = "Compact";
+    else if (theme == "horizontal_bars") themeName = "H-Bars";
+    char themeLabel[24];
+    snprintf(themeLabel, sizeof(themeLabel), "Theme: %s", themeName);
+    drawButton(col1X, row3Y, btnW, btnH, themeLabel);
+  }
+  drawButton(col2X, row3Y, btnW, btnH, "Back");
 
   // --- Battery Status (Top Right) ---
   M5.Display.setTextSize(0.7); // Reduced 1 -> 0.7 per user request
@@ -1142,8 +1568,27 @@ void UIManager::handleSettingsTouch(int x, int y) {
     navigateTo(ScreenID::HISTORY);
     return;
   }
+  // Theme (cycle)
+  if (isHit(col1X, row3Y, btnW, btnH)) {
+    extern Config *config;
+    if (config) {
+      String theme = config->getTheme();
+      if (theme == "classic_grid") {
+        config->setTheme("compact_status");
+      } else if (theme == "compact_status") {
+        config->setTheme("horizontal_bars");
+      } else {
+        config->setTheme("classic_grid");
+      }
+      config->save("/config/settings.json");
+      Serial.printf("UI: Theme changed to %s\n", config->getTheme().c_str());
+    }
+    _needsRefresh = true;
+    _lastRefresh = 0;
+    return;
+  }
   // Back
-  if (isHit(SCREEN_WIDTH / 2 - btnW / 2, row3Y, btnW, btnH)) {
+  if (isHit(col2X, row3Y, btnW, btnH)) {
     navigateTo(ScreenID::HOME);
     return;
   }
