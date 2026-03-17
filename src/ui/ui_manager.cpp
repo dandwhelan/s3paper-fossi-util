@@ -806,77 +806,92 @@ void UIManager::drawHomeCompactStatus() {
 void UIManager::drawHomeHorizontalBars() {
   int contentBottom = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
   int margin = 10;
-  int rowH = 70;
   int barW = SCREEN_WIDTH - margin * 2;
+  int gap = 5;
 
-  // Row 1: Battery
+  // Layout: 4 rows filling available space
+  // Row 1 (battery): shorter, Row 2/3 (IN/OUT): taller, Row 4 (clock+toggles): remainder
+  int battRowH = 55;
+  int powerRowH = 105; // 1.5x original 70
+  int usedH = battRowH + powerRowH * 2 + gap * 3;
+  int row4H = contentBottom - margin - usedH - gap - margin;
+
+  // Row 1: Battery — full-width bar, no label, % right-aligned
   int row1Y = margin;
   if (_powerData.hasError()) {
-    drawErrorBanner(margin, row1Y, barW, rowH);
+    drawErrorBanner(margin, row1Y, barW, battRowH);
   } else {
-    M5.Display.drawRect(margin, row1Y, barW, rowH, COLOR_BLACK);
-    // Label
+    M5.Display.drawRect(margin, row1Y, barW, battRowH, COLOR_BLACK);
+    // Full-width progress bar with padding
+    int pbX = margin + 10;
+    int pbW = barW - 120; // leave room for % text
+    int pbH = battRowH - 16;
+    drawProgressBar(pbX, row1Y + 8, pbW, pbH,
+                    _powerData.batteryPercent / 100.0f, true);
+    // Percentage right-aligned
     M5.Display.setTextColor(COLOR_BLACK);
     M5.Display.setTextSize(2);
-    M5.Display.setCursor(margin + 15, row1Y + 22);
-    M5.Display.print("BATTERY");
-    // Progress bar
-    int pbX = margin + 180;
-    int pbW = barW - 350;
-    drawProgressBar(pbX, row1Y + 15, pbW, 40, _powerData.batteryPercent / 100.0f, true);
-    // Percentage
-    M5.Display.setTextSize(3);
     char pctStr[8];
     snprintf(pctStr, sizeof(pctStr), "%.0f%%", _powerData.batteryPercent);
-    M5.Display.setCursor(margin + barW - 160, row1Y + 15);
+    int pw = M5.Display.textWidth(pctStr);
+    M5.Display.setCursor(margin + barW - pw - 15, row1Y + (battRowH - 16) / 2);
     M5.Display.print(pctStr);
   }
 
-  // Row 2: IN
-  int row2Y = row1Y + rowH + 5;
-  M5.Display.drawRect(margin, row2Y, barW, rowH, COLOR_BLACK);
+  // Row 2: IN — taller with more room
+  int row2Y = row1Y + battRowH + gap;
+  M5.Display.drawRect(margin, row2Y, barW, powerRowH, COLOR_BLACK);
   M5.Display.setTextColor(COLOR_BLACK);
+  // Label top-left
   M5.Display.setTextSize(2);
-  M5.Display.setCursor(margin + 15, row2Y + 22);
+  M5.Display.setCursor(margin + 15, row2Y + 10);
   M5.Display.print("IN");
-  // Progress bar
-  int pbX = margin + 180;
-  int pbW = barW - 530;
-  drawProgressBar(pbX, row2Y + 15, pbW, 40,
-                  _powerData.inputPower / 1100.0f, true);
-  // Wattage
+  // Watts right-aligned on same line
+  char wBuf[16];
+  snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.inputPower);
   M5.Display.setTextSize(3);
-  M5.Display.setCursor(pbX + pbW + 20, row2Y + 15);
-  M5.Display.printf("%.0fW", _powerData.inputPower);
-  // Time
+  int ww = M5.Display.textWidth(wBuf);
+  M5.Display.setCursor(margin + barW - ww - 15, row2Y + 5);
+  M5.Display.print(wBuf);
+  // Progress bar in middle area
+  int pbX = margin + 15;
+  int pbW = barW - 30;
+  drawProgressBar(pbX, row2Y + 45, pbW, 25,
+                  _powerData.inputPower / 1100.0f, true);
+  // Time bottom-left
   M5.Display.setTextSize(1);
-  M5.Display.setCursor(margin + barW - 180, row2Y + 25);
+  M5.Display.setCursor(margin + 15, row2Y + powerRowH - 22);
   M5.Display.print(Fossibot::formatTime(_powerData.minutesToFull));
   M5.Display.print(" to full");
 
-  // Row 3: OUT
-  int row3Y = row2Y + rowH + 5;
-  M5.Display.drawRect(margin, row3Y, barW, rowH, COLOR_BLACK);
+  // Row 3: OUT — taller with more room
+  int row3Y = row2Y + powerRowH + gap;
+  M5.Display.drawRect(margin, row3Y, barW, powerRowH, COLOR_BLACK);
   M5.Display.setTextColor(COLOR_BLACK);
+  // Label top-left
   M5.Display.setTextSize(2);
-  M5.Display.setCursor(margin + 15, row3Y + 22);
+  M5.Display.setCursor(margin + 15, row3Y + 10);
   M5.Display.print("OUT");
-  drawProgressBar(pbX, row3Y + 15, pbW, 40,
-                  _powerData.outputPower / 3000.0f, true);
+  // Watts right-aligned
+  snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.outputPower);
   M5.Display.setTextSize(3);
-  M5.Display.setCursor(pbX + pbW + 20, row3Y + 15);
-  M5.Display.printf("%.0fW", _powerData.outputPower);
+  ww = M5.Display.textWidth(wBuf);
+  M5.Display.setCursor(margin + barW - ww - 15, row3Y + 5);
+  M5.Display.print(wBuf);
+  // Progress bar
+  drawProgressBar(pbX, row3Y + 45, pbW, 25,
+                  _powerData.outputPower / 3000.0f, true);
+  // Time bottom-left
   M5.Display.setTextSize(1);
-  M5.Display.setCursor(margin + barW - 180, row3Y + 25);
+  M5.Display.setCursor(margin + 15, row3Y + powerRowH - 22);
   M5.Display.print(Fossibot::formatTime(_powerData.minutesToEmpty));
   M5.Display.print(" remaining");
 
   // Row 4: Clock + Toggles
-  int row4Y = row3Y + rowH + 5;
-  int row4H = contentBottom - row4Y - 5;
+  int row4Y = row3Y + powerRowH + gap;
   M5.Display.drawRect(margin, row4Y, barW, row4H, COLOR_BLACK);
 
-  // Clock (left side)
+  // Clock (left side) — time large, date well below
   int displayHour, displayMinute, displaySecond;
   RTC::getTime(displayHour, displayMinute, displaySecond);
   int displayYear, displayMonth, displayDay, displayDow;
@@ -893,14 +908,14 @@ void UIManager::drawHomeHorizontalBars() {
   snprintf(timeStr, sizeof(timeStr), "%02d:%02d", displayHour, displayMinute);
   M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setTextSize(3);
-  M5.Display.setCursor(margin + 20, row4Y + (row4H / 2) - 18);
+  M5.Display.setCursor(margin + 20, row4Y + 10);
   M5.Display.print(timeStr);
 
   char dateStr[32];
   snprintf(dateStr, sizeof(dateStr), "%s %d %s %d", dayNames[displayDow],
            displayDay, monthNames[mon], displayYear);
   M5.Display.setTextSize(1);
-  M5.Display.setCursor(margin + 20, row4Y + (row4H / 2) + 25);
+  M5.Display.setCursor(margin + 20, row4Y + row4H - 22);
   M5.Display.print(dateStr);
 
   // Toggles (right side)
@@ -1578,12 +1593,14 @@ void UIManager::handleHomeCompactStatusTouch(int x, int y) {
 }
 
 void UIManager::handleHomeHorizontalBarsTouch(int x, int y) {
-  // Row 4 toggles: calculate same positions as drawHomeHorizontalBars
+  // Row 4 toggles: match positions from drawHomeHorizontalBars
   int margin = 10;
-  int rowH = 70;
-  int row4Y = margin + (rowH + 5) * 3;
+  int gap = 5;
+  int battRowH = 55;
+  int powerRowH = 105;
   int contentBottom = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
-  int row4H = contentBottom - row4Y - 5;
+  int row4Y = margin + battRowH + gap + powerRowH * 2 + gap * 2;
+  int row4H = contentBottom - row4Y - margin;
 
   if (y >= row4Y && y < row4Y + row4H) {
     int toggleBaseX = SCREEN_WIDTH / 2 + 80;
