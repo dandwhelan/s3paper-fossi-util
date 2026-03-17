@@ -883,22 +883,20 @@ void UIManager::drawHomeHorizontalBars() {
     M5.Display.print(pctStr);
   }
 
-  // Row 2: IN — taller with more room
+  // Row 2: IN — label and watts inline, bar below
   int row2Y = row1Y + battRowH + gap;
   M5.Display.drawRect(margin, row2Y, barW, powerRowH, COLOR_BLACK);
   M5.Display.setTextColor(COLOR_BLACK);
-  // Label top-left
+  // Label top-left, watts right-aligned — same text size, inline
   M5.Display.setTextSize(2);
   M5.Display.setCursor(margin + 15, row2Y + 10);
   M5.Display.print("IN");
-  // Watts right-aligned on same line
   char wBuf[16];
-  snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.inputPower);
-  M5.Display.setTextSize(3);
+  snprintf(wBuf, sizeof(wBuf), "%.0f", _powerData.inputPower);
   int ww = M5.Display.textWidth(wBuf);
-  M5.Display.setCursor(margin + barW - ww - 15, row2Y + 5);
+  M5.Display.setCursor(margin + barW - ww - 15, row2Y + 10);
   M5.Display.print(wBuf);
-  // Progress bar in middle area
+  // Progress bar below the text line
   int pbX = margin + 15;
   int pbW = barW - 30;
   drawProgressBar(pbX, row2Y + 45, pbW, 25,
@@ -909,21 +907,19 @@ void UIManager::drawHomeHorizontalBars() {
   M5.Display.print(Fossibot::formatTime(_powerData.minutesToFull));
   M5.Display.print(" to full");
 
-  // Row 3: OUT — taller with more room
+  // Row 3: OUT — label and watts inline, bar below
   int row3Y = row2Y + powerRowH + gap;
   M5.Display.drawRect(margin, row3Y, barW, powerRowH, COLOR_BLACK);
   M5.Display.setTextColor(COLOR_BLACK);
-  // Label top-left
+  // Label top-left, watts right-aligned — same text size, inline
   M5.Display.setTextSize(2);
   M5.Display.setCursor(margin + 15, row3Y + 10);
   M5.Display.print("OUT");
-  // Watts right-aligned
-  snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.outputPower);
-  M5.Display.setTextSize(3);
+  snprintf(wBuf, sizeof(wBuf), "%.0f", _powerData.outputPower);
   ww = M5.Display.textWidth(wBuf);
-  M5.Display.setCursor(margin + barW - ww - 15, row3Y + 5);
+  M5.Display.setCursor(margin + barW - ww - 15, row3Y + 10);
   M5.Display.print(wBuf);
-  // Progress bar
+  // Progress bar below the text line
   drawProgressBar(pbX, row3Y + 45, pbW, 25,
                   _powerData.outputPower / 3000.0f, true);
   // Time bottom-left
@@ -952,15 +948,15 @@ void UIManager::drawHomeHorizontalBars() {
   char timeStr[16];
   snprintf(timeStr, sizeof(timeStr), "%02d:%02d", displayHour, displayMinute);
   M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setTextSize(3);
-  M5.Display.setCursor(margin + 20, row4Y + 10);
+  M5.Display.setTextSize(4);
+  M5.Display.setCursor(margin + 20, row4Y + 8);
   M5.Display.print(timeStr);
 
   char dateStr[32];
   snprintf(dateStr, sizeof(dateStr), "%s %d %s %d", dayNames[displayDow],
            displayDay, monthNames[mon], displayYear);
   M5.Display.setTextSize(1);
-  M5.Display.setCursor(margin + 20, row4Y + row4H - 22);
+  M5.Display.setCursor(margin + 20, row4Y + row4H - 27);
   M5.Display.print(dateStr);
 
   // Toggles (right side)
