@@ -674,57 +674,64 @@ void UIManager::drawHomeCompactStatus() {
       }
     }
 
-    // Percentage text centered in circle
+    // Percentage text centered in circle (both H and V)
     char pctStr[8];
     snprintf(pctStr, sizeof(pctStr), "%.0f%%", _powerData.batteryPercent);
     M5.Display.setTextColor(pct > 0.5f ? COLOR_WHITE : COLOR_BLACK);
     M5.Display.setTextSize(4);
     int tw = M5.Display.textWidth(pctStr);
-    M5.Display.setCursor(circleX - tw / 2, circleY - 20);
+    int th = M5.Display.fontHeight() * 4; // approximate text height at size 4
+    M5.Display.setCursor(circleX - tw / 2, circleY - th / 2);
     M5.Display.print(pctStr);
   }
 
   // --- Right half: Power data stacked ---
-  int rightX = SCREEN_WIDTH / 2 + 30;
-  int dataY = 30;
+  int rightX = SCREEN_WIDTH / 2 + 20;
+  int rightEdge = SCREEN_WIDTH - 20;
+  int dataY = 20;
 
   M5.Display.setTextColor(COLOR_BLACK);
 
-  // IN row
+  // IN row — label left, watts far right
   M5.Display.setTextSize(2);
-  M5.Display.setCursor(rightX, dataY);
+  M5.Display.setCursor(rightX, dataY + 8);
   M5.Display.print("IN");
+  char wBuf[16];
+  snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.inputPower);
   M5.Display.setTextSize(3);
-  M5.Display.setCursor(rightX + 80, dataY - 5);
-  M5.Display.printf("%.0fW", _powerData.inputPower);
+  int ww = M5.Display.textWidth(wBuf);
+  M5.Display.setCursor(rightEdge - ww, dataY);
+  M5.Display.print(wBuf);
   M5.Display.setTextSize(1);
-  M5.Display.setCursor(rightX + 80, dataY + 45);
+  M5.Display.setCursor(rightX, dataY + 45);
   M5.Display.print(Fossibot::formatTime(_powerData.minutesToFull));
   M5.Display.print(" to full");
 
   // Separator
-  int sepY = dataY + 75;
-  M5.Display.drawFastHLine(rightX, sepY, SCREEN_WIDTH / 2 - 60, COLOR_GRAY);
+  int sepY = dataY + 65;
+  M5.Display.drawFastHLine(rightX, sepY, rightEdge - rightX, COLOR_GRAY);
 
-  // OUT row
-  int outY = sepY + 15;
+  // OUT row — label left, watts far right
+  int outY = sepY + 10;
   M5.Display.setTextSize(2);
-  M5.Display.setCursor(rightX, outY);
+  M5.Display.setCursor(rightX, outY + 8);
   M5.Display.print("OUT");
+  snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.outputPower);
   M5.Display.setTextSize(3);
-  M5.Display.setCursor(rightX + 80, outY - 5);
-  M5.Display.printf("%.0fW", _powerData.outputPower);
+  ww = M5.Display.textWidth(wBuf);
+  M5.Display.setCursor(rightEdge - ww, outY);
+  M5.Display.print(wBuf);
   M5.Display.setTextSize(1);
-  M5.Display.setCursor(rightX + 80, outY + 45);
+  M5.Display.setCursor(rightX, outY + 45);
   M5.Display.print(Fossibot::formatTime(_powerData.minutesToEmpty));
   M5.Display.print(" remaining");
 
   // Separator
-  int sep2Y = outY + 75;
-  M5.Display.drawFastHLine(rightX, sep2Y, SCREEN_WIDTH / 2 - 60, COLOR_GRAY);
+  int sep2Y = outY + 65;
+  M5.Display.drawFastHLine(rightX, sep2Y, rightEdge - rightX, COLOR_GRAY);
 
-  // Clock/Date
-  int clockY = sep2Y + 15;
+  // Clock — time far right (matching watts alignment), date below left
+  int clockY = sep2Y + 12;
   int displayHour, displayMinute, displaySecond;
   RTC::getTime(displayHour, displayMinute, displaySecond);
   int displayYear, displayMonth, displayDay, displayDow;
@@ -739,19 +746,21 @@ void UIManager::drawHomeCompactStatus() {
 
   char timeStr[16];
   snprintf(timeStr, sizeof(timeStr), "%02d:%02d", displayHour, displayMinute);
-  M5.Display.setTextSize(2);
-  M5.Display.setCursor(rightX, clockY);
+  M5.Display.setTextSize(3);
+  int ttw = M5.Display.textWidth(timeStr);
+  M5.Display.setCursor(rightEdge - ttw, clockY);
   M5.Display.print(timeStr);
 
   char dateStr[32];
   snprintf(dateStr, sizeof(dateStr), "%s %d %s %d", dayNames[displayDow],
            displayDay, monthNames[mon], displayYear);
   M5.Display.setTextSize(1);
-  M5.Display.setCursor(rightX, clockY + 40);
+  M5.Display.setCursor(rightX, clockY + 45);
   M5.Display.print(dateStr);
 
-  // --- Bottom toggle strip (above menu bar) ---
-  int toggleY = contentBottom - 70;
+  // --- Bottom toggle strip — moved up tight against content ---
+  int toggleY = sep2Y + 90;
+  if (toggleY > contentBottom - 55) toggleY = contentBottom - 55;
   M5.Display.drawFastHLine(0, toggleY, SCREEN_WIDTH, COLOR_GRAY);
 
   int toggleSpacing = SCREEN_WIDTH / 4;
