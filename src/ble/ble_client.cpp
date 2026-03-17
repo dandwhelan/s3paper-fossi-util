@@ -647,6 +647,20 @@ void FossibotBLE::parseStatusData(const uint8_t *data, size_t length) {
   _data.protectionFlags = getRegValue(Fossibot::StatusReg::PROTECTION_FLAGS);
   _data.systemStatusFlags = getRegValue(Fossibot::StatusReg::SYSTEM_STATUS_FLAGS);
 
+  // Parse USB per-port watts (all ÷10) and sum for total USB output
+  float usbTotal = 0.0f;
+  usbTotal += getRegValue(Fossibot::StatusReg::USB_A1_WATTS) / 10.0f;
+  usbTotal += getRegValue(Fossibot::StatusReg::USB_A2_WATTS) / 10.0f;
+  usbTotal += getRegValue(Fossibot::StatusReg::USB_C1_WATTS) / 10.0f;
+  usbTotal += getRegValue(Fossibot::StatusReg::USB_C2_WATTS) / 10.0f;
+  usbTotal += getRegValue(Fossibot::StatusReg::USB_C3_WATTS) / 10.0f;
+  usbTotal += getRegValue(Fossibot::StatusReg::USB_C4_WATTS) / 10.0f;
+  _data.usbOutputPower = usbTotal;
+
+  // Derive AC+DC output: total minus USB (clamped to 0)
+  float nonUsb = _data.outputPower - usbTotal;
+  _data.acDcOutputPower = (nonUsb > 0.0f) ? nonUsb : 0.0f;
+
   // Parse output states from bitmask (register 41)
   uint16_t states = getRegValue(41);
   _data.usbActive = (states & Fossibot::StateBits::USB_BIT) != 0;
