@@ -639,49 +639,134 @@ void UIManager::drawHomeClassicGrid() {
 void UIManager::drawHomeCompactStatus() {
   int contentBottom = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
 
-  // --- Error banner (replaces battery circle area when error active) ---
+  // --- Toggle strip at the very bottom, just above menu bar ---
+  int toggleStripH = 60;
+  int toggleY = contentBottom - toggleStripH;
+  M5.Display.drawFastHLine(0, toggleY, SCREEN_WIDTH, COLOR_GRAY);
+
+  int toggleSpacing = SCREEN_WIDTH / 4;
+  M5.Display.setFont(&fonts::DejaVu24);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(1);
+
+  // USB toggle
+  int usbCx = toggleSpacing;
+  int labelTw = M5.Display.textWidth("USB");
+  M5.Display.setCursor(usbCx - labelTw / 2, toggleY + 5);
+  M5.Display.print("USB");
+  drawToggle(usbCx - 15, toggleY + 10, "", _powerData.usbActive);
+
+  // DC toggle
+  int dcCx = toggleSpacing * 2;
+  labelTw = M5.Display.textWidth("DC");
+  M5.Display.setCursor(dcCx - labelTw / 2, toggleY + 5);
+  M5.Display.print("DC");
+  drawToggle(dcCx - 15, toggleY + 10, "", _powerData.dcActive);
+
+  // AC toggle
+  int acCx = toggleSpacing * 3;
+  labelTw = M5.Display.textWidth("AC");
+  M5.Display.setCursor(acCx - labelTw / 2, toggleY + 5);
+  M5.Display.print("AC");
+  drawToggle(acCx - 15, toggleY + 10, "", _powerData.acActive);
+
+  // Connection indicator (far right of toggle strip)
+  int connX = SCREEN_WIDTH - 40;
+  int connDotY = toggleY + 30;
+  if (_powerData.connected) {
+    M5.Display.fillCircle(connX, connDotY, 6, COLOR_BLACK);
+  } else {
+    M5.Display.drawCircle(connX, connDotY, 6, COLOR_BLACK);
+    M5.Display.drawLine(connX - 6, connDotY - 6, connX + 6, connDotY + 6, COLOR_BLACK);
+  }
+
+  // --- Main content area (above toggle strip) ---
+  int mainH = toggleY; // available height for battery + data
+
+  // --- Error banner (replaces battery area when error active) ---
   if (_powerData.hasError()) {
     drawErrorBanner(10, 10, SCREEN_WIDTH - 20, 80);
   } else {
-    // --- Battery circle (left half) ---
-    int circleX = SCREEN_WIDTH / 4;
-    int circleY = (contentBottom - 70) / 2; // Center vertically, leave room for toggle strip
-    int radius = 120;
+    // --- Battery square ring (left half) ---
+    // Square ring whose border thickness scales with battery %
+    // At 100% the ring is thick (maxThick), at 0% it's thin (minThick)
+    // The ring fills clockwise from 12 o'clock
+    int sqSize = 240; // outer square side length
+    int sqX = (SCREEN_WIDTH / 2 - sqSize) / 2; // centered in left half
+    int sqY = (mainH - sqSize) / 2;
 
-    // Draw arc as concentric circles with fill proportional to battery %
-    M5.Display.drawCircle(circleX, circleY, radius, COLOR_BLACK);
-    M5.Display.drawCircle(circleX, circleY, radius - 1, COLOR_BLACK);
-    M5.Display.drawCircle(circleX, circleY, radius - 2, COLOR_GRAY);
-
-    // Inner fill arc — simplified as a filled portion
-    // Draw a thick arc by filling segments
     float pct = _powerData.batteryPercent / 100.0f;
     if (pct > 1.0f) pct = 1.0f;
     if (pct < 0.0f) pct = 0.0f;
-    int innerR = radius - 8;
-    // Fill arc from bottom, sweeping clockwise proportional to %
-    // Simplified: draw filled inner circle with partial coverage
-    int fillH = (int)(2 * innerR * pct);
-    int fillTop = circleY - innerR + (2 * innerR - fillH);
-    if (fillH > 0) {
-      // Clip fill to circle using horizontal slices
-      for (int row = fillTop; row < circleY + innerR; row++) {
-        int dy = row - circleY;
-        int halfW = (int)sqrt((float)(innerR * innerR - dy * dy));
-        if (halfW > 0) {
-          M5.Display.drawFastHLine(circleX - halfW, row, halfW * 2, COLOR_BLACK);
-        }
-      }
+
+    int minThick = 3;   // thickness at 0%
+    int maxThick = 30;  // thickness at 100%
+    int thick = minThick + (int)((maxThick - minThick) * pct);
+
+    // Draw thin outline always (the frame)
+    M5.Display.drawRect(sqX, sqY, sqSize, sqSize, COLOR_BLACK);
+    M5.Display.drawRect(sqX + 1, sqY + 1, sqSize - 2, sqSize - 2, COLOR_BLACK);
+
+    // Draw the thick filled ring clockwise from top-center
+    // Total perimeter = 4 * sqSize. Fill pct of it clockwise from top-center.
+    int perim = 4 * sqSize;
+    int fillLen = (int)(perim * pct);
+    int drawn = 0;
+
+    // Segment 1: Top edge, from center to right
+    int seg1Len = sqSize / 2;
+    if (drawn < fillLen) {
+      int len = fillLen - drawn;
+      if (len > seg1Len) len = seg1Len;
+      M5.Display.fillRect(sqX + sqSize / 2, sqY, len, thick, COLOR_BLACK);
+      drawn += len;
     }
 
-    // Percentage text centered in circle (both H and V)
+    // Segment 2: Right edge, top to bottom
+    int seg2Len = sqSize;
+    if (drawn < fillLen) {
+      int len = fillLen - drawn;
+      if (len > seg2Len) len = seg2Len;
+      M5.Display.fillRect(sqX + sqSize - thick, sqY, thick, len, COLOR_BLACK);
+      drawn += len;
+    }
+
+    // Segment 3: Bottom edge, right to left
+    int seg3Len = sqSize;
+    if (drawn < fillLen) {
+      int len = fillLen - drawn;
+      if (len > seg3Len) len = seg3Len;
+      M5.Display.fillRect(sqX + sqSize - len, sqY + sqSize - thick, len, thick, COLOR_BLACK);
+      drawn += len;
+    }
+
+    // Segment 4: Left edge, bottom to top
+    int seg4Len = sqSize;
+    if (drawn < fillLen) {
+      int len = fillLen - drawn;
+      if (len > seg4Len) len = seg4Len;
+      M5.Display.fillRect(sqX, sqY + sqSize - len, thick, len, COLOR_BLACK);
+      drawn += len;
+    }
+
+    // Segment 5: Top edge, left to center
+    int seg5Len = sqSize / 2;
+    if (drawn < fillLen) {
+      int len = fillLen - drawn;
+      if (len > seg5Len) len = seg5Len;
+      M5.Display.fillRect(sqX, sqY, len, thick, COLOR_BLACK);
+      drawn += len;
+    }
+
+    // Percentage text centered in the square
     char pctStr[8];
     snprintf(pctStr, sizeof(pctStr), "%.0f%%", _powerData.batteryPercent);
-    M5.Display.setTextColor(pct > 0.5f ? COLOR_WHITE : COLOR_BLACK);
-    M5.Display.setTextSize(4);
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setFont(&fonts::DejaVu24);
+    M5.Display.setTextSize(3);
     int tw = M5.Display.textWidth(pctStr);
-    int th = M5.Display.fontHeight() * 4; // approximate text height at size 4
-    M5.Display.setCursor(circleX - tw / 2, circleY - th / 2);
+    int th = M5.Display.fontHeight();
+    M5.Display.setCursor(sqX + (sqSize - tw) / 2, sqY + (sqSize - th) / 2);
     M5.Display.print(pctStr);
   }
 
@@ -691,6 +776,7 @@ void UIManager::drawHomeCompactStatus() {
   int dataY = 20;
 
   M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setFont(&fonts::DejaVu24);
 
   // IN row — label left, watts far right
   M5.Display.setTextSize(2);
@@ -703,16 +789,16 @@ void UIManager::drawHomeCompactStatus() {
   M5.Display.setCursor(rightEdge - ww, dataY);
   M5.Display.print(wBuf);
   M5.Display.setTextSize(1);
-  M5.Display.setCursor(rightX, dataY + 45);
+  M5.Display.setCursor(rightX, dataY + 60);
   M5.Display.print(Fossibot::formatTime(_powerData.minutesToFull));
   M5.Display.print(" to full");
 
   // Separator
-  int sepY = dataY + 65;
+  int sepY = dataY + 90;
   M5.Display.drawFastHLine(rightX, sepY, rightEdge - rightX, COLOR_GRAY);
 
   // OUT row — label left, watts far right
-  int outY = sepY + 10;
+  int outY = sepY + 15;
   M5.Display.setTextSize(2);
   M5.Display.setCursor(rightX, outY + 8);
   M5.Display.print("OUT");
@@ -722,16 +808,16 @@ void UIManager::drawHomeCompactStatus() {
   M5.Display.setCursor(rightEdge - ww, outY);
   M5.Display.print(wBuf);
   M5.Display.setTextSize(1);
-  M5.Display.setCursor(rightX, outY + 45);
+  M5.Display.setCursor(rightX, outY + 60);
   M5.Display.print(Fossibot::formatTime(_powerData.minutesToEmpty));
   M5.Display.print(" remaining");
 
   // Separator
-  int sep2Y = outY + 65;
+  int sep2Y = outY + 90;
   M5.Display.drawFastHLine(rightX, sep2Y, rightEdge - rightX, COLOR_GRAY);
 
-  // Clock — time far right (matching watts alignment), date below left
-  int clockY = sep2Y + 12;
+  // Clock — time far right, date below left
+  int clockY = sep2Y + 15;
   int displayHour, displayMinute, displaySecond;
   RTC::getTime(displayHour, displayMinute, displaySecond);
   int displayYear, displayMonth, displayDay, displayDow;
@@ -755,49 +841,8 @@ void UIManager::drawHomeCompactStatus() {
   snprintf(dateStr, sizeof(dateStr), "%s %d %s %d", dayNames[displayDow],
            displayDay, monthNames[mon], displayYear);
   M5.Display.setTextSize(1);
-  M5.Display.setCursor(rightX, clockY + 45);
+  M5.Display.setCursor(rightX, clockY + 55);
   M5.Display.print(dateStr);
-
-  // --- Bottom toggle strip — moved up tight against content ---
-  int toggleY = sep2Y + 90;
-  if (toggleY > contentBottom - 55) toggleY = contentBottom - 55;
-  M5.Display.drawFastHLine(0, toggleY, SCREEN_WIDTH, COLOR_GRAY);
-
-  int toggleSpacing = SCREEN_WIDTH / 4;
-  M5.Display.setFont(&fonts::DejaVu24);
-
-  // USB
-  int usbCx = toggleSpacing;
-  M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setTextSize(1.5);
-  int tw = M5.Display.textWidth("USB");
-  M5.Display.setCursor(usbCx - tw / 2, toggleY + 8);
-  M5.Display.print("USB");
-  drawToggle(usbCx - 15, toggleY + 15, "", _powerData.usbActive);
-
-  // DC
-  int dcCx = toggleSpacing * 2;
-  tw = M5.Display.textWidth("DC");
-  M5.Display.setCursor(dcCx - tw / 2, toggleY + 8);
-  M5.Display.print("DC");
-  drawToggle(dcCx - 15, toggleY + 15, "", _powerData.dcActive);
-
-  // AC
-  int acCx = toggleSpacing * 3;
-  tw = M5.Display.textWidth("AC");
-  M5.Display.setCursor(acCx - tw / 2, toggleY + 8);
-  M5.Display.print("AC");
-  drawToggle(acCx - 15, toggleY + 15, "", _powerData.acActive);
-
-  // Connection indicator (far right)
-  int connX = SCREEN_WIDTH - 40;
-  int connY = toggleY + 30;
-  if (_powerData.connected) {
-    M5.Display.fillCircle(connX, connY, 6, COLOR_BLACK);
-  } else {
-    M5.Display.drawCircle(connX, connY, 6, COLOR_BLACK);
-    M5.Display.drawLine(connX - 6, connY - 6, connX + 6, connY + 6, COLOR_BLACK);
-  }
 }
 
 // ============================================================================
@@ -838,22 +883,20 @@ void UIManager::drawHomeHorizontalBars() {
     M5.Display.print(pctStr);
   }
 
-  // Row 2: IN — taller with more room
+  // Row 2: IN — label and watts inline, bar below
   int row2Y = row1Y + battRowH + gap;
   M5.Display.drawRect(margin, row2Y, barW, powerRowH, COLOR_BLACK);
   M5.Display.setTextColor(COLOR_BLACK);
-  // Label top-left
+  // Label top-left, watts right-aligned — same text size, inline
   M5.Display.setTextSize(2);
   M5.Display.setCursor(margin + 15, row2Y + 10);
   M5.Display.print("IN");
-  // Watts right-aligned on same line
   char wBuf[16];
-  snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.inputPower);
-  M5.Display.setTextSize(3);
+  snprintf(wBuf, sizeof(wBuf), "%.0f", _powerData.inputPower);
   int ww = M5.Display.textWidth(wBuf);
-  M5.Display.setCursor(margin + barW - ww - 15, row2Y + 5);
+  M5.Display.setCursor(margin + barW - ww - 15, row2Y + 10);
   M5.Display.print(wBuf);
-  // Progress bar in middle area
+  // Progress bar below the text line
   int pbX = margin + 15;
   int pbW = barW - 30;
   drawProgressBar(pbX, row2Y + 45, pbW, 25,
@@ -864,21 +907,19 @@ void UIManager::drawHomeHorizontalBars() {
   M5.Display.print(Fossibot::formatTime(_powerData.minutesToFull));
   M5.Display.print(" to full");
 
-  // Row 3: OUT — taller with more room
+  // Row 3: OUT — label and watts inline, bar below
   int row3Y = row2Y + powerRowH + gap;
   M5.Display.drawRect(margin, row3Y, barW, powerRowH, COLOR_BLACK);
   M5.Display.setTextColor(COLOR_BLACK);
-  // Label top-left
+  // Label top-left, watts right-aligned — same text size, inline
   M5.Display.setTextSize(2);
   M5.Display.setCursor(margin + 15, row3Y + 10);
   M5.Display.print("OUT");
-  // Watts right-aligned
-  snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.outputPower);
-  M5.Display.setTextSize(3);
+  snprintf(wBuf, sizeof(wBuf), "%.0f", _powerData.outputPower);
   ww = M5.Display.textWidth(wBuf);
-  M5.Display.setCursor(margin + barW - ww - 15, row3Y + 5);
+  M5.Display.setCursor(margin + barW - ww - 15, row3Y + 10);
   M5.Display.print(wBuf);
-  // Progress bar
+  // Progress bar below the text line
   drawProgressBar(pbX, row3Y + 45, pbW, 25,
                   _powerData.outputPower / 3000.0f, true);
   // Time bottom-left
@@ -907,15 +948,15 @@ void UIManager::drawHomeHorizontalBars() {
   char timeStr[16];
   snprintf(timeStr, sizeof(timeStr), "%02d:%02d", displayHour, displayMinute);
   M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setTextSize(3);
-  M5.Display.setCursor(margin + 20, row4Y + 10);
+  M5.Display.setTextSize(4);
+  M5.Display.setCursor(margin + 20, row4Y + 8);
   M5.Display.print(timeStr);
 
   char dateStr[32];
   snprintf(dateStr, sizeof(dateStr), "%s %d %s %d", dayNames[displayDow],
            displayDay, monthNames[mon], displayYear);
   M5.Display.setTextSize(1);
-  M5.Display.setCursor(margin + 20, row4Y + row4H - 22);
+  M5.Display.setCursor(margin + 20, row4Y + row4H - 27);
   M5.Display.print(dateStr);
 
   // Toggles (right side)
@@ -1551,9 +1592,10 @@ void UIManager::handleHomeClassicGridTouch(int x, int y) {
 }
 
 void UIManager::handleHomeCompactStatusTouch(int x, int y) {
-  // Toggle strip is at bottom, above menu bar
+  // Toggle strip is at bottom, just above menu bar
   int contentBottom = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
-  int toggleY = contentBottom - 70;
+  int toggleStripH = 60;
+  int toggleY = contentBottom - toggleStripH;
 
   if (y >= toggleY && y < contentBottom) {
     int toggleSpacing = SCREEN_WIDTH / 4;
