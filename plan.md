@@ -1,187 +1,155 @@
-# Theme Selector - Implementation Plan
+# Plan: Remove Static Bottom Nav Bar & Move Options to Menu
 
-## Summary
+## Overview
 
-Add a theme selector to the Settings screen that lets the user switch between different dashboard layouts. All themes display the **same data** (battery %, IN power, OUT power, time-to-full, time-remaining, USB/DC/AC toggles, clock/date, connection status) and keep the **bottom menu bar untouched**. The theme name is persisted in `settings.json` via the existing `config.getTheme()` / `config.setTheme()` infrastructure.
+Remove the persistent 60px bottom navigation bar (READ, GAME, ALARM, CALC, NOTES, MENU) from all screens. Move all those navigation options into the existing Settings/Menu screen (renamed to "Menu"). Add a consistent "home" button mechanism so users can always get back to the home screen.
 
----
+## Design Decisions
 
-## Available Data Elements (unchanged across all themes)
+**How to access the menu (replacing the always-visible nav bar):**
+- Add a **"MENU" button** in the top-right corner of the HOME screen (small, unobtrusive)
+- The HOME screen becomes the central hub — all other screens navigate back to HOME via a "HOME" button in their header area
+- The existing Settings screen becomes the **main Menu screen** with tiles for: Read, Games, Clock/Alarm, Calculator, Notes, Device Settings, Fossibot, SD Diag, History, Theme
 
-| Element | Source |
-|---|---|
-| Battery % | `_powerData.batteryPercent` |
-| Input Power (W) | `_powerData.inputPower` |
-| Output Power (W) | `_powerData.outputPower` |
-| Time to Full (min) | `_powerData.minutesToFull` |
-| Time Remaining (min) | `_powerData.minutesToEmpty` |
-| USB / DC / AC toggles | `_powerData.usbActive`, `.dcActive`, `.acActive` |
-| BLE connection status | `_powerData.connected` |
-| Error state / banner | `_powerData.hasError()` |
-| Clock (HH:MM) | `RTC::getTime()` |
-| Date | `RTC::getDate()` |
-| Error pending | `_powerData.hasErrorPending()` |
+**How to get back to HOME from any screen:**
+- Screens that already have exit/back buttons (Reader, Notes, Games, History) — change their target to HOME
+- Screens that relied on the nav bar (Clock, Calculator, Games Menu, Settings sub-screens) — add a "HOME" button in the top-left corner
 
----
+## Step-by-Step Changes
 
-## Theme Designs (3 themes)
+### Step 1: Remove `drawMenuBar()` calls and nav bar touch handling
 
-### Theme 1: `classic_grid` (Current — no changes)
+**File: `src/ui/ui_manager.cpp`**
 
-The existing 2x2 grid layout. This is the default.
+1. Remove all `drawMenuBar()` calls from these 8 locations:
+   - `drawHomeClassicGrid()` / `drawHomeCompactStatus()` / `drawHomeHorizontalBars()` / `drawHomeSector()` (via line ~602 area in each theme)
+   - `drawSettingsScreen()` (line ~1732)
+   - `drawDeviceSettingsScreen()` (line ~1857)
+   - `drawFossibotSettingsScreen()` (line ~2086)
+   - `drawFossibotTimersScreen()` (line ~2414)
+   - `drawClockScreen()` (line ~2779)
+   - `drawCalculatorScreen()` (line ~2969)
+   - `drawGamesMenu()` (line ~4973)
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│ ████████████████████ Battery Bar 73% █████████████████████████│  80px
-├────────────────────────────┬─────────────────────────────────┤
-│  IN              450 W     │  [●] Connected                  │
-│  ██████████░░░░░░░░░░░     │                                 │
-│  2h 15m to full            │    USB    DC     AC              │ ~190px
-│                            │    [■]    [□]    [■]             │
-├────────────────────────────┼─────────────────────────────────┤
-│  OUT             120 W     │  14:32                           │
-│  ██░░░░░░░░░░░░░░░░░░     │                                 │
-│  8h 30m remaining          │  Mon 8 Mar 2026                 │ ~190px
-│                            │                                 │
-├──────────────────────────────────────────────────────────────┤
-│ READ │ GAME │ ALARM │ CALC │ NOTES │ MENU │                  │  60px
-└──────────────────────────────────────────────────────────────┘
-```
+2. Remove the menu button touch test block in `handleTouch()` (lines ~378-390) that checks `hitTestMenuButton()`
 
-### Theme 2: `compact_status`
+### Step 2: Update layout constants — content areas expand by 60px
 
-Battery-centric layout. Large battery percentage dominates the left, with all power I/O stacked vertically on the right. Toggles below. Good for quick glance.
+Every screen that previously reserved `MENU_BAR_HEIGHT` (60px) at the bottom now gets that space back. Update content area calculations:
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                                                              │
-│                          73%             IN   450W  2h 15m   │
-│       ┌─────────────────────┐           ─────────────────    │
-│       │                     │           OUT  120W  8h 30m    │
-│       │   LARGE BATTERY     │           ─────────────────    │
-│       │   CIRCLE / ARC      │                                │
-│       │   with % centered   │           14:32                │
-│       │                     │           Mon 8 Mar 2026       │
-│       └─────────────────────┘                                │
-│                                                              │
-│              ┌─USB─┐  ┌─DC──┐  ┌─AC──┐     [●]              │
-│              │ [■] │  │ [□] │  │ [■] │   connected           │
-├──────────────────────────────────────────────────────────────┤
-│ READ │ GAME │ ALARM │ CALC │ NOTES │ MENU │                  │
-└──────────────────────────────────────────────────────────────┘
-```
+- **Home screen themes** (all 4): Change `contentHeight` calculations that subtract `MENU_BAR_HEIGHT` to use full height
+  - `drawHomeClassicGrid()` / `handleHomeClassicGridTouch()`
+  - `drawHomeCompactStatus()` / `handleHomeCompactStatusTouch()`
+  - `drawHomeHorizontalBars()` / `handleHomeHorizontalBarsTouch()`
+  - `drawHomeSector()` / `handleHomeSectorTouch()`
+- **Clock screen**: sidebar and content area expand down
+- **Calculator screen**: button grid expands down
+- **Games menu**: more room for game tiles
+- **Settings screens**: more room for buttons
 
-**Layout detail (960x540, menu=60px):**
-- No separate battery bar — battery is the hero element
-- Left half: Large battery arc/circle (~280px diameter), percentage in huge font (size 4) centered inside
-- Right half, top section: Two rows for IN and OUT — each shows label, wattage (bold), time estimate
-- Right half, mid section: Clock and date
-- Bottom strip (above menu bar): Horizontal USB | DC | AC toggle buttons + connection indicator
-- Error banner: Full-width strip replaces the bottom toggle area (same as current battery bar error logic)
+### Step 3: Redesign the Settings screen into "Menu" screen
 
-### Theme 3: `horizontal_bars`
+**File: `src/ui/ui_manager.cpp` — `drawSettingsScreen()` and `handleSettingsTouch()`**
 
-Wide horizontal layout. Each data element gets its own full-width row. Dense, information-forward, no wasted space. Feels like a terminal/HUD.
+Redesign the Settings screen to be the main **Menu** screen with all navigation options in a 3x3 grid:
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  BATTERY  ████████████████████████████████████░░░░░░░  73%   │  ~55px
-├──────────────────────────────────────────────────────────────┤
-│  IN  ████████████░░░░░░░░░░░░░░░░░░░  450W     2h 15m full  │  ~55px
-├──────────────────────────────────────────────────────────────┤
-│  OUT ██░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  120W     8h 30m rem   │  ~55px
-├──────────────────────────────────────────────────────────────┤
-│                                                              │
-│  14:32        Mon 8 Mar 2026        USB [■]  DC [□]  AC [■]  │  ~55px
-│                                                       [●]    │
-│                                                              │
-├──────────────────────────────────────────────────────────────┤
-│ READ │ GAME │ ALARM │ CALC │ NOTES │ MENU │                  │  60px
-└──────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────┐
+│  [HOME]           MENU                      │
+├─────────────┬─────────────┬─────────────────┤
+│   Read      │   Games     │   Clock         │
+├─────────────┼─────────────┼─────────────────┤
+│   Calculator│   Notes     │   Settings      │
+├─────────────┼─────────────┼─────────────────┤
+│   History   │  Theme: X   │                 │
+└─────────────┴─────────────┴─────────────────┘
 ```
 
-**Layout detail:**
-- Row 1 (y=10, h=70): Battery bar — full-width progress bar with "BATTERY" label left, percentage right
-- Row 2 (y=85, h=70): IN power — full-width progress bar with label, wattage, and time-to-full
-- Row 3 (y=160, h=70): OUT power — full-width progress bar with label, wattage, and time-remaining
-- Row 4 (y=235, h=remaining): Info strip — clock/date left, USB/DC/AC toggles + connection indicator right
-- Panels use thin 1px borders, data is large and readable
-- Error banner: Replaces Row 1 (battery row) same as current behavior
+- Title: "MENU" instead of "Settings"
+- "Settings" tile opens a sub-menu for Device/Fossibot/SD Diag (reusing existing settings sub-screens)
+- HOME button top-left
 
----
+### Step 4: Add HOME button to all non-home screens
 
-## Implementation Steps
+Add a small "HOME" button (~80x40px) in the top-left corner of every screen that doesn't already have a way back to HOME:
 
-### Step 1: Add theme enum and dispatcher in `drawHomeScreen()`
+| Screen | Current "back" method | Change needed |
+|--------|----------------------|---------------|
+| Menu (Settings) | "Back" button in grid | Replace with HOME btn top-left |
+| Device Settings | Has back in nav bar | Add HOME btn top-left |
+| Fossibot Settings | Has back in nav bar | Add HOME btn top-left |
+| Fossibot Timers | Has back in nav bar | Add HOME btn top-left |
+| Clock | Nav bar only | Add HOME btn top-left |
+| Calculator | Nav bar only | Add HOME btn top-left |
+| Games Menu | Nav bar only | Add HOME btn top-left |
+| Notes | Has exit toolbar button | Already goes HOME ✓ |
+| Notes Browse | Has X button | Goes to NOTES ✓ |
+| Reader | Has EXIT button | Already goes HOME ✓ |
+| History | Has back/X button | Already goes HOME ✓ |
+| Game 2048 | Has exit | Goes to GAMES_MENU ✓ |
+| Game Sudoku | Has exit | Goes to GAMES_MENU ✓ |
+| Game Minesweeper | Has exit | Goes to GAMES_MENU ✓ |
+| SD Diag | Check existing | Add HOME or back-to-settings btn |
+
+### Step 5: Add MENU button to HOME screen
+
+Add a "MENU" button on the home screen so users can access the menu. All 4 home screen themes need this:
+
+- Draw a button in the top-right area (e.g., 80x35px near battery bar)
+- Add touch handler for it in each theme's touch handler
+- Navigates to `ScreenID::SETTINGS` (which is now the Menu screen)
+
+### Step 6: Helper function for HOME button
+
+Create a reusable `drawHomeButton()` function that draws a consistent HOME button in the top-left corner, and a corresponding `hitTestHomeButton()` for touch detection. This avoids duplicating the same code across 8+ screens.
+
+```cpp
+void drawHomeButton();              // Draws "HOME" at (10, 10, 80, 35)
+bool hitTestHomeButton(int x, int y); // Returns true if touch is in HOME btn area
+```
+
+### Step 7: Full screen audit — verify every feature path
+
+Complete audit of all 18 ScreenID values to ensure nothing is orphaned:
+
+| Screen | How to reach | How to leave |
+|--------|-------------|-------------|
+| HOME | Default / HOME buttons | MENU button → SETTINGS |
+| SETTINGS (Menu) | HOME → MENU btn | Tiles to features; HOME btn |
+| SETTINGS_DEVICE | Menu → Settings tile | Back → SETTINGS |
+| SETTINGS_FOSSIBOT | Menu → Settings tile | Back → SETTINGS |
+| SETTINGS_FOSSIBOT_TIMERS | Fossibot → Timers | Back → SETTINGS_FOSSIBOT |
+| CLOCK | Menu tile | HOME btn |
+| CALCULATOR | Menu tile | HOME btn |
+| NOTES | Menu tile | Exit toolbar → HOME |
+| NOTES_BROWSE | Notes → Browse | X → NOTES |
+| READER | Menu tile | EXIT → HOME |
+| GAMES_MENU | Menu tile | HOME btn |
+| GAME_2048 | Games → 2048 | Exit → GAMES_MENU |
+| GAME_SUDOKU | Games → Sudoku | Exit → GAMES_MENU |
+| GAME_MINESWEEPER | Games → Mine | Exit → GAMES_MENU |
+| GAME_NONOGRAM | Games (if active) | Exit → GAMES_MENU |
+| HISTORY | Menu tile | Back → HOME |
+| SD_DIAG | Menu → Settings → SD | Back → SETTINGS |
+| WEATHER | (if used) | Back → HOME |
+
+### Step 8: Clean up header file
 
 **File: `src/ui/ui_manager.h`**
-- Add a private enum or use string comparison for theme routing
-- Add new private drawing methods:
-  - `void drawHomeClassicGrid()` — extract current `drawHomeScreen()` body
-  - `void drawHomeCompactStatus()`
-  - `void drawHomeHorizontalBars()`
 
-**File: `src/ui/ui_manager.cpp`**
-- Refactor `drawHomeScreen()` to be a dispatcher:
-  ```cpp
-  void UIManager::drawHomeScreen() {
-    M5.Display.fillScreen(COLOR_WHITE);
-    String theme = config->getTheme();
-    if (theme == "compact_status") {
-      drawHomeCompactStatus();
-    } else if (theme == "horizontal_bars") {
-      drawHomeHorizontalBars();
-    } else {
-      drawHomeClassicGrid();
-    }
-    drawMenuBar();
-    M5.Display.display();
-  }
-  ```
-- Move the existing body (battery bar + 4 panels) into `drawHomeClassicGrid()`
-- Implement `drawHomeCompactStatus()` and `drawHomeHorizontalBars()`
-
-### Step 2: Update touch handling for each theme
-
-**File: `src/ui/ui_manager.cpp`**
-- Refactor `handleHomeTouch()` to dispatch based on theme:
-  - `handleHomeClassicGridTouch()` — current logic (unchanged)
-  - `handleHomeCompactStatusTouch()` — toggle buttons are in bottom strip
-  - `handleHomeHorizontalBarsTouch()` — toggle buttons are in Row 4
-- Each handler must calculate its own toggle button positions matching the draw function
-
-### Step 3: Add theme selector to Settings screen
-
-**File: `src/ui/ui_manager.cpp`**
-- Add a "Theme" row to the existing Settings screen (`drawSettingsScreen()`)
-- Shows current theme name, tap to cycle: classic_grid → compact_status → horizontal_bars → classic_grid
-- Calls `config->setTheme()` and `config->save()` on change
-- Triggers a refresh when returning to HOME
-
-### Step 4: Error banner handling per theme
-
-Each theme needs to handle `_powerData.hasError()`:
-- `classic_grid`: Current behavior (replaces battery bar)
-- `compact_status`: Replace battery circle area with error banner
-- `horizontal_bars`: Replace battery row with error banner
-
-The error rendering can reuse the existing `drawBatteryBar()` error path or a shared `drawErrorBanner(x, y, w, h)` helper.
-
----
+- Remove or mark deprecated: `MenuButton` struct, `_menuButtons` array, `NUM_MENU_BUTTONS`, `initMenuButtons()`, `hitTestMenuButton()`, `executeMenuButton()`, `drawMenuBar()`
+- Add declarations for new methods: `drawHomeButton()`, `hitTestHomeButton()`
+- `MENU_BAR_HEIGHT` constant can be removed
 
 ## Files Modified
 
-| File | Changes |
-|---|---|
-| `src/ui/ui_manager.h` | Add 5 new private method declarations (3 draw + 2 touch) |
-| `src/ui/ui_manager.cpp` | Refactor `drawHomeScreen()` into dispatcher + 2 new theme draw functions, refactor `handleHomeTouch()` into dispatcher + 2 new theme touch handlers, add theme option to settings screen |
-| `data/config/settings.json` | No change needed (already has `"theme": "classic_grid"`) |
-| `src/utils/config.cpp` | No change needed (already has get/setTheme) |
+1. **`src/ui/ui_manager.cpp`** — Primary changes (remove nav bar calls, expand layouts, redesign menu screen, add HOME/MENU buttons, add helper functions)
+2. **`src/ui/ui_manager.h`** — Remove nav bar declarations, add new method declarations
+3. **`src/ui/ui_notes_browse.cpp`** — Verify no nav bar references (likely none already)
 
-## What stays unchanged
+## Risk Assessment
 
-- Bottom menu bar (`drawMenuBar()`) — called identically by all themes
-- Menu bar touch handling (`hitTestMenuButton()`)
-- All sub-pages/screens (settings, games, reader, etc.)
-- BLE communication, power data, config infrastructure
-- Error banner content/logic (just repositioned per theme)
+- **Low risk**: All navigation paths are preserved — just reorganized
+- **No BLE/hardware impact**: Pure UI change
+- **Testable**: `pio run` to verify compilation; hardware test for touch targets
+- **Reversible**: Single feature branch, easy to revert
