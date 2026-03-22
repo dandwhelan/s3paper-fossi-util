@@ -53,7 +53,6 @@ UIManager::UIManager()
       _pomodoroRemainingSeconds(POMODORO_WORK_SECONDS), _alarmRinging(false),
       _timerRunning(false), _timerRinging(false),
       _timerDurationSeconds(30 * 60), _timerRemainingSeconds(30 * 60) {
-  initMenuButtons();
 }
 
 UIManager::~UIManager() {}
@@ -98,26 +97,42 @@ const m5gfx::IFont *UIManager::getReaderFont() {
   }
 }
 
-void UIManager::initMenuButtons() {
-  // Calculate button positions for bottom menu bar
-  int buttonWidth = SCREEN_WIDTH / NUM_MENU_BUTTONS;
-  int buttonY = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
+// --- HOME / MENU button helpers ---
 
-  _menuButtons[0] = {0 * buttonWidth, buttonY, buttonWidth,     MENU_BAR_HEIGHT,
-                     "READ",          "BK",    ScreenID::READER};
-  _menuButtons[1] = {1 * buttonWidth,     buttonY, buttonWidth,
-                     MENU_BAR_HEIGHT,     "GAME",  "GM",
-                     ScreenID::GAMES_MENU};
-  _menuButtons[2] = {2 * buttonWidth, buttonY, buttonWidth,    MENU_BAR_HEIGHT,
-                     "ALARM",         "AL",    ScreenID::CLOCK};
-  _menuButtons[3] = {3 * buttonWidth,     buttonY, buttonWidth,
-                     MENU_BAR_HEIGHT,     "CALC",  "CA",
-                     ScreenID::CALCULATOR};
-  _menuButtons[4] = {4 * buttonWidth, buttonY, buttonWidth,    MENU_BAR_HEIGHT,
-                     "NOTES",         "NT",    ScreenID::NOTES};
-  _menuButtons[5] = {5 * buttonWidth,   buttonY, buttonWidth,
-                     MENU_BAR_HEIGHT,   "MENU",  "MN",
-                     ScreenID::SETTINGS};
+void UIManager::drawHomeButton() {
+  // Small HOME button in the top-left corner of non-home screens
+  M5.Display.drawRect(HOME_BTN_X, HOME_BTN_Y, HOME_BTN_W, HOME_BTN_H,
+                      COLOR_BLACK);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setFont(&fonts::DejaVu24);
+  M5.Display.setTextSize(1);
+  int tw = M5.Display.textWidth("HOME");
+  M5.Display.setCursor(HOME_BTN_X + (HOME_BTN_W - tw) / 2,
+                       HOME_BTN_Y + (HOME_BTN_H - 24) / 2);
+  M5.Display.print("HOME");
+}
+
+void UIManager::drawMenuButton() {
+  // Small MENU button in the top-right corner of the home screen
+  M5.Display.drawRect(MENU_BTN_X, MENU_BTN_Y, MENU_BTN_W, MENU_BTN_H,
+                      COLOR_BLACK);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setFont(&fonts::DejaVu24);
+  M5.Display.setTextSize(1);
+  int tw = M5.Display.textWidth("MENU");
+  M5.Display.setCursor(MENU_BTN_X + (MENU_BTN_W - tw) / 2,
+                       MENU_BTN_Y + (MENU_BTN_H - 24) / 2);
+  M5.Display.print("MENU");
+}
+
+bool UIManager::hitTestHomeButton(int x, int y) {
+  return (x >= HOME_BTN_X && x < HOME_BTN_X + HOME_BTN_W && y >= HOME_BTN_Y &&
+          y < HOME_BTN_Y + HOME_BTN_H);
+}
+
+bool UIManager::hitTestMenuButton(int x, int y) {
+  return (x >= MENU_BTN_X && x < MENU_BTN_X + MENU_BTN_W && y >= MENU_BTN_Y &&
+          y < MENU_BTN_Y + MENU_BTN_H);
 }
 
 void UIManager::update() {
@@ -358,6 +373,30 @@ void UIManager::handleTouch(int x, int y, TouchEvent event) {
         } else if (_currentScreen == ScreenID::READER) {
           handleReaderTouch(x, y, event);
         }
+
+        // HOME button: available on all non-home screens (except full-screen
+        // ones that have their own exit)
+        if (_currentScreen != ScreenID::HOME &&
+            _currentScreen != ScreenID::NOTES &&
+            _currentScreen != ScreenID::NOTES_BROWSE &&
+            _currentScreen != ScreenID::GAME_2048 &&
+            _currentScreen != ScreenID::GAME_SUDOKU &&
+            _currentScreen != ScreenID::GAME_MINESWEEPER &&
+            _currentScreen != ScreenID::READER &&
+            _currentScreen != ScreenID::HISTORY) {
+          if (hitTestHomeButton(x, y)) {
+            Buzzer::click();
+            navigateTo(ScreenID::HOME);
+          }
+        }
+
+        // MENU button: available on HOME screen only
+        if (_currentScreen == ScreenID::HOME) {
+          if (hitTestMenuButton(x, y)) {
+            Buzzer::click();
+            navigateTo(ScreenID::SETTINGS);
+          }
+        }
       }
 
       // GAME_2048 needs swipe detection, handle separately
@@ -374,43 +413,8 @@ void UIManager::handleTouch(int x, int y, TouchEvent event) {
       if (_currentScreen == ScreenID::GAME_MINESWEEPER) {
         handleMinesweeperTouch(x, y, event);
       }
-
-      // Check menu buttons (Allow navigation from all screens as requested)
-      if (_currentScreen != ScreenID::NOTES &&
-          _currentScreen != ScreenID::NOTES_BROWSE &&
-          _currentScreen != ScreenID::GAME_2048 &&
-          _currentScreen != ScreenID::GAME_SUDOKU &&
-          _currentScreen != ScreenID::GAME_MINESWEEPER &&
-          _currentScreen != ScreenID::HISTORY &&
-          _currentScreen != ScreenID::READER) { // Disable nav bar in Reader
-        int menuHit = hitTestMenuButton(x, y);
-        if (menuHit >= 0) {
-          executeMenuButton(menuHit);
-        }
-      }
     }
     break;
-  }
-}
-
-int UIManager::hitTestMenuButton(int x, int y) {
-  for (int i = 0; i < NUM_MENU_BUTTONS; i++) {
-    const MenuButton &btn = _menuButtons[i];
-    if (x >= btn.x && x < btn.x + btn.w && y >= btn.y && y < btn.y + btn.h) {
-      return i;
-    }
-  }
-  return -1;
-}
-
-void UIManager::executeMenuButton(int index) {
-  if (index < 0 || index >= NUM_MENU_BUTTONS)
-    return;
-
-  Buzzer::click(); // Add feedback for menu buttons
-  ScreenID target = _menuButtons[index].targetScreen;
-  if (target != _currentScreen) {
-    navigateTo(target);
   }
 }
 
@@ -599,7 +603,7 @@ void UIManager::drawHomeScreen() {
     drawHomeClassicGrid();
   }
 
-  drawMenuBar();
+  drawMenuButton(); // MENU button on home screen (top-right)
   M5.Display.display();
 }
 
@@ -609,7 +613,7 @@ void UIManager::drawHomeScreen() {
 void UIManager::drawHomeClassicGrid() {
   int contentY = BATTERY_BAR_HEIGHT + PANEL_MARGIN;
   int contentHeight =
-      SCREEN_HEIGHT - BATTERY_BAR_HEIGHT - MENU_BAR_HEIGHT - PANEL_MARGIN * 3;
+      SCREEN_HEIGHT - BATTERY_BAR_HEIGHT - PANEL_MARGIN * 3;
   int panelWidth = (SCREEN_WIDTH - PANEL_MARGIN * 3) / 2;
   int panelHeight = (contentHeight - PANEL_MARGIN) / 2;
 
@@ -637,7 +641,7 @@ void UIManager::drawHomeClassicGrid() {
 // Theme: Compact Status (large battery circle left, data stacked right)
 // ============================================================================
 void UIManager::drawHomeCompactStatus() {
-  int contentBottom = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
+  int contentBottom = SCREEN_HEIGHT;
 
   // --- Toggle strip at the very bottom, just above menu bar ---
   int toggleStripH = 60;
@@ -849,7 +853,7 @@ void UIManager::drawHomeCompactStatus() {
 // Theme: Horizontal Bars (full-width rows, HUD style)
 // ============================================================================
 void UIManager::drawHomeHorizontalBars() {
-  int contentBottom = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
+  int contentBottom = SCREEN_HEIGHT;
   int margin = 10;
   int barW = SCREEN_WIDTH - margin * 2;
   int gap = 5;
@@ -1000,7 +1004,7 @@ void UIManager::drawHomeHorizontalBars() {
 // Theme: Sector (output power breakdown by USB / AC / DC)
 // ============================================================================
 void UIManager::drawHomeSector() {
-  int contentBottom = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
+  int contentBottom = SCREEN_HEIGHT;
   int margin = 10;
 
   drawBatteryBar(_powerData.batteryPercent);
@@ -1412,32 +1416,8 @@ void UIManager::drawClockWeatherPanel(int x, int y, int w, int h) {
   M5.Display.print(dateStr);
 }
 
-void UIManager::drawMenuBar() {
-  int y = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
-
-  // Background
-  M5.Display.fillRect(0, y, SCREEN_WIDTH, MENU_BAR_HEIGHT, COLOR_LIGHT_GRAY);
-  M5.Display.drawLine(0, y, SCREEN_WIDTH, y, COLOR_BLACK);
-
-  // Draw each button
-  M5.Display.setTextSize(1);
-  for (int i = 0; i < NUM_MENU_BUTTONS; i++) {
-    const MenuButton &btn = _menuButtons[i];
-
-    // Button separator
-    if (i > 0) {
-      M5.Display.drawLine(btn.x, y + 5, btn.x, y + MENU_BAR_HEIGHT - 5,
-                          COLOR_GRAY);
-    }
-
-    // Label - centered in button
-    M5.Display.setTextColor(COLOR_BLACK);
-    int textWidth = strlen(btn.label) * 18; // Approximate width at size 3
-    M5.Display.setCursor(btn.x + (btn.w - M5.Display.textWidth(btn.label)) / 2,
-                         y + (MENU_BAR_HEIGHT - 24) / 2);
-    M5.Display.print(btn.label);
-  }
-}
+// drawMenuBar() removed — bottom nav bar replaced by MENU button on home +
+// HOME button on sub-screens
 
 void UIManager::drawProgressBar(int x, int y, int w, int h, float percent,
                                 bool thick) {
@@ -1526,7 +1506,7 @@ void UIManager::handleHomeTouch(int x, int y, TouchEvent event) {
 void UIManager::handleHomeClassicGridTouch(int x, int y) {
   int contentY = BATTERY_BAR_HEIGHT + PANEL_MARGIN;
   int contentHeight =
-      SCREEN_HEIGHT - BATTERY_BAR_HEIGHT - MENU_BAR_HEIGHT - PANEL_MARGIN * 3;
+      SCREEN_HEIGHT - BATTERY_BAR_HEIGHT - PANEL_MARGIN * 3;
   int panelWidth = (SCREEN_WIDTH - PANEL_MARGIN * 3) / 2;
   int panelHeight = (contentHeight - PANEL_MARGIN) / 2;
 
@@ -1592,8 +1572,8 @@ void UIManager::handleHomeClassicGridTouch(int x, int y) {
 }
 
 void UIManager::handleHomeCompactStatusTouch(int x, int y) {
-  // Toggle strip is at bottom, just above menu bar
-  int contentBottom = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
+  // Toggle strip is at bottom of screen
+  int contentBottom = SCREEN_HEIGHT;
   int toggleStripH = 60;
   int toggleY = contentBottom - toggleStripH;
 
@@ -1640,7 +1620,7 @@ void UIManager::handleHomeHorizontalBarsTouch(int x, int y) {
   int gap = 5;
   int battRowH = 55;
   int powerRowH = 105;
-  int contentBottom = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
+  int contentBottom = SCREEN_HEIGHT;
   int row4Y = margin + battRowH + gap + powerRowH * 2 + gap * 2;
   int row4H = contentBottom - row4Y - margin;
 
@@ -1684,7 +1664,7 @@ void UIManager::handleHomeSectorTouch(int x, int y) {
   // Right-side sector panels act as toggle buttons
   int margin = 10;
   int topY = BATTERY_BAR_HEIGHT + margin;
-  int contentBottom = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
+  int contentBottom = SCREEN_HEIGHT;
   int availH = contentBottom - topY - margin;
   int rightX = SCREEN_WIDTH / 2 + margin;
   int rightW = SCREEN_WIDTH / 2 - margin * 2;
@@ -1727,51 +1707,59 @@ void UIManager::handleHomeSectorTouch(int x, int y) {
 }
 
 void UIManager::drawSettingsScreen() {
-  // Main Settings Menu - tile navigation to sub-screens
+  // Main Menu — central navigation hub (replaces old nav bar)
   M5.Display.fillScreen(COLOR_WHITE);
-  drawMenuBar();
+
+  // HOME button (top-left)
+  drawHomeButton();
 
   // Title - centered
-  M5.Display.setTextSize(2); // Reduced 4 -> 2
+  M5.Display.setTextSize(2);
   M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setCursor(SCREEN_WIDTH / 2 - 80, 20);
-  M5.Display.print("Settings");
+  M5.Display.setCursor(SCREEN_WIDTH / 2 - 50, 20);
+  M5.Display.print("MENU");
 
-  // Navigation tiles (using 200x70 buttons like SD Diag, History)
+  // 3x3 grid of navigation tiles
   int btnW = 200;
-  int btnH = 70;
-  int startY = 120; // Moved down 20px (was 100)
+  int btnH = 80;
   int spacing = 20;
-  int col1X = SCREEN_WIDTH / 2 - btnW - spacing / 2;
-  int col2X = SCREEN_WIDTH / 2 + spacing / 2;
+  int totalW = btnW * 3 + spacing * 2;
+  int startX = (SCREEN_WIDTH - totalW) / 2;
+  int startY = 70;
 
-  // Row 1: Device Settings | Fossibot
-  drawButton(col1X, startY, btnW, btnH, "Device", true);
-  drawButton(col2X, startY, btnW, btnH, "Fossibot", true);
+  int col1X = startX;
+  int col2X = startX + btnW + spacing;
+  int col3X = startX + (btnW + spacing) * 2;
 
-  // Row 2: SD Diag | History
+  // Row 1: Read | Games | Clock
+  drawButton(col1X, startY, btnW, btnH, "READ", true);
+  drawButton(col2X, startY, btnW, btnH, "GAMES", true);
+  drawButton(col3X, startY, btnW, btnH, "CLOCK", true);
+
+  // Row 2: Calculator | Notes | History
   int row2Y = startY + btnH + spacing;
-  drawButton(col1X, row2Y, btnW, btnH, "SD Diag");
-  drawButton(col2X, row2Y, btnW, btnH, "History");
+  drawButton(col1X, row2Y, btnW, btnH, "CALC", true);
+  drawButton(col2X, row2Y, btnW, btnH, "NOTES", true);
+  drawButton(col3X, row2Y, btnW, btnH, "HISTORY");
 
-  // Row 3: Theme | Back
+  // Row 3: Device | Fossibot | Theme
   int row3Y = row2Y + btnH + spacing;
+  drawButton(col1X, row3Y, btnW, btnH, "DEVICE");
+  drawButton(col2X, row3Y, btnW, btnH, "FOSSIBOT");
   {
     extern Config *config;
     String theme = config ? config->getTheme() : "classic_grid";
-    // Display friendly theme name on button
     const char *themeName = "Classic";
     if (theme == "compact_status") themeName = "Compact";
     else if (theme == "horizontal_bars") themeName = "H-Bars";
     else if (theme == "sector") themeName = "Sector";
     char themeLabel[24];
     snprintf(themeLabel, sizeof(themeLabel), "Theme: %s", themeName);
-    drawButton(col1X, row3Y, btnW, btnH, themeLabel);
+    drawButton(col3X, row3Y, btnW, btnH, themeLabel);
   }
-  drawButton(col2X, row3Y, btnW, btnH, "Back");
 
   // --- Battery Status (Top Right) ---
-  M5.Display.setTextSize(0.7); // Reduced 1 -> 0.7 per user request
+  M5.Display.setTextSize(0.7);
   M5.Display.setCursor(SCREEN_WIDTH - 220, 15);
   float voltage = Battery::getVoltage();
   int percentage = Battery::getPercentage();
@@ -1779,7 +1767,7 @@ void UIManager::drawSettingsScreen() {
 }
 
 void UIManager::handleSettingsTouch(int x, int y) {
-  // Touch handler for main settings menu
+  // Touch handler for main Menu screen (3x3 grid)
   auto isHit = [&](int bx, int by, int bw, int bh) {
     if (x >= bx && x < bx + bw && y >= by && y < by + bh) {
       Buzzer::click();
@@ -1789,36 +1777,56 @@ void UIManager::handleSettingsTouch(int x, int y) {
   };
 
   int btnW = 200;
-  int btnH = 70;
-  int startY = 120; // Updated to match moved buttons (was 100)
+  int btnH = 80;
   int spacing = 20;
-  int col1X = SCREEN_WIDTH / 2 - btnW - spacing / 2;
-  int col2X = SCREEN_WIDTH / 2 + spacing / 2;
+  int totalW = btnW * 3 + spacing * 2;
+  int startX = (SCREEN_WIDTH - totalW) / 2;
+  int startY = 70;
+
+  int col1X = startX;
+  int col2X = startX + btnW + spacing;
+  int col3X = startX + (btnW + spacing) * 2;
   int row2Y = startY + btnH + spacing;
   int row3Y = row2Y + btnH + spacing;
 
-  // Device Settings
+  // Row 1: Read | Games | Clock
   if (isHit(col1X, startY, btnW, btnH)) {
-    navigateTo(ScreenID::SETTINGS_DEVICE);
+    navigateTo(ScreenID::READER);
     return;
   }
-  // Fossibot
   if (isHit(col2X, startY, btnW, btnH)) {
-    navigateTo(ScreenID::SETTINGS_FOSSIBOT);
+    navigateTo(ScreenID::GAMES_MENU);
     return;
   }
-  // SD Diag
+  if (isHit(col3X, startY, btnW, btnH)) {
+    navigateTo(ScreenID::CLOCK);
+    return;
+  }
+
+  // Row 2: Calculator | Notes | History
   if (isHit(col1X, row2Y, btnW, btnH)) {
-    navigateTo(ScreenID::SD_DIAG);
+    navigateTo(ScreenID::CALCULATOR);
     return;
   }
-  // History
   if (isHit(col2X, row2Y, btnW, btnH)) {
+    navigateTo(ScreenID::NOTES);
+    return;
+  }
+  if (isHit(col3X, row2Y, btnW, btnH)) {
     navigateTo(ScreenID::HISTORY);
     return;
   }
-  // Theme (cycle)
+
+  // Row 3: Device | Fossibot | Theme (cycle)
   if (isHit(col1X, row3Y, btnW, btnH)) {
+    navigateTo(ScreenID::SETTINGS_DEVICE);
+    return;
+  }
+  if (isHit(col2X, row3Y, btnW, btnH)) {
+    navigateTo(ScreenID::SETTINGS_FOSSIBOT);
+    return;
+  }
+  if (isHit(col3X, row3Y, btnW, btnH)) {
     extern Config *config;
     if (config) {
       String theme = config->getTheme();
@@ -1838,11 +1846,6 @@ void UIManager::handleSettingsTouch(int x, int y) {
     _lastRefresh = 0;
     return;
   }
-  // Back
-  if (isHit(col2X, row3Y, btnW, btnH)) {
-    navigateTo(ScreenID::HOME);
-    return;
-  }
 }
 
 // ============================================================================
@@ -1854,7 +1857,7 @@ void UIManager::drawDeviceSettingsScreen() {
   // screens)
   M5.Display.setEpdMode(epd_mode_t::epd_fastest);
   M5.Display.fillScreen(COLOR_WHITE);
-  drawMenuBar();
+  drawHomeButton();
 
   // Title - centered
   M5.Display.setTextSize(2);
@@ -1932,7 +1935,10 @@ void UIManager::drawDeviceSettingsScreen() {
   // Test Deep Sleep button
   drawButton(350, y, 180, 50, "Test Sleep");
 
-  // --- Actions (bottom right, above nav bar) ---
+  // SD Card Diagnostics button
+  drawButton(570, y, 180, 50, "SD Diag");
+
+  // --- Actions (bottom) ---
   y = 400;
   drawButton(560, y, 140, 55, "SAVE", true);
   drawButton(720, y, 140, 55, "CANCEL");
@@ -2051,6 +2057,12 @@ void UIManager::handleDeviceSettingsTouch(int x, int y) {
     return; // Won't reach here - device is asleep
   }
 
+  // SD Diagnostics
+  if (isHit(570, rowBT, 180, 50)) {
+    navigateTo(ScreenID::SD_DIAG);
+    return;
+  }
+
   int row4 = 400; // Save/Cancel (bottom right)
   // Save
   if (isHit(560, row4, 140, 55)) {
@@ -2083,9 +2095,8 @@ void UIManager::handleDeviceSettingsTouch(int x, int y) {
 
 void UIManager::drawFossibotSettingsScreen() {
   M5.Display.fillScreen(COLOR_WHITE);
-  drawMenuBar();
+  drawHomeButton();
 
-  // Title
   // Title
   M5.Display.setTextSize(2); // Reverted 3 -> 2
   M5.Display.setTextColor(COLOR_BLACK);
@@ -2411,7 +2422,7 @@ void UIManager::handleFossibotSettingsTouch(int x, int y) {
 
 void UIManager::drawFossibotTimersScreen() {
   M5.Display.fillScreen(COLOR_WHITE);
-  drawMenuBar();
+  drawHomeButton();
 
   // === Header ===
   M5.Display.setTextColor(COLOR_BLACK);
@@ -2753,7 +2764,7 @@ void UIManager::drawClockScreen() {
   const int SIDEBAR_WIDTH = 160;
   const int CONTENT_X = SIDEBAR_WIDTH;
   const int CONTENT_WIDTH = SCREEN_WIDTH - SIDEBAR_WIDTH;
-  const int CONTENT_HEIGHT = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
+  const int CONTENT_HEIGHT = SCREEN_HEIGHT;
 
   // Check if this is a timer auto-refresh (partial update only)
   bool pomodoroRunning = (_clockMode == ClockMode::POMODORO &&
@@ -2776,7 +2787,6 @@ void UIManager::drawClockScreen() {
       M5.Display.setEpdMode(epd_mode_t::epd_fastest);
     }
     M5.Display.fillScreen(COLOR_WHITE);
-    drawMenuBar();
     drawClockSidebar(0, 0, SIDEBAR_WIDTH, CONTENT_HEIGHT);
     // Draw Exit/Back button (Top Right)
     drawButton(SCREEN_WIDTH - 80, 10, 70, 50, "X");
@@ -2966,13 +2976,12 @@ void UIManager::updatePomodoro() {
 
 void UIManager::drawCalculatorScreen() {
   M5.Display.fillScreen(COLOR_WHITE);
-  drawMenuBar();
 
   // Layout: Left (Display) | Right (Keypad)
   const int DISPLAY_WIDTH = 480;
   const int KEYPAD_X = DISPLAY_WIDTH;
   const int KEYPAD_WIDTH = SCREEN_WIDTH - DISPLAY_WIDTH;
-  const int CONTENT_HEIGHT = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
+  const int CONTENT_HEIGHT = SCREEN_HEIGHT;
 
   // Exit button "X" (Top Left)
   drawButton(20, 10, 60, 50, "X");
@@ -4386,7 +4395,7 @@ void UIManager::drawSDDiagScreen() {
   M5.Display.fillScreen(COLOR_WHITE);
 
   // Header
-  M5.Display.fillRect(0, 0, SCREEN_WIDTH, MENU_BAR_HEIGHT, COLOR_BLACK);
+  M5.Display.fillRect(0, 0, SCREEN_WIDTH, 60, COLOR_BLACK);
   M5.Display.setTextColor(COLOR_WHITE);
   M5.Display.setTextSize(2);
   M5.Display.setCursor(20, 15);
@@ -4970,7 +4979,7 @@ void UIManager::handleClockTouch(int x, int y, TouchEvent event) {
 
 void UIManager::drawGamesMenu() {
   M5.Display.fillScreen(COLOR_WHITE);
-  drawMenuBar();
+  drawHomeButton();
 
   // Title
   M5.Display.setTextSize(2);
@@ -6314,7 +6323,7 @@ void UIManager::handleHistoryTouch(int x, int y, TouchEvent event) {
   }
 
   // --- Filter Buttons (bottom bar layout) ---
-  int btnY = SCREEN_HEIGHT - MENU_BAR_HEIGHT;
+  int btnY = SCREEN_HEIGHT - 60; // Filter bar height
   int btnW = SCREEN_WIDTH / 6;
 
   // Check if touch is in the bottom bar area
@@ -7527,7 +7536,7 @@ void UIManager::minesweeperCheckWin() {
 }
 
 void UIManager::drawMinesweeperGame() {
-  // NOTE: We do NOT call drawMenuBar() to hide the navbar.
+  // Full-screen game — no nav buttons drawn here.
 
   M5.Display.fillScreen(COLOR_WHITE);
 

@@ -32,7 +32,7 @@ enum class ScreenID {
   CALCULATOR,
   NOTES,
   WEATHER,
-  SETTINGS,                 // Main settings menu
+  SETTINGS,                 // Main menu (navigation hub)
   SETTINGS_DEVICE,          // Device Settings (date/time/refresh/sleep)
   SETTINGS_FOSSIBOT,        // Fossibot settings (Quick Actions, Power Limits)
   SETTINGS_FOSSIBOT_TIMERS, // Fossibot timers sub-menu
@@ -50,16 +50,6 @@ enum class PomodoroState { STOPPED, RUNNING, PAUSED, COMPLETED };
 
 // Pomodoro session types
 enum class PomodoroSession { WORK, SHORT_BREAK, LONG_BREAK };
-
-// Menu button definition
-struct MenuButton {
-  int x, y, w, h;
-  const char *label;
-  const char *icon;
-  ScreenID targetScreen;
-};
-
-#include "../ble/fossibot_protocol.h" // Needed for PowerBankData
 
 class UIManager {
 public:
@@ -173,12 +163,19 @@ private:
   static const int BATTERY_BAR_HEIGHT =
       80; // Increased height (approx 2x previous)
   static const int POWER_BAR_HEIGHT = 16; // 2x thicker (2 lines)
-  static const int MENU_BAR_HEIGHT = 60;  // Increased to match visual weight
   static const int PANEL_MARGIN = 10;
 
-  // Menu buttons
-  static const int NUM_MENU_BUTTONS = 6;
-  MenuButton _menuButtons[NUM_MENU_BUTTONS];
+  // HOME button constants (top-left on non-home screens)
+  static const int HOME_BTN_X = 10;
+  static const int HOME_BTN_Y = 10;
+  static const int HOME_BTN_W = 80;
+  static const int HOME_BTN_H = 35;
+
+  // MENU button constants (top-right on home screen)
+  static const int MENU_BTN_W = 80;
+  static const int MENU_BTN_H = 35;
+  static const int MENU_BTN_X = SCREEN_WIDTH - MENU_BTN_W - 10;
+  static const int MENU_BTN_Y = 10;
 
   // --- Timer State ---
   bool _timerRunning = false;
@@ -208,7 +205,10 @@ private:
                       int minutes, bool isInput);
   void drawStatusPanel(int x, int y, int w, int h);
   void drawClockWeatherPanel(int x, int y, int w, int h);
-  void drawMenuBar();
+  void drawHomeButton();   // Draw HOME button (top-left) on non-home screens
+  void drawMenuButton();   // Draw MENU button (top-right) on home screen
+  bool hitTestHomeButton(int x, int y); // Test if touch hits HOME button
+  bool hitTestMenuButton(int x, int y); // Test if touch hits MENU button on home
 
   // Theme-specific home screen drawing
   void drawHomeClassicGrid();
@@ -222,9 +222,6 @@ private:
   void drawToggle(int x, int y, const char *label, bool active);
 
   // Helper methods
-  void initMenuButtons();
-  int hitTestMenuButton(int x, int y);
-  void executeMenuButton(int index);
 
   // Screen-specific handlers
   void handleHomeTouch(int x, int y, TouchEvent event);
@@ -232,7 +229,7 @@ private:
   void handleHomeCompactStatusTouch(int x, int y);
   void handleHomeHorizontalBarsTouch(int x, int y);
   void handleHomeSectorTouch(int x, int y);
-  void handleSettingsTouch(int x, int y);         // Main settings menu touch
+  void handleSettingsTouch(int x, int y);         // Main menu touch
   void handleDeviceSettingsTouch(int x, int y);   // Device settings touch
   void handleFossibotSettingsTouch(int x, int y); // Fossibot settings touch
 
