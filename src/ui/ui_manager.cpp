@@ -697,7 +697,7 @@ void UIManager::drawHomeCompactStatus() {
     // Square ring whose border thickness scales with battery %
     // At 100% the ring is thick (maxThick), at 0% it's thin (minThick)
     // The ring fills clockwise from 12 o'clock
-    int sqSize = 240; // outer square side length
+    int sqSize = 320; // outer square side length
     int sqX = (SCREEN_WIDTH / 2 - sqSize) / 2; // centered in left half
     int sqY = (mainH - sqSize) / 2;
 
@@ -705,8 +705,8 @@ void UIManager::drawHomeCompactStatus() {
     if (pct > 1.0f) pct = 1.0f;
     if (pct < 0.0f) pct = 0.0f;
 
-    int minThick = 3;   // thickness at 0%
-    int maxThick = 30;  // thickness at 100%
+    int minThick = 4;   // thickness at 0%
+    int maxThick = 40;  // thickness at 100%
     int thick = minThick + (int)((maxThick - minThick) * pct);
 
     // Draw thin outline always (the frame)
@@ -776,91 +776,99 @@ void UIManager::drawHomeCompactStatus() {
     M5.Display.print(pctStr);
   }
 
+  // Draw Clock at Top Left
+  int displayHour, displayMinute, displaySecond;
+  RTC::getTime(displayHour, displayMinute, displaySecond);
+  char compactTimeStr[16];
+  snprintf(compactTimeStr, sizeof(compactTimeStr), "%02d:%02d", displayHour, displayMinute);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setFont(&fonts::DejaVu24);
+  M5.Display.setTextSize(1);
+  M5.Display.setCursor(10, 15);
+  M5.Display.print(compactTimeStr);
+
   // --- Right half: Power data stacked, centered ---
   int rightCenter = SCREEN_WIDTH * 3 / 4; // center of right half = 720
-  int dataY = 55; // below MENU button
   int sepWidth = 300;
 
   M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setFont(&fonts::DejaVu24);
 
-  // IN section — centered
-  M5.Display.setTextSize(2);
-  int tw = M5.Display.textWidth("IN");
-  M5.Display.setCursor(rightCenter - tw / 2, dataY);
-  M5.Display.print("IN");
+  if (_powerData.inputPower < 1.0f) {
+    // ONLY OUTPUT IS ACTIVE: Center and enlarge
+    int outY = 160;
+    
+    // OUT section — centered, large
+    M5.Display.setTextSize(3);
+    int tw = M5.Display.textWidth("OUT");
+    M5.Display.setCursor(rightCenter - tw / 2, outY);
+    M5.Display.print("OUT");
 
-  char wBuf[16];
-  snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.inputPower);
-  M5.Display.setTextSize(3);
-  tw = M5.Display.textWidth(wBuf);
-  M5.Display.setCursor(rightCenter - tw / 2, dataY + 48);
-  M5.Display.print(wBuf);
+    char wBuf[16];
+    snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.outputPower);
+    M5.Display.setTextSize(5); // much larger
+    tw = M5.Display.textWidth(wBuf);
+    M5.Display.setCursor(rightCenter - tw / 2, outY + 80);
+    M5.Display.print(wBuf);
 
-  char timeBuf[48];
-  String ftTime = Fossibot::formatTime(_powerData.minutesToFull);
-  snprintf(timeBuf, sizeof(timeBuf), "%s to full", ftTime.c_str());
-  M5.Display.setTextSize(1);
-  tw = M5.Display.textWidth(timeBuf);
-  M5.Display.setCursor(rightCenter - tw / 2, dataY + 115);
-  M5.Display.print(timeBuf);
+    String etTime = Fossibot::formatTime(_powerData.minutesToEmpty);
+    char timeBuf[48];
+    snprintf(timeBuf, sizeof(timeBuf), "%s remaining", etTime.c_str());
+    M5.Display.setTextSize(1.5);
+    tw = M5.Display.textWidth(timeBuf);
+    M5.Display.setCursor(rightCenter - tw / 2, outY + 190);
+    M5.Display.print(timeBuf);
 
-  // Separator
-  int sepY = dataY + 138;
-  M5.Display.drawFastHLine(rightCenter - sepWidth / 2, sepY, sepWidth, COLOR_GRAY);
+  } else {
+    int dataY = 80; // below MENU button
 
-  // OUT section — centered
-  int outY = sepY + 15;
-  M5.Display.setTextSize(2);
-  tw = M5.Display.textWidth("OUT");
-  M5.Display.setCursor(rightCenter - tw / 2, outY);
-  M5.Display.print("OUT");
+    // IN section — centered
+    M5.Display.setTextSize(2);
+    int tw = M5.Display.textWidth("IN");
+    M5.Display.setCursor(rightCenter - tw / 2, dataY);
+    M5.Display.print("IN");
 
-  snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.outputPower);
-  M5.Display.setTextSize(3);
-  tw = M5.Display.textWidth(wBuf);
-  M5.Display.setCursor(rightCenter - tw / 2, outY + 48);
-  M5.Display.print(wBuf);
+    char wBuf[16];
+    snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.inputPower);
+    M5.Display.setTextSize(3);
+    tw = M5.Display.textWidth(wBuf);
+    M5.Display.setCursor(rightCenter - tw / 2, dataY + 56);
+    M5.Display.print(wBuf);
 
-  String etTime = Fossibot::formatTime(_powerData.minutesToEmpty);
-  snprintf(timeBuf, sizeof(timeBuf), "%s remaining", etTime.c_str());
-  M5.Display.setTextSize(1);
-  tw = M5.Display.textWidth(timeBuf);
-  M5.Display.setCursor(rightCenter - tw / 2, outY + 115);
-  M5.Display.print(timeBuf);
+    char timeBuf[48];
+    String ftTime = Fossibot::formatTime(_powerData.minutesToFull);
+    snprintf(timeBuf, sizeof(timeBuf), "%s to full", ftTime.c_str());
+    M5.Display.setTextSize(1);
+    tw = M5.Display.textWidth(timeBuf);
+    M5.Display.setCursor(rightCenter - tw / 2, dataY + 123);
+    M5.Display.print(timeBuf);
 
-  // Separator
-  int sep2Y = outY + 138;
-  M5.Display.drawFastHLine(rightCenter - sepWidth / 2, sep2Y, sepWidth, COLOR_GRAY);
+    // Separator
+    int sepY = dataY + 160;
+    M5.Display.drawFastHLine(rightCenter - sepWidth / 2, sepY, sepWidth, COLOR_GRAY);
 
-  // Clock — centered
-  int clockY = sep2Y + 15;
-  int displayHour, displayMinute, displaySecond;
-  RTC::getTime(displayHour, displayMinute, displaySecond);
-  int displayYear, displayMonth, displayDay, displayDow;
-  RTC::getDate(displayYear, displayMonth, displayDay, displayDow);
+    // OUT section — centered
+    int outY = sepY + 30;
+    M5.Display.setTextSize(2);
+    tw = M5.Display.textWidth("OUT");
+    M5.Display.setCursor(rightCenter - tw / 2, outY);
+    M5.Display.print("OUT");
 
-  const char *dayNames[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-  const char *monthNames[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-  int mon = displayMonth - 1;
-  if (mon < 0 || mon > 11) mon = 0;
-  if (displayDow < 0 || displayDow > 6) displayDow = 0;
+    snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.outputPower);
+    M5.Display.setTextSize(3);
+    tw = M5.Display.textWidth(wBuf);
+    M5.Display.setCursor(rightCenter - tw / 2, outY + 56);
+    M5.Display.print(wBuf);
 
-  char timeStr[16];
-  snprintf(timeStr, sizeof(timeStr), "%02d:%02d", displayHour, displayMinute);
-  M5.Display.setTextSize(3);
-  tw = M5.Display.textWidth(timeStr);
-  M5.Display.setCursor(rightCenter - tw / 2, clockY);
-  M5.Display.print(timeStr);
+    String etTime = Fossibot::formatTime(_powerData.minutesToEmpty);
+    snprintf(timeBuf, sizeof(timeBuf), "%s remaining", etTime.c_str());
+    M5.Display.setTextSize(1);
+    tw = M5.Display.textWidth(timeBuf);
+    M5.Display.setCursor(rightCenter - tw / 2, outY + 123);
+    M5.Display.print(timeBuf);
+  }
 
-  char dateStr[32];
-  snprintf(dateStr, sizeof(dateStr), "%s %d %s %d", dayNames[displayDow],
-           displayDay, monthNames[mon], displayYear);
-  M5.Display.setTextSize(1);
-  tw = M5.Display.textWidth(dateStr);
-  M5.Display.setCursor(rightCenter - tw / 2, clockY + 55);
-  M5.Display.print(dateStr);
+  // Clock and Date removed from bottom (Clock moved to top-left)
 }
 
 // ============================================================================
