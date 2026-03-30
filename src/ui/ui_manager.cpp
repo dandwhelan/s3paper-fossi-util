@@ -651,9 +651,9 @@ void UIManager::drawHomeCompactStatus() {
   int toggleSpacing = SCREEN_WIDTH / 4;
   M5.Display.setFont(&fonts::DejaVu24);
   M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setTextSize(1);
 
-  // USB toggle
+  // USB toggle — use textSize=2 to match DC/AC
+  M5.Display.setTextSize(2);
   int usbCx = toggleSpacing;
   int labelTw = M5.Display.textWidth("USB");
   M5.Display.setCursor(usbCx - labelTw / 2, toggleY + 5);
@@ -661,6 +661,7 @@ void UIManager::drawHomeCompactStatus() {
   drawToggle(usbCx - 15, toggleY + 10, "", _powerData.usbActive);
 
   // DC toggle
+  M5.Display.setTextSize(2);
   int dcCx = toggleSpacing * 2;
   labelTw = M5.Display.textWidth("DC");
   M5.Display.setCursor(dcCx - labelTw / 2, toggleY + 5);
@@ -668,6 +669,7 @@ void UIManager::drawHomeCompactStatus() {
   drawToggle(dcCx - 15, toggleY + 10, "", _powerData.dcActive);
 
   // AC toggle
+  M5.Display.setTextSize(2);
   int acCx = toggleSpacing * 3;
   labelTw = M5.Display.textWidth("AC");
   M5.Display.setCursor(acCx - labelTw / 2, toggleY + 5);
@@ -774,53 +776,64 @@ void UIManager::drawHomeCompactStatus() {
     M5.Display.print(pctStr);
   }
 
-  // --- Right half: Power data stacked ---
-  int rightX = SCREEN_WIDTH / 2 + 20;
-  int rightEdge = SCREEN_WIDTH - 20;
-  int dataY = 20;
+  // --- Right half: Power data stacked, centered ---
+  int rightCenter = SCREEN_WIDTH * 3 / 4; // center of right half = 720
+  int dataY = 55; // below MENU button
+  int sepWidth = 300;
 
   M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setFont(&fonts::DejaVu24);
 
-  // IN row — label left, watts far right
+  // IN section — centered
   M5.Display.setTextSize(2);
-  M5.Display.setCursor(rightX, dataY + 8);
+  int tw = M5.Display.textWidth("IN");
+  M5.Display.setCursor(rightCenter - tw / 2, dataY);
   M5.Display.print("IN");
+
   char wBuf[16];
   snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.inputPower);
   M5.Display.setTextSize(3);
-  int ww = M5.Display.textWidth(wBuf);
-  M5.Display.setCursor(rightEdge - ww, dataY);
+  tw = M5.Display.textWidth(wBuf);
+  M5.Display.setCursor(rightCenter - tw / 2, dataY + 48);
   M5.Display.print(wBuf);
+
+  char timeBuf[48];
+  String ftTime = Fossibot::formatTime(_powerData.minutesToFull);
+  snprintf(timeBuf, sizeof(timeBuf), "%s to full", ftTime.c_str());
   M5.Display.setTextSize(1);
-  M5.Display.setCursor(rightX, dataY + 60);
-  M5.Display.print(Fossibot::formatTime(_powerData.minutesToFull));
-  M5.Display.print(" to full");
+  tw = M5.Display.textWidth(timeBuf);
+  M5.Display.setCursor(rightCenter - tw / 2, dataY + 115);
+  M5.Display.print(timeBuf);
 
   // Separator
-  int sepY = dataY + 90;
-  M5.Display.drawFastHLine(rightX, sepY, rightEdge - rightX, COLOR_GRAY);
+  int sepY = dataY + 138;
+  M5.Display.drawFastHLine(rightCenter - sepWidth / 2, sepY, sepWidth, COLOR_GRAY);
 
-  // OUT row — label left, watts far right
+  // OUT section — centered
   int outY = sepY + 15;
   M5.Display.setTextSize(2);
-  M5.Display.setCursor(rightX, outY + 8);
+  tw = M5.Display.textWidth("OUT");
+  M5.Display.setCursor(rightCenter - tw / 2, outY);
   M5.Display.print("OUT");
+
   snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.outputPower);
   M5.Display.setTextSize(3);
-  ww = M5.Display.textWidth(wBuf);
-  M5.Display.setCursor(rightEdge - ww, outY);
+  tw = M5.Display.textWidth(wBuf);
+  M5.Display.setCursor(rightCenter - tw / 2, outY + 48);
   M5.Display.print(wBuf);
+
+  String etTime = Fossibot::formatTime(_powerData.minutesToEmpty);
+  snprintf(timeBuf, sizeof(timeBuf), "%s remaining", etTime.c_str());
   M5.Display.setTextSize(1);
-  M5.Display.setCursor(rightX, outY + 60);
-  M5.Display.print(Fossibot::formatTime(_powerData.minutesToEmpty));
-  M5.Display.print(" remaining");
+  tw = M5.Display.textWidth(timeBuf);
+  M5.Display.setCursor(rightCenter - tw / 2, outY + 115);
+  M5.Display.print(timeBuf);
 
   // Separator
-  int sep2Y = outY + 90;
-  M5.Display.drawFastHLine(rightX, sep2Y, rightEdge - rightX, COLOR_GRAY);
+  int sep2Y = outY + 138;
+  M5.Display.drawFastHLine(rightCenter - sepWidth / 2, sep2Y, sepWidth, COLOR_GRAY);
 
-  // Clock — time far right, date below left
+  // Clock — centered
   int clockY = sep2Y + 15;
   int displayHour, displayMinute, displaySecond;
   RTC::getTime(displayHour, displayMinute, displaySecond);
@@ -837,15 +850,16 @@ void UIManager::drawHomeCompactStatus() {
   char timeStr[16];
   snprintf(timeStr, sizeof(timeStr), "%02d:%02d", displayHour, displayMinute);
   M5.Display.setTextSize(3);
-  int ttw = M5.Display.textWidth(timeStr);
-  M5.Display.setCursor(rightEdge - ttw, clockY);
+  tw = M5.Display.textWidth(timeStr);
+  M5.Display.setCursor(rightCenter - tw / 2, clockY);
   M5.Display.print(timeStr);
 
   char dateStr[32];
   snprintf(dateStr, sizeof(dateStr), "%s %d %s %d", dayNames[displayDow],
            displayDay, monthNames[mon], displayYear);
   M5.Display.setTextSize(1);
-  M5.Display.setCursor(rightX, clockY + 55);
+  tw = M5.Display.textWidth(dateStr);
+  M5.Display.setCursor(rightCenter - tw / 2, clockY + 55);
   M5.Display.print(dateStr);
 }
 
