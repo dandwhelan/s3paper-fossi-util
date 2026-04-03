@@ -11,6 +11,7 @@
 #include "../epub/EpubList/EpubReader.h"
 #include "../epub/EpubList/State.h"
 #include "../epub/M5GFXRenderer.h"
+#include "../mqtt/givenergy_data.h"
 #include "../power_history.h"
 #include <Arduino.h>
 #include <M5Unified.h>
@@ -118,9 +119,14 @@ public:
   void goBack();
 
   /**
-   * Update power bank data on display
+   * Update power bank data on display (Campervan mode)
    */
   void updatePowerBankData(const Fossibot::PowerBankData &data);
+
+  /**
+   * Update solar data on display (Home mode)
+   */
+  void updateSolarData(const GivEnergy::SolarData &data);
 
   /**
    * Force full screen refresh
@@ -151,9 +157,13 @@ private:
   unsigned long _lastActivityTime = 0;
   unsigned long _bleDisconnectedTime = 0; // Timestamp when BLE disconnected
 
-  // Power bank data cache
+  // Power bank data cache (Campervan mode)
   Fossibot::PowerBankData _powerData;
   bool _powerDataDirty;
+
+  // Solar data cache (Home mode)
+  GivEnergy::SolarData _solarData;
+  bool _solarDataDirty = false;
 
   // Display dimensions
   static const int SCREEN_WIDTH = 960;
@@ -215,6 +225,9 @@ private:
   void drawHomeCompactStatus();
   void drawHomeHorizontalBars();
   void drawHomeSector();
+
+  // Home mode (GivEnergy) dashboard
+  void drawHomeGivEnergy();
   void drawButton(int x, int y, int w, int h, const char *label,
                   bool selected = false);
   void drawProgressBar(int x, int y, int w, int h, float percent,

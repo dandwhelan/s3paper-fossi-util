@@ -34,6 +34,12 @@ public:
    */
   void setDefaults();
 
+  // Device mode: "campervan" (BLE/Fossibot) or "home" (WiFi/MQTT/GivEnergy)
+  String getMode() const { return _mode; }
+  void setMode(const String &mode);
+  bool isHomeMode() const { return _mode == "home"; }
+  bool isCampervanMode() const { return _mode != "home"; }
+
   // WiFi settings
   String getWiFiSSID() const { return _wifiSSID; }
   String getWiFiPassword() const { return _wifiPassword; }
@@ -42,6 +48,16 @@ public:
   // Bluetooth settings
   String getFossibotMAC() const { return _fossibotMAC; }
   void setFossibotMAC(const String &mac);
+
+  // MQTT settings (Home mode)
+  String getMQTTBroker() const { return _mqttBroker; }
+  int getMQTTPort() const { return _mqttPort; }
+  String getMQTTUsername() const { return _mqttUsername; }
+  String getMQTTPassword() const { return _mqttPassword; }
+  String getInverterSN() const { return _inverterSN; }
+  void setMQTT(const String &broker, int port, const String &username,
+               const String &password);
+  void setInverterSN(const String &sn);
 
   // Display settings
   String getTheme() const { return _theme; }
@@ -74,12 +90,22 @@ public:
 
 private:
   // Settings variables
+  // Device mode
+  String _mode;
+
   // WiFi
   String _wifiSSID;
   String _wifiPassword;
 
   // Bluetooth
   String _fossibotMAC;
+
+  // MQTT
+  String _mqttBroker;
+  int _mqttPort;
+  String _mqttUsername;
+  String _mqttPassword;
+  String _inverterSN;
 
   // Display
   String _theme;

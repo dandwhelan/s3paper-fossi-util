@@ -18,6 +18,7 @@
 #include "hardware/display.h"
 #include "hardware/rtc.h"
 #include "hardware/touch.h"
+#include "mqtt/mqtt_client.h"
 #include "ui/ui_manager.h"
 #include "utils/config.h"
 #include "utils/sd_manager.h"
@@ -30,12 +31,14 @@
 void initHardware();
 void initSD();
 void initBLE();
+void initMQTT();
 void mainLoop();
 void showBootScreen();
 
 // Global instances
 UIManager *uiManager = nullptr;
 FossibotBLE *bleClient = nullptr;
+GivEnergyMQTT *mqttClient = nullptr;
 SDManager *sdManager = nullptr;
 Config *config = nullptr;
 
@@ -198,8 +201,14 @@ void setup() {
   uiManager = new UIManager();
   uiManager->init();
 
-  // Initialize BLE client for Fossibot
-  initBLE();
+  // Initialize connectivity based on mode
+  if (config->isHomeMode()) {
+    Serial.println("Mode: HOME (WiFi + MQTT / GivEnergy)");
+    initMQTT();
+  } else {
+    Serial.println("Mode: CAMPERVAN (BLE / Fossibot)");
+    initBLE();
+  }
 
   // CRITICAL: Small delay for BLE/EPD coexistence stability
   // EPD display can crash if updated too soon after BLE radio ops
@@ -375,21 +384,30 @@ void loop() {
     }
   }
 
-  // Update BLE data (handles reconnection)
+  // Update connectivity based on mode
   if (bleClient) {
+    // Campervan mode: BLE to Fossibot
     bleClient->update();
 
-    // Update UI data if connected
     if (bleClient->isConnected()) {
       uiManager->updatePowerBankData(bleClient->getData());
     }
+
+    // CRITICAL: Skip UI updates during BLE connection attempts to prevent
+    // EPD/BLE crash
+    if (bleClient->isConnecting()) {
+      delay(50);
+      return;
+    }
   }
 
-  // CRITICAL: Skip UI updates during BLE connection attempts to prevent EPD/BLE
-  // crash
-  if (bleClient && bleClient->isConnecting()) {
-    delay(50); // Small delay during BLE ops
-    return;    // Skip rest of loop - no UI updates during connection
+  if (mqttClient) {
+    // Home mode: WiFi + MQTT to GivEnergy
+    mqttClient->update();
+
+    if (mqttClient->isMQTTConnected()) {
+      uiManager->updateSolarData(mqttClient->getData());
+    }
   }
 
   // Update UI (handles its own refresh timing)
@@ -518,4 +536,26 @@ void initBLE() {
     Serial.println("No Fossibot MAC configured. BLE disabled.");
     Serial.println("Configure MAC address in /config/settings.json");
   }
+}
+
+void initMQTT() {
+  Serial.println("Initializing WiFi + MQTT (Home Mode)...");
+
+  String ssid = config->getWiFiSSID();
+  String password = config->getWiFiPassword();
+  String broker = config->getMQTTBroker();
+  int port = config->getMQTTPort();
+  String inverterSN = config->getInverterSN();
+
+  if (ssid.isEmpty() || broker.isEmpty() || inverterSN.isEmpty()) {
+    Serial.println("MQTT: Missing config (WiFi SSID, MQTT broker, or inverter SN)");
+    Serial.println("Configure in /config/settings.json");
+    return;
+  }
+
+  mqttClient = new GivEnergyMQTT();
+  mqttClient->init(ssid, password, broker, port, config->getMQTTUsername(),
+                   config->getMQTTPassword(), inverterSN);
+
+  Serial.println("MQTT: Init complete. WiFi connecting...");
 }
