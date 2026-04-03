@@ -13,6 +13,7 @@ Config::Config() { setDefaults(); }
 Config::~Config() {}
 
 void Config::setDefaults() {
+  _mode = "campervan";
   _wifiSSID = "";
   _wifiPassword = "";
   _theme = "classic_grid";
@@ -27,6 +28,13 @@ void Config::setDefaults() {
   _alarmEnabled = false;
   _alarmHour = 7;
   _alarmMinute = 0;
+
+  // MQTT defaults
+  _mqttBroker = "";
+  _mqttPort = 1883;
+  _mqttUsername = "";
+  _mqttPassword = "";
+  _inverterSN = "";
 }
 
 bool Config::load(const char *path) {
@@ -49,10 +57,25 @@ bool Config::load(const char *path) {
     return false;
   }
 
+  // Device mode
+  _mode = doc["mode"] | "campervan";
+  Serial.printf("Config: Mode = '%s'\n", _mode.c_str());
+
   // WiFi
   if (doc["wifi"].is<JsonObject>()) {
     _wifiSSID = doc["wifi"]["ssid"].as<String>();
     _wifiPassword = doc["wifi"]["password"].as<String>();
+  }
+
+  // MQTT
+  if (doc["mqtt"].is<JsonObject>()) {
+    _mqttBroker = doc["mqtt"]["broker"].as<String>();
+    _mqttPort = doc["mqtt"]["port"] | 1883;
+    _mqttUsername = doc["mqtt"]["username"].as<String>();
+    _mqttPassword = doc["mqtt"]["password"].as<String>();
+    _inverterSN = doc["mqtt"]["inverter_sn"].as<String>();
+    Serial.printf("Config: MQTT broker = '%s', inverter = '%s'\n",
+                  _mqttBroker.c_str(), _inverterSN.c_str());
   }
 
   // Bluetooth - support both nested and flat format
@@ -105,13 +128,22 @@ bool Config::save(const char *path) {
 
   JsonDocument doc;
 
+  // Device mode
+  doc["mode"] = _mode;
+
   // WiFi
   doc["wifi"]["ssid"] = _wifiSSID;
-  doc["wifi_ssid"] = _wifiSSID;
-  doc["wifi_pass"] = _wifiPassword;
+  doc["wifi"]["password"] = _wifiPassword;
 
   // Bluetooth
-  doc["fossibot_mac"] = _fossibotMAC;
+  doc["bluetooth"]["fossibot_mac"] = _fossibotMAC;
+
+  // MQTT
+  doc["mqtt"]["broker"] = _mqttBroker;
+  doc["mqtt"]["port"] = _mqttPort;
+  doc["mqtt"]["username"] = _mqttUsername;
+  doc["mqtt"]["password"] = _mqttPassword;
+  doc["mqtt"]["inverter_sn"] = _inverterSN;
 
   // Display (nested format to match load)
   doc["display"]["theme"] = _theme;
@@ -167,3 +199,15 @@ void Config::setWeather(const String &apiKey, const String &city,
   _weatherCity = city;
   _weatherUnits = units;
 }
+
+void Config::setMode(const String &mode) { _mode = mode; }
+
+void Config::setMQTT(const String &broker, int port, const String &username,
+                     const String &password) {
+  _mqttBroker = broker;
+  _mqttPort = port;
+  _mqttUsername = username;
+  _mqttPassword = password;
+}
+
+void Config::setInverterSN(const String &sn) { _inverterSN = sn; }

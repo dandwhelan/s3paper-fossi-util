@@ -1,10 +1,18 @@
 {
+    "mode": "campervan",
     "wifi": {
         "ssid": "",
         "password": ""
     },
     "bluetooth": {
         "fossibot_mac": "DC:1E:D5:E4:07:1E"
+    },
+    "mqtt": {
+        "broker": "",
+        "port": 1883,
+        "username": "",
+        "password": "",
+        "inverter_sn": ""
     },
     "display": {
         "theme": "classic_grid",
