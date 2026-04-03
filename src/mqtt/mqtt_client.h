@@ -71,6 +71,7 @@ private:
   // State
   bool _initialized = false;
   bool _wifiConnecting = false;
+  bool _ntpSynced = false;
   unsigned long _lastWiFiAttempt = 0;
   unsigned long _lastMQTTAttempt = 0;
   unsigned long _wifiConnectStart = 0;
@@ -83,6 +84,7 @@ private:
   void connectWiFi();
   void connectMQTT();
   void subscribeTopics();
+  void syncNTP();
 
   /**
    * MQTT message callback - parses GivTCP3 topic payloads

@@ -6,6 +6,7 @@
 
 #include "ui_manager.h"
 #include "../ble/ble_client.h"
+#include "../mqtt/mqtt_client.h"
 #include "../fonts/ReaderFonts.h"  // Reader font family registry
 #include "../fonts/TerminusBold.h" // Terminus Bold font
 #include "../hardware/battery.h"
@@ -1257,22 +1258,49 @@ void UIManager::drawHomeGivEnergy() {
   M5.Display.setCursor(barX + barW - pwrW - 4, barY + 1);
   M5.Display.print(batPwrStr);
 
-  // Connection status indicator
-  bool stale = d.isStale();
+  // Connection status indicator with WiFi/MQTT detail
+  extern GivEnergyMQTT *mqttClient;
   M5.Display.setFont(&fonts::Font2);
-  if (stale) {
-    M5.Display.setTextColor(TFT_RED);
-    M5.Display.setCursor(10, barY + barH + 4);
-    M5.Display.print("MQTT: No data");
+  int statusTextY = barY + barH + 4;
+
+  if (mqttClient) {
+    bool wifiOk = mqttClient->isWiFiConnected();
+    bool mqttOk = mqttClient->isMQTTConnected();
+    bool stale = d.isStale();
+
+    // WiFi status
+    M5.Display.setCursor(10, statusTextY);
+    if (!wifiOk) {
+      M5.Display.setTextColor(COLOR_RED);
+      M5.Display.print("WiFi: Disconnected");
+    } else {
+      M5.Display.setTextColor(0x0400); // Dark green
+      char wifiStr[32];
+      snprintf(wifiStr, sizeof(wifiStr), "WiFi: %ddBm", mqttClient->getRSSI());
+      M5.Display.print(wifiStr);
+    }
+
+    // MQTT status
+    M5.Display.setCursor(220, statusTextY);
+    if (!mqttOk) {
+      M5.Display.setTextColor(COLOR_RED);
+      M5.Display.print("MQTT: Disconnected");
+    } else if (stale) {
+      M5.Display.setTextColor(0xC600); // Orange
+      M5.Display.print("MQTT: Stale data");
+    } else {
+      M5.Display.setTextColor(0x0400);
+      M5.Display.print("MQTT: Live");
+    }
   } else {
-    M5.Display.setTextColor(TFT_DARKGREEN);
-    M5.Display.setCursor(10, barY + barH + 4);
-    M5.Display.print("MQTT: Connected");
+    M5.Display.setTextColor(COLOR_RED);
+    M5.Display.setCursor(10, statusTextY);
+    M5.Display.print("MQTT: Not configured");
   }
 
   // Mode label
-  M5.Display.setTextColor(TFT_BLACK);
-  M5.Display.setCursor(200, barY + barH + 4);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(480, statusTextY);
   M5.Display.print("HOME MODE - GivEnergy");
 
   // --- Content Area (3 panels) ---
@@ -2053,12 +2081,16 @@ void UIManager::drawSettingsScreen() {
   drawButton(col2X, row2Y, btnW, btnH, "NOTES", true);
   drawButton(col3X, row2Y, btnW, btnH, "HISTORY");
 
-  // Row 3: Device | Fossibot | Theme
+  // Row 3: Device | Fossibot/Mode | Theme
   int row3Y = row2Y + btnH + spacing;
   drawButton(col1X, row3Y, btnW, btnH, "DEVICE");
-  drawButton(col2X, row3Y, btnW, btnH, "FOSSIBOT");
   {
     extern Config *config;
+    // Mode toggle button (replaces FOSSIBOT in home mode)
+    const char *modeLabel =
+        (config && config->isHomeMode()) ? "Mode: HOME" : "Mode: CAMPER";
+    drawButton(col2X, row3Y, btnW, btnH, modeLabel);
+
     String theme = config ? config->getTheme() : "classic_grid";
     const char *themeName = "Classic";
     if (theme == "compact_status") themeName = "Compact";
@@ -2134,7 +2166,36 @@ void UIManager::handleSettingsTouch(int x, int y) {
     return;
   }
   if (isHit(col2X, row3Y, btnW, btnH)) {
-    navigateTo(ScreenID::SETTINGS_FOSSIBOT);
+    // Mode toggle: Campervan <-> Home
+    extern Config *config;
+    if (config) {
+      if (config->isHomeMode()) {
+        config->setMode("campervan");
+      } else {
+        config->setMode("home");
+      }
+      config->save("/config/settings.json");
+      Serial.printf("UI: Mode changed to %s (restart to apply)\n",
+                    config->getMode().c_str());
+
+      // Show restart required message
+      M5.Display.fillScreen(COLOR_WHITE);
+      M5.Display.setTextColor(COLOR_BLACK);
+      M5.Display.setFont(&fonts::Font4);
+      M5.Display.setTextDatum(middle_center);
+      M5.Display.drawString("Mode changed to:", SCREEN_WIDTH / 2,
+                            SCREEN_HEIGHT / 2 - 40);
+      M5.Display.drawString(
+          config->isHomeMode() ? "HOME (WiFi/MQTT)" : "CAMPERVAN (BLE)",
+          SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
+      M5.Display.drawString("Restart device to apply", SCREEN_WIDTH / 2,
+                            SCREEN_HEIGHT / 2 + 50);
+      M5.Display.setTextDatum(top_left);
+      M5.Display.display();
+      delay(3000);
+    }
+    _needsRefresh = true;
+    _lastRefresh = 0;
     return;
   }
   if (isHit(col3X, row3Y, btnW, btnH)) {
@@ -4432,33 +4493,36 @@ void UIManager::checkPowerManagement() {
     return;
   }
 
-  // BLE connection status
-  extern FossibotBLE *bleClient;
-  bool bleConnected = (bleClient && bleClient->isConnected());
-
-  // Track BLE disconnection time
-  if (bleConnected) {
-    _bleDisconnectedTime = 0; // Reset when connected
-  } else if (_bleDisconnectedTime == 0) {
-    _bleDisconnectedTime = millis(); // Record when first disconnected
-  }
-
-  // 1. Deep Sleep Logic: Only if BLE disconnected for 1 hour
-  // Check config just in case user set it to 0 (disabled)
+  // Deep sleep logic (Campervan mode only - Home mode is mains-powered)
   extern Config *config;
-  bool sleepDisabled = (config && config->getAutoSleepMinutes() == 0);
+  if (config && config->isHomeMode()) {
+    // Home mode: skip deep sleep entirely
+  } else {
+    // Campervan mode: BLE-based deep sleep
+    extern FossibotBLE *bleClient;
+    bool bleConnected = (bleClient && bleClient->isConnected());
 
-  // Never sleep while Timer or Pomodoro is actively running
-  bool timerActive = (_clockMode == ClockMode::TIMER && _timerRunning);
-  bool pomodoroActive = (_clockMode == ClockMode::POMODORO &&
-                         _pomodoroState == PomodoroState::RUNNING);
+    // Track BLE disconnection time
+    if (bleConnected) {
+      _bleDisconnectedTime = 0; // Reset when connected
+    } else if (_bleDisconnectedTime == 0) {
+      _bleDisconnectedTime = millis(); // Record when first disconnected
+    }
 
-  unsigned long bleDisconnectDuration = 60 * 60 * 1000UL; // 1 hour
-  if (!sleepDisabled && !timerActive && !pomodoroActive && !bleConnected &&
-      _bleDisconnectedTime > 0 &&
-      (millis() - _bleDisconnectedTime > bleDisconnectDuration)) {
-    Serial.println("BLE disconnected for 1 hour, entering deep sleep...");
-    enterDeepSleep();
+    bool sleepDisabled = (config && config->getAutoSleepMinutes() == 0);
+
+    // Never sleep while Timer or Pomodoro is actively running
+    bool timerActive = (_clockMode == ClockMode::TIMER && _timerRunning);
+    bool pomodoroActive = (_clockMode == ClockMode::POMODORO &&
+                           _pomodoroState == PomodoroState::RUNNING);
+
+    unsigned long bleDisconnectDuration = 60 * 60 * 1000UL; // 1 hour
+    if (!sleepDisabled && !timerActive && !pomodoroActive && !bleConnected &&
+        _bleDisconnectedTime > 0 &&
+        (millis() - _bleDisconnectedTime > bleDisconnectDuration)) {
+      Serial.println("BLE disconnected for 1 hour, entering deep sleep...");
+      enterDeepSleep();
+    }
   }
 
   // Check if the current screen requires high performance

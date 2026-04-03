@@ -3,6 +3,9 @@
  */
 
 #include "mqtt_client.h"
+#include "../hardware/rtc.h"
+#include <sys/time.h>
+#include <time.h>
 
 // Static instance pointer for callback routing
 GivEnergyMQTT *GivEnergyMQTT::_instance = nullptr;
@@ -78,6 +81,11 @@ void GivEnergyMQTT::update() {
     Serial.printf("MQTT: WiFi connected! IP=%s, RSSI=%d\n",
                   WiFi.localIP().toString().c_str(), WiFi.RSSI());
 #endif
+
+    // Sync time from NTP on first WiFi connection
+    if (!_ntpSynced) {
+      syncNTP();
+    }
   }
 
   if (!_mqttClient.connected()) {
@@ -242,4 +250,41 @@ void GivEnergyMQTT::messageCallback(char *topic, byte *payload,
   } else if (topicStr.endsWith("/Battery_Discharge_Energy_Today_kWh")) {
     data.batteryDischargeToday = value;
   }
+}
+
+void GivEnergyMQTT::syncNTP() {
+#ifdef SERIAL_DEBUG
+  Serial.println("NTP: Syncing time...");
+#endif
+
+  // Configure NTP (pool.ntp.org, no TZ offset - RTC stores UTC)
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+
+  // Wait up to 5 seconds for NTP response
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo, 5000)) {
+#ifdef SERIAL_DEBUG
+    Serial.println("NTP: Failed to get time");
+#endif
+    return;
+  }
+
+  _ntpSynced = true;
+
+  // Write back to RTC for persistence across reboots
+  int year = timeinfo.tm_year + 1900;
+  int month = timeinfo.tm_mon + 1;
+  int day = timeinfo.tm_mday;
+  int hour = timeinfo.tm_hour;
+  int minute = timeinfo.tm_min;
+  int sec = timeinfo.tm_sec;
+  int dow = timeinfo.tm_wday;
+
+  RTC::setDate(year, month, day);
+  RTC::setTime(hour, minute, sec);
+
+#ifdef SERIAL_DEBUG
+  Serial.printf("NTP: Time synced: %04d-%02d-%02d %02d:%02d:%02d\n", year,
+                month, day, hour, minute, sec);
+#endif
 }
