@@ -1219,291 +1219,432 @@ void UIManager::drawErrorBanner(int x, int y, int w, int h) {
 void UIManager::drawHomeGivEnergy() {
   const GivEnergy::SolarData &d = _solarData;
 
-  // --- Top Status Bar (80px) ---
-  int statusY = 5;
-  int statusH = 70;
+  // ==========================================================================
+  // Energy Flow Diagram (GivEnergy-style)
+  //
+  // Layout: Central hub with 4 branches
+  //   - Top:    Solar panel icon + PV power + daily kWh
+  //   - Left:   Battery icon + SOC% + charge/discharge
+  //   - Right:  Grid tower icon + import/export
+  //   - Bottom: House icon + load power
+  //
+  // Flow lines use dashed segments; thickness indicates power magnitude.
+  // On e-ink grayscale, gray lines = inactive/zero flow.
+  // ==========================================================================
 
-  // Battery percentage bar (full width background)
-  float batPct = d.batteryPercent;
-  int barW = SCREEN_WIDTH - 20;
-  int barH = 16;
-  int barX = 10;
-  int barY = statusY + 4;
+  // --- Layout geometry ---
+  const int cx = SCREEN_WIDTH / 2;   // Center hub X (480)
+  const int cy = SCREEN_HEIGHT / 2;  // Center hub Y (270)
+  const int hubR = 8;                // Hub dot radius
+  const int armLen = 160;            // Length of each flow arm
 
-  // Battery bar background
-  M5.Display.drawRect(barX, barY, barW, barH, COLOR_BLACK);
-  int fillW = (int)(barW * batPct / 100.0f);
-  if (fillW > barW - 2)
-    fillW = barW - 2;
-  uint16_t batColor = (batPct > 50) ? TFT_DARKGREEN : (batPct > 20) ? 0xC600 : TFT_RED;
-  if (fillW > 0)
-    M5.Display.fillRect(barX + 1, barY + 1, fillW, barH - 2, batColor);
+  // Node positions (icon centers)
+  const int solarX = cx, solarY = cy - armLen - 30;
+  const int battX = cx - armLen - 80, battY = cy;
+  const int gridX = cx + armLen + 80, gridY = cy;
+  const int houseX = cx, houseY = cy + armLen + 30;
 
-  // Battery text overlay
-  M5.Display.setTextColor(TFT_BLACK);
-  M5.Display.setFont(&fonts::Font2);
-  char batStr[32];
-  snprintf(batStr, sizeof(batStr), "Battery: %.0f%%", batPct);
-  M5.Display.setCursor(barX + 4, barY + 1);
-  M5.Display.print(batStr);
+  // --- Helper: draw dashed line ---
+  // Draws a dashed line between two points with configurable thickness
+  auto drawDashedLine = [](int x1, int y1, int x2, int y2, int thickness,
+                           uint16_t color, int dashLen = 12, int gapLen = 8) {
+    float dx = x2 - x1;
+    float dy = y2 - y1;
+    float len = sqrtf(dx * dx + dy * dy);
+    if (len < 1)
+      return;
+    float ux = dx / len; // Unit vector
+    float uy = dy / len;
+    float pos = 0;
+    while (pos < len) {
+      float segEnd = pos + dashLen;
+      if (segEnd > len)
+        segEnd = len;
+      int sx = x1 + (int)(ux * pos);
+      int sy = y1 + (int)(uy * pos);
+      int ex = x1 + (int)(ux * segEnd);
+      int ey = y1 + (int)(uy * segEnd);
+      // Draw thick line by offsetting perpendicular
+      for (int t = -(thickness / 2); t <= thickness / 2; t++) {
+        int ox = (int)(-uy * t); // Perpendicular offset
+        int oy = (int)(ux * t);
+        M5.Display.drawLine(sx + ox, sy + oy, ex + ox, ey + oy, color);
+      }
+      pos += dashLen + gapLen;
+    }
+  };
 
-  // Battery power on right side of bar
-  char batPwrStr[32];
-  if (d.chargePower > 5) {
-    snprintf(batPwrStr, sizeof(batPwrStr), "Charging %.0fW", d.chargePower);
-  } else if (d.dischargePower > 5) {
-    snprintf(batPwrStr, sizeof(batPwrStr), "Discharging %.0fW",
-             d.dischargePower);
-  } else {
-    snprintf(batPwrStr, sizeof(batPwrStr), "Idle");
+  // --- Helper: line thickness based on power (1-4px) ---
+  auto flowThickness = [](float watts) -> int {
+    float w = fabsf(watts);
+    if (w < 5)
+      return 1;
+    if (w < 500)
+      return 2;
+    if (w < 2000)
+      return 3;
+    return 4;
+  };
+
+  // --- Helper: flow color (black if active, light gray if zero) ---
+  auto flowColor = [](float watts) -> uint16_t {
+    return (fabsf(watts) > 5) ? COLOR_BLACK : COLOR_LIGHT_GRAY;
+  };
+
+  // ==========================================================================
+  // 1. Draw flow lines (behind icons)
+  // ==========================================================================
+
+  // Solar -> Hub (vertical, top)
+  float solarFlow = d.pvPowerTotal;
+  drawDashedLine(cx, solarY + 45, cx, cy - hubR - 2,
+                 flowThickness(solarFlow), flowColor(solarFlow));
+
+  // Hub -> Battery (horizontal, left) - charging
+  // Battery -> Hub (horizontal, left) - discharging
+  float battFlow = d.chargePower > 5 ? d.chargePower : d.dischargePower;
+  drawDashedLine(cx - hubR - 2, cy, battX + 65, cy, flowThickness(battFlow),
+                 flowColor(battFlow));
+
+  // Hub -> Grid (horizontal, right) - exporting
+  // Grid -> Hub (horizontal, right) - importing
+  float gridFlow = d.importPower > 5 ? d.importPower : d.exportPower;
+  drawDashedLine(cx + hubR + 2, cy, gridX - 55, cy, flowThickness(gridFlow),
+                 flowColor(gridFlow));
+
+  // Hub -> House (vertical, bottom)
+  float houseFlow = d.loadPower;
+  drawDashedLine(cx, cy + hubR + 2, cx, houseY - 35, flowThickness(houseFlow),
+                 flowColor(houseFlow));
+
+  // ==========================================================================
+  // 2. Draw flow direction arrows
+  // ==========================================================================
+  auto drawArrow = [](int x, int y, int dir, uint16_t color) {
+    // dir: 0=down, 1=up, 2=right, 3=left
+    int sz = 8;
+    switch (dir) {
+    case 0: // Down
+      M5.Display.fillTriangle(x, y + sz, x - sz, y - sz, x + sz, y - sz,
+                              color);
+      break;
+    case 1: // Up
+      M5.Display.fillTriangle(x, y - sz, x - sz, y + sz, x + sz, y + sz,
+                              color);
+      break;
+    case 2: // Right
+      M5.Display.fillTriangle(x + sz, y, x - sz, y - sz, x - sz, y + sz,
+                              color);
+      break;
+    case 3: // Left
+      M5.Display.fillTriangle(x - sz, y, x + sz, y - sz, x + sz, y + sz,
+                              color);
+      break;
+    }
+  };
+
+  // Solar arrow (always down toward hub if generating)
+  if (solarFlow > 5)
+    drawArrow(cx, cy - hubR - 20, 0, COLOR_BLACK);
+
+  // Battery arrow
+  if (d.chargePower > 5)
+    drawArrow(battX + 80, cy, 3, COLOR_BLACK); // Toward battery
+  else if (d.dischargePower > 5)
+    drawArrow(cx - hubR - 20, cy, 2, COLOR_BLACK); // Away from battery (err: toward hub)
+
+  // Grid arrow
+  if (d.importPower > 5)
+    drawArrow(cx + hubR + 20, cy, 3, COLOR_BLACK); // From grid toward hub
+  else if (d.exportPower > 5)
+    drawArrow(gridX - 70, cy, 2, COLOR_BLACK); // Toward grid
+
+  // House arrow (always down toward house if consuming)
+  if (houseFlow > 5)
+    drawArrow(cx, houseY - 50, 0, COLOR_BLACK);
+
+  // ==========================================================================
+  // 3. Draw central hub
+  // ==========================================================================
+  M5.Display.fillCircle(cx, cy, hubR, COLOR_BLACK);
+  M5.Display.fillCircle(cx, cy, hubR - 3, COLOR_WHITE);
+  M5.Display.fillCircle(cx, cy, 3, COLOR_BLACK);
+
+  // ==========================================================================
+  // 4. Draw Solar Panel icon (top)
+  // ==========================================================================
+  {
+    int px = solarX, py = solarY;
+    int pw = 80, ph = 50;
+    int left = px - pw / 2, top = py - ph / 2;
+    // Panel body
+    M5.Display.fillRect(left, top, pw, ph, COLOR_DARK_GRAY);
+    M5.Display.drawRect(left, top, pw, ph, COLOR_BLACK);
+    // Grid lines on panel
+    for (int i = 1; i < 4; i++)
+      M5.Display.drawFastVLine(left + i * pw / 4, top, ph, COLOR_BLACK);
+    for (int i = 1; i < 3; i++)
+      M5.Display.drawFastHLine(left, top + i * ph / 3, pw, COLOR_BLACK);
+    // Stand
+    M5.Display.drawLine(px - 10, top + ph, px - 15, top + ph + 15,
+                        COLOR_BLACK);
+    M5.Display.drawLine(px + 10, top + ph, px + 15, top + ph + 15,
+                        COLOR_BLACK);
+
+    // PV Power label
+    M5.Display.setFont(&fonts::DejaVu24);
+    M5.Display.setTextColor(COLOR_BLACK);
+    char pvStr[16];
+    snprintf(pvStr, sizeof(pvStr), "%.0f W", d.pvPowerTotal);
+    int tw = M5.Display.textWidth(pvStr);
+    M5.Display.setCursor(px - tw / 2, top + ph + 20);
+    M5.Display.print(pvStr);
+
+    // Daily solar kWh (prominent)
+    M5.Display.setFont(&fonts::Font2);
+    char dailyStr[32];
+    snprintf(dailyStr, sizeof(dailyStr), "Today: %.1f kWh", d.pvEnergyToday);
+    int dw = M5.Display.textWidth(dailyStr);
+    M5.Display.setCursor(px - dw / 2, top + ph + 48);
+    M5.Display.print(dailyStr);
   }
-  int pwrW = M5.Display.textWidth(batPwrStr);
-  M5.Display.setCursor(barX + barW - pwrW - 4, barY + 1);
-  M5.Display.print(batPwrStr);
 
-  // Connection status indicator with WiFi/MQTT detail
-  extern GivEnergyMQTT *mqttClient;
+  // ==========================================================================
+  // 5. Draw Battery icon (left)
+  // ==========================================================================
+  {
+    int bx = battX, by = battY;
+    int bw = 50, bh = 80;
+    int left = bx - bw / 2, top = by - bh / 2;
+
+    // Battery terminal (top nub)
+    M5.Display.fillRect(left + bw / 2 - 8, top - 6, 16, 6, COLOR_BLACK);
+    // Battery body outline
+    M5.Display.drawRect(left, top, bw, bh, COLOR_BLACK);
+    M5.Display.drawRect(left + 1, top + 1, bw - 2, bh - 2, COLOR_BLACK);
+
+    // Fill level (from bottom)
+    float pct = d.batteryPercent / 100.0f;
+    if (pct > 1.0f)
+      pct = 1.0f;
+    if (pct < 0.0f)
+      pct = 0.0f;
+    int fillH = (int)((bh - 4) * pct);
+    if (fillH > 0) {
+      uint16_t fillColor =
+          (d.batteryPercent > 50) ? COLOR_DARK_GRAY
+          : (d.batteryPercent > 20) ? COLOR_GRAY
+                                    : COLOR_BLACK;
+      M5.Display.fillRect(left + 2, top + bh - 2 - fillH, bw - 4, fillH,
+                           fillColor);
+    }
+
+    // SOC percentage (below battery)
+    M5.Display.setFont(&fonts::DejaVu24);
+    M5.Display.setTextColor(COLOR_BLACK);
+    char socStr[8];
+    snprintf(socStr, sizeof(socStr), "%.0f%%", d.batteryPercent);
+    int sw = M5.Display.textWidth(socStr);
+    M5.Display.setCursor(bx - sw / 2, top + bh + 8);
+    M5.Display.print(socStr);
+
+    // Charge/discharge power (above battery)
+    M5.Display.setFont(&fonts::DejaVu24);
+    char batPwrStr[24];
+    if (d.chargePower > 5) {
+      snprintf(batPwrStr, sizeof(batPwrStr), "%.0f W", d.chargePower);
+    } else if (d.dischargePower > 5) {
+      snprintf(batPwrStr, sizeof(batPwrStr), "%.0f W", d.dischargePower);
+    } else {
+      snprintf(batPwrStr, sizeof(batPwrStr), "Idle");
+    }
+    int bpw = M5.Display.textWidth(batPwrStr);
+    M5.Display.setCursor(bx - bpw / 2, top - 30);
+    M5.Display.print(batPwrStr);
+  }
+
+  // ==========================================================================
+  // 6. Draw Grid/Pylon icon (right)
+  // ==========================================================================
+  {
+    int gx = gridX, gy = gridY;
+
+    // Transmission tower (simplified)
+    // Vertical mast
+    M5.Display.drawLine(gx, gy - 45, gx, gy + 40, COLOR_BLACK);
+    M5.Display.drawLine(gx + 1, gy - 45, gx + 1, gy + 40, COLOR_BLACK);
+    // Cross arms
+    M5.Display.drawLine(gx - 30, gy - 30, gx + 30, gy - 30, COLOR_BLACK);
+    M5.Display.drawLine(gx - 22, gy - 10, gx + 22, gy - 10, COLOR_BLACK);
+    // Guy wires (angled supports)
+    M5.Display.drawLine(gx - 30, gy - 30, gx - 5, gy + 40, COLOR_BLACK);
+    M5.Display.drawLine(gx + 30, gy - 30, gx + 5, gy + 40, COLOR_BLACK);
+    // Insulators (small lines hanging from cross arms)
+    M5.Display.drawLine(gx - 25, gy - 30, gx - 25, gy - 20, COLOR_BLACK);
+    M5.Display.drawLine(gx + 25, gy - 30, gx + 25, gy - 20, COLOR_BLACK);
+    M5.Display.drawLine(gx - 18, gy - 10, gx - 18, gy - 2, COLOR_BLACK);
+    M5.Display.drawLine(gx + 18, gy - 10, gx + 18, gy - 2, COLOR_BLACK);
+    // Base
+    M5.Display.drawLine(gx - 15, gy + 40, gx + 15, gy + 40, COLOR_BLACK);
+
+    // Import/Export power label
+    M5.Display.setFont(&fonts::DejaVu24);
+    M5.Display.setTextColor(COLOR_BLACK);
+    char gridStr[24];
+    if (d.importPower > 5) {
+      snprintf(gridStr, sizeof(gridStr), "%.0f W", d.importPower);
+    } else if (d.exportPower > 5) {
+      snprintf(gridStr, sizeof(gridStr), "%.0f W", d.exportPower);
+    } else {
+      snprintf(gridStr, sizeof(gridStr), "0 W");
+    }
+    int gw = M5.Display.textWidth(gridStr);
+    M5.Display.setCursor(gx - gw / 2, gy - 65);
+    M5.Display.print(gridStr);
+
+    // Import/Export label (below tower)
+    M5.Display.setFont(&fonts::Font2);
+    const char *gridLabel = (d.importPower > 5)    ? "Importing"
+                            : (d.exportPower > 5) ? "Exporting"
+                                                   : "Idle";
+    int glw = M5.Display.textWidth(gridLabel);
+    M5.Display.setCursor(gx - glw / 2, gy + 48);
+    M5.Display.print(gridLabel);
+  }
+
+  // ==========================================================================
+  // 7. Draw House icon (bottom)
+  // ==========================================================================
+  {
+    int hx = houseX, hy = houseY;
+    int hw = 60, hh = 40;
+
+    // Roof (triangle)
+    M5.Display.fillTriangle(hx, hy - 30, hx - hw / 2 - 10, hy,
+                            hx + hw / 2 + 10, hy, COLOR_DARK_GRAY);
+    M5.Display.drawTriangle(hx, hy - 30, hx - hw / 2 - 10, hy,
+                            hx + hw / 2 + 10, hy, COLOR_BLACK);
+    // Walls
+    M5.Display.drawRect(hx - hw / 2, hy, hw, hh, COLOR_BLACK);
+    // Door
+    M5.Display.drawRect(hx - 7, hy + hh - 22, 14, 22, COLOR_BLACK);
+    // Window
+    M5.Display.drawRect(hx + 12, hy + 8, 12, 10, COLOR_BLACK);
+    M5.Display.drawFastHLine(hx + 12, hy + 13, 12, COLOR_BLACK);
+    M5.Display.drawFastVLine(hx + 18, hy + 8, 10, COLOR_BLACK);
+
+    // House load power
+    M5.Display.setFont(&fonts::DejaVu24);
+    M5.Display.setTextColor(COLOR_BLACK);
+    char houseStr[16];
+    snprintf(houseStr, sizeof(houseStr), "%.0f W", d.loadPower);
+    int hw2 = M5.Display.textWidth(houseStr);
+    M5.Display.setCursor(hx - hw2 / 2, hy + hh + 8);
+    M5.Display.print(houseStr);
+
+    // Daily consumption
+    M5.Display.setFont(&fonts::Font2);
+    char loadDayStr[32];
+    snprintf(loadDayStr, sizeof(loadDayStr), "Today: %.1f kWh",
+             d.loadEnergyToday);
+    int ldw = M5.Display.textWidth(loadDayStr);
+    M5.Display.setCursor(hx - ldw / 2, hy + hh + 36);
+    M5.Display.print(loadDayStr);
+  }
+
+  // ==========================================================================
+  // 8. Flow wattage labels on each arm
+  // ==========================================================================
   M5.Display.setFont(&fonts::Font2);
-  int statusTextY = barY + barH + 4;
+  M5.Display.setTextColor(COLOR_BLACK);
 
+  // Solar flow label (left of vertical line)
+  if (solarFlow > 5) {
+    char slbl[16];
+    snprintf(slbl, sizeof(slbl), "%.0fW", solarFlow);
+    M5.Display.setCursor(cx + 14, cy - armLen / 2 - 8);
+    M5.Display.print(slbl);
+  }
+
+  // Battery flow label (above horizontal line)
+  if (battFlow > 5) {
+    char blbl[24];
+    snprintf(blbl, sizeof(blbl), "%.0fW", battFlow);
+    int blw = M5.Display.textWidth(blbl);
+    M5.Display.setCursor(cx - armLen / 2 - blw / 2, cy - 20);
+    M5.Display.print(blbl);
+  }
+
+  // Grid flow label (above horizontal line)
+  if (gridFlow > 5) {
+    char glbl[24];
+    snprintf(glbl, sizeof(glbl), "%.0fW", gridFlow);
+    int glw = M5.Display.textWidth(glbl);
+    M5.Display.setCursor(cx + armLen / 2 - glw / 2, cy - 20);
+    M5.Display.print(glbl);
+  }
+
+  // House flow label (right of vertical line)
+  if (houseFlow > 5) {
+    char hlbl[16];
+    snprintf(hlbl, sizeof(hlbl), "%.0fW", houseFlow);
+    M5.Display.setCursor(cx + 14, cy + armLen / 2 - 8);
+    M5.Display.print(hlbl);
+  }
+
+  // ==========================================================================
+  // 9. Status bar (bottom)
+  // ==========================================================================
+  int statusY = SCREEN_HEIGHT - 28;
+  M5.Display.drawFastHLine(10, statusY - 4, SCREEN_WIDTH - 20, COLOR_GRAY);
+
+  M5.Display.setFont(&fonts::Font2);
+  M5.Display.setTextColor(COLOR_BLACK);
+
+  // Connection status (bottom-left)
+  extern GivEnergyMQTT *mqttClient;
   if (mqttClient) {
     bool wifiOk = mqttClient->isWiFiConnected();
     bool mqttOk = mqttClient->isMQTTConnected();
     bool stale = d.isStale();
 
-    // WiFi status
-    M5.Display.setCursor(10, statusTextY);
+    M5.Display.setCursor(10, statusY);
     if (!wifiOk) {
-      M5.Display.setTextColor(COLOR_RED);
-      M5.Display.print("WiFi: Disconnected");
-    } else {
-      M5.Display.setTextColor(0x0400); // Dark green
-      char wifiStr[32];
-      snprintf(wifiStr, sizeof(wifiStr), "WiFi: %ddBm", mqttClient->getRSSI());
-      M5.Display.print(wifiStr);
-    }
-
-    // MQTT status
-    M5.Display.setCursor(220, statusTextY);
-    if (!mqttOk) {
-      M5.Display.setTextColor(COLOR_RED);
-      M5.Display.print("MQTT: Disconnected");
+      M5.Display.setTextColor(COLOR_BLACK);
+      M5.Display.print("WiFi: --");
+    } else if (!mqttOk) {
+      M5.Display.print("MQTT: Connecting...");
     } else if (stale) {
-      M5.Display.setTextColor(0xC600); // Orange
-      M5.Display.print("MQTT: Stale data");
+      M5.Display.print("Data: Stale");
     } else {
-      M5.Display.setTextColor(0x0400);
-      M5.Display.print("MQTT: Live");
+      char rssiStr[24];
+      snprintf(rssiStr, sizeof(rssiStr), "WiFi: %ddBm", mqttClient->getRSSI());
+      M5.Display.print(rssiStr);
     }
-  } else {
-    M5.Display.setTextColor(COLOR_RED);
-    M5.Display.setCursor(10, statusTextY);
-    M5.Display.print("MQTT: Not configured");
   }
 
-  // Mode label
-  M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setCursor(480, statusTextY);
-  M5.Display.print("HOME MODE - GivEnergy");
+  // Last update time (bottom-center)
+  if (d.lastUpdateTime > 0) {
+    unsigned long ago = (millis() - d.lastUpdateTime) / 1000;
+    char agoStr[32];
+    if (ago < 60)
+      snprintf(agoStr, sizeof(agoStr), "%lu secs ago", ago);
+    else
+      snprintf(agoStr, sizeof(agoStr), "%lum %lus ago", ago / 60, ago % 60);
+    int aw = M5.Display.textWidth(agoStr);
+    M5.Display.setCursor(cx - aw / 2, statusY);
+    M5.Display.print(agoStr);
+  }
 
-  // --- Content Area (3 panels) ---
-  int contentY = BATTERY_BAR_HEIGHT + 5;
-  int contentH = SCREEN_HEIGHT - contentY - 60; // Leave room for flow bar
-  int panelW = (SCREEN_WIDTH - 40) / 3;
-  int panelH = contentH;
-  int panelGap = 10;
-
-  // ---- Panel 1: Solar Generation ----
-  int p1x = 10;
-  M5.Display.drawRect(p1x, contentY, panelW, panelH, TFT_BLACK);
-  M5.Display.setTextColor(TFT_BLACK);
-
-  // Solar title
-  M5.Display.setFont(&fonts::Font4);
-  M5.Display.setCursor(p1x + 10, contentY + 8);
-  M5.Display.print("Solar Generation");
-
-  M5.Display.setFont(&fonts::Font4);
-  int solarLineY = contentY + 45;
-
-  // String 1
-  M5.Display.setCursor(p1x + 10, solarLineY);
-  M5.Display.print("String 1 (Front):");
-  char s1Str[16];
-  snprintf(s1Str, sizeof(s1Str), "%.0fW", d.pvPowerString1);
-  int s1W = M5.Display.textWidth(s1Str);
-  M5.Display.setCursor(p1x + panelW - s1W - 10, solarLineY);
-  M5.Display.print(s1Str);
-
-  // String 2
-  solarLineY += 35;
-  M5.Display.setCursor(p1x + 10, solarLineY);
-  M5.Display.print("String 2 (Back):");
-  char s2Str[16];
-  snprintf(s2Str, sizeof(s2Str), "%.0fW", d.pvPowerString2);
-  int s2W = M5.Display.textWidth(s2Str);
-  M5.Display.setCursor(p1x + panelW - s2W - 10, solarLineY);
-  M5.Display.print(s2Str);
-
-  // Divider
-  solarLineY += 35;
-  M5.Display.drawFastHLine(p1x + 10, solarLineY, panelW - 20, TFT_BLACK);
-
-  // Total
-  solarLineY += 10;
-  M5.Display.setFont(&fonts::Font4);
-  M5.Display.setCursor(p1x + 10, solarLineY);
-  M5.Display.print("Total:");
-  char totalStr[16];
-  snprintf(totalStr, sizeof(totalStr), "%.0fW", d.pvPowerTotal);
-  M5.Display.setTextColor(TFT_BLACK);
-  int totalW = M5.Display.textWidth(totalStr);
-  M5.Display.setCursor(p1x + panelW - totalW - 10, solarLineY);
-  M5.Display.print(totalStr);
-
-  // Today's generation
-  solarLineY += 40;
-  M5.Display.setFont(&fonts::Font2);
-  char todayStr[32];
-  snprintf(todayStr, sizeof(todayStr), "Today: %.1f kWh", d.pvEnergyToday);
-  M5.Display.setCursor(p1x + 10, solarLineY);
-  M5.Display.print(todayStr);
-
-  // ---- Panel 2: Grid ----
-  int p2x = p1x + panelW + panelGap;
-  M5.Display.drawRect(p2x, contentY, panelW, panelH, TFT_BLACK);
-
-  M5.Display.setFont(&fonts::Font4);
-  M5.Display.setTextColor(TFT_BLACK);
-  M5.Display.setCursor(p2x + 10, contentY + 8);
-  M5.Display.print("Grid");
-
-  int gridLineY = contentY + 45;
-  M5.Display.setFont(&fonts::Font4);
-
-  // Import
-  M5.Display.setCursor(p2x + 10, gridLineY);
-  M5.Display.print("Import:");
-  char impStr[16];
-  snprintf(impStr, sizeof(impStr), "%.0fW", d.importPower);
-  int impW = M5.Display.textWidth(impStr);
-  if (d.importPower > 5)
-    M5.Display.setTextColor(TFT_RED);
-  M5.Display.setCursor(p2x + panelW - impW - 10, gridLineY);
-  M5.Display.print(impStr);
-  M5.Display.setTextColor(TFT_BLACK);
-
-  // Export
-  gridLineY += 35;
-  M5.Display.setCursor(p2x + 10, gridLineY);
-  M5.Display.print("Export:");
-  char expStr[16];
-  snprintf(expStr, sizeof(expStr), "%.0fW", d.exportPower);
-  int expW = M5.Display.textWidth(expStr);
-  if (d.exportPower > 5)
-    M5.Display.setTextColor(TFT_DARKGREEN);
-  M5.Display.setCursor(p2x + panelW - expW - 10, gridLineY);
-  M5.Display.print(expStr);
-  M5.Display.setTextColor(TFT_BLACK);
-
-  // Divider
-  gridLineY += 35;
-  M5.Display.drawFastHLine(p2x + 10, gridLineY, panelW - 20, TFT_BLACK);
-
-  // Today's import/export
-  gridLineY += 10;
-  M5.Display.setFont(&fonts::Font2);
-  char impTodayStr[32];
-  snprintf(impTodayStr, sizeof(impTodayStr), "Import today: %.1f kWh",
-           d.importEnergyToday);
-  M5.Display.setCursor(p2x + 10, gridLineY);
-  M5.Display.print(impTodayStr);
-
-  gridLineY += 22;
-  char expTodayStr[32];
-  snprintf(expTodayStr, sizeof(expTodayStr), "Export today: %.1f kWh",
-           d.exportEnergyToday);
-  M5.Display.setCursor(p2x + 10, gridLineY);
-  M5.Display.print(expTodayStr);
-
-  // ---- Panel 3: House Load ----
-  int p3x = p2x + panelW + panelGap;
-  M5.Display.drawRect(p3x, contentY, panelW, panelH, TFT_BLACK);
-
-  M5.Display.setFont(&fonts::Font4);
-  M5.Display.setTextColor(TFT_BLACK);
-  M5.Display.setCursor(p3x + 10, contentY + 8);
-  M5.Display.print("House Load");
-
-  int loadLineY = contentY + 45;
-
-  // Total load
-  M5.Display.setFont(&fonts::Font4);
-  M5.Display.setCursor(p3x + 10, loadLineY);
-  M5.Display.print("Total:");
-  char loadStr[16];
-  snprintf(loadStr, sizeof(loadStr), "%.0fW", d.loadPower);
-  int loadW = M5.Display.textWidth(loadStr);
-  M5.Display.setCursor(p3x + panelW - loadW - 10, loadLineY);
-  M5.Display.print(loadStr);
-
-  // Breakdown: from solar
-  loadLineY += 35;
-  M5.Display.setFont(&fonts::Font2);
-  M5.Display.setCursor(p3x + 10, loadLineY);
-  char fromSolar[32];
-  snprintf(fromSolar, sizeof(fromSolar), "From Solar: %.0fW", d.solarToHouse);
-  M5.Display.print(fromSolar);
-
-  // From battery
-  loadLineY += 22;
-  M5.Display.setCursor(p3x + 10, loadLineY);
-  char fromBat[32];
-  snprintf(fromBat, sizeof(fromBat), "From Battery: %.0fW",
-           d.batteryToHouse);
-  M5.Display.print(fromBat);
-
-  // From grid
-  loadLineY += 22;
-  M5.Display.setCursor(p3x + 10, loadLineY);
-  char fromGrid[32];
-  snprintf(fromGrid, sizeof(fromGrid), "From Grid: %.0fW", d.gridToHouse);
-  M5.Display.print(fromGrid);
-
-  // Divider
-  loadLineY += 25;
-  M5.Display.drawFastHLine(p3x + 10, loadLineY, panelW - 20, TFT_BLACK);
-
-  // Today
-  loadLineY += 10;
-  char loadTodayStr[32];
-  snprintf(loadTodayStr, sizeof(loadTodayStr), "Today: %.1f kWh",
-           d.loadEnergyToday);
-  M5.Display.setCursor(p3x + 10, loadLineY);
-  M5.Display.print(loadTodayStr);
-
-  // --- Bottom Power Flow Summary Bar ---
-  int flowY = SCREEN_HEIGHT - 50;
-  M5.Display.drawFastHLine(10, flowY, SCREEN_WIDTH - 20, TFT_BLACK);
-
-  M5.Display.setFont(&fonts::Font4);
-  M5.Display.setTextColor(TFT_BLACK);
-
-  // Build power flow summary string
-  char flowStr[128];
-  snprintf(flowStr, sizeof(flowStr),
-           "Solar(%.0fW)  ->  House(%.0fW)  |  Bat(%.0f%%)  |  Grid(%s%.0fW)",
-           d.pvPowerTotal, d.loadPower, d.batteryPercent,
-           d.importPower > 5 ? "Import " : d.exportPower > 5 ? "Export " : "",
-           d.importPower > 5 ? d.importPower : d.exportPower);
-
-  // Center the flow string
-  int flowW = M5.Display.textWidth(flowStr);
-  int flowX = (SCREEN_WIDTH - flowW) / 2;
-  if (flowX < 10)
-    flowX = 10;
-  M5.Display.setCursor(flowX, flowY + 10);
-  M5.Display.print(flowStr);
+  // Daily energy summary (bottom-right, before menu button)
+  {
+    char expStr[32];
+    snprintf(expStr, sizeof(expStr), "Exp: %.1fkWh  Imp: %.1fkWh",
+             d.exportEnergyToday, d.importEnergyToday);
+    int ew = M5.Display.textWidth(expStr);
+    M5.Display.setCursor(SCREEN_WIDTH - ew - 100, statusY);
+    M5.Display.print(expStr);
+  }
 }
 
 void UIManager::drawBatteryBar(float percent) {
