@@ -60,8 +60,10 @@ public:
   void setInverterSN(const String &sn);
 
   // Display settings
-  String getTheme() const { return _theme; }
+  String getTheme() const { return _theme; }          // Campervan themes
   void setTheme(const String &theme);
+  String getHomeTheme() const { return _homeTheme; }  // Home mode themes
+  void setHomeTheme(const String &theme);
   int getAutoSleepMinutes() const { return _autoSleepMinutes; }
   void setAutoSleepMinutes(int minutes);
 
@@ -108,7 +110,8 @@ private:
   String _inverterSN;
 
   // Display
-  String _theme;
+  String _theme;      // Campervan themes: classic_grid|compact_status|horizontal_bars|sector
+  String _homeTheme;  // Home themes: energy_flow|battery_focus|todays_story
   int _autoSleepMinutes;
 
   // Timezone

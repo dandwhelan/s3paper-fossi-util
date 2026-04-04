@@ -610,9 +610,16 @@ void UIManager::drawHomeScreen() {
 
   M5.Display.fillScreen(COLOR_WHITE);
 
-  // Home mode: GivEnergy solar dashboard
+  // Home mode: GivEnergy solar dashboard — dispatch by home theme
   if (config && config->isHomeMode()) {
-    drawHomeGivEnergy();
+    String ht = config->getHomeTheme();
+    if (ht == "battery_focus") {
+      drawHomeGivEnergyBatteryFocus();
+    } else if (ht == "todays_story") {
+      drawHomeGivEnergyTodaysStory();
+    } else {
+      drawHomeGivEnergy(); // "energy_flow" (default)
+    }
     drawMenuButton();
     M5.Display.display();
     return;
@@ -1647,6 +1654,364 @@ void UIManager::drawHomeGivEnergy() {
   }
 }
 
+// ============================================================================
+// Home Theme: Battery Focus
+// Left: tall battery gauge. Right: live power + today's totals.
+// ============================================================================
+void UIManager::drawHomeGivEnergyBatteryFocus() {
+  const GivEnergy::SolarData &d = _solarData;
+
+  const int marginX = 18;
+  const int marginY = 14;
+  const int contentH = SCREEN_HEIGHT - marginY * 2 - 28; // leave footer
+  const int divX = 260; // vertical divider X
+
+  // ── Left: Battery gauge ──────────────────────────────────────────────────
+  const int gaugeW = 100;
+  const int gaugeH = contentH - 10;
+  const int gaugeX = marginX + (divX - marginX - gaugeW) / 2;
+  const int gaugeY = marginY + 5;
+
+  // Terminal nub
+  M5.Display.fillRect(gaugeX + gaugeW / 2 - 12, gaugeY - 8, 24, 8, COLOR_BLACK);
+
+  // Outer border (double line for emphasis)
+  M5.Display.drawRect(gaugeX, gaugeY, gaugeW, gaugeH, COLOR_BLACK);
+  M5.Display.drawRect(gaugeX + 1, gaugeY + 1, gaugeW - 2, gaugeH - 2, COLOR_BLACK);
+
+  // Fill from bottom
+  float pct = constrain(d.batteryPercent / 100.0f, 0.0f, 1.0f);
+  int fillH = (int)((gaugeH - 4) * pct);
+  if (fillH > 0) {
+    // Segmented fill: draw horizontal stripes to give a "cell" look
+    int innerH = gaugeH - 4;
+    int fillTop = gaugeY + 2 + innerH - fillH;
+    M5.Display.fillRect(gaugeX + 2, fillTop, gaugeW - 4, fillH, COLOR_DARK_GRAY);
+    // Cell dividers (every 20% = every innerH/5 px)
+    for (int seg = 1; seg < 5; seg++) {
+      int lineY = gaugeY + 2 + innerH - (innerH * seg / 5);
+      if (lineY > fillTop) // only draw dividers inside filled region
+        M5.Display.drawFastHLine(gaugeX + 2, lineY, gaugeW - 4, COLOR_LIGHT_GRAY);
+    }
+  }
+
+  // SOC % large text centred below gauge
+  M5.Display.setFont(&fonts::DejaVu24);
+  M5.Display.setTextColor(COLOR_BLACK);
+  char socStr[8];
+  snprintf(socStr, sizeof(socStr), "%.0f%%", d.batteryPercent);
+  int socW = M5.Display.textWidth(socStr);
+  int gaugeCx = gaugeX + gaugeW / 2;
+  M5.Display.setCursor(gaugeCx - socW / 2, gaugeY + gaugeH + 6);
+  M5.Display.print(socStr);
+
+  // Charge / discharge label
+  M5.Display.setFont(&fonts::Font2);
+  char batStateStr[32];
+  if (d.chargePower > 5)
+    snprintf(batStateStr, sizeof(batStateStr), "Charging %.0fW", d.chargePower);
+  else if (d.dischargePower > 5)
+    snprintf(batStateStr, sizeof(batStateStr), "Using %.0fW", d.dischargePower);
+  else
+    snprintf(batStateStr, sizeof(batStateStr), "Idle");
+  int bsW = M5.Display.textWidth(batStateStr);
+  M5.Display.setCursor(gaugeCx - bsW / 2, gaugeY + gaugeH + 32);
+  M5.Display.print(batStateStr);
+
+  // ── Vertical divider ─────────────────────────────────────────────────────
+  M5.Display.drawFastVLine(divX, marginY, contentH, COLOR_GRAY);
+  M5.Display.drawFastVLine(divX + 1, marginY, contentH, COLOR_GRAY);
+
+  // ── Right: NOW + TODAY ───────────────────────────────────────────────────
+  const int rx = divX + 20;
+  const int rw = SCREEN_WIDTH - rx - marginX - 90; // leave room for menu btn
+  int y = marginY + 2;
+
+  // Section: NOW
+  M5.Display.setFont(&fonts::Font4);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(rx, y);
+  M5.Display.print("NOW");
+  M5.Display.drawFastHLine(rx, y + 26, rw, COLOR_BLACK);
+  y += 34;
+
+  // Helper: right-aligned value
+  auto printRow = [&](const char *label, const char *value) {
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setCursor(rx, y);
+    M5.Display.print(label);
+    int vw = M5.Display.textWidth(value);
+    M5.Display.setCursor(rx + rw - vw, y);
+    M5.Display.print(value);
+    y += 26;
+  };
+
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%.0f W", d.pvPowerTotal);
+  printRow("Solar:", buf);
+
+  snprintf(buf, sizeof(buf), "%.0f W", d.loadPower);
+  printRow("House:", buf);
+
+  if (d.importPower > 5)
+    snprintf(buf, sizeof(buf), "Import %.0fW", d.importPower);
+  else if (d.exportPower > 5)
+    snprintf(buf, sizeof(buf), "Export %.0fW", d.exportPower);
+  else
+    snprintf(buf, sizeof(buf), "Idle");
+  printRow("Grid:", buf);
+
+  y += 6;
+
+  // Section: TODAY
+  M5.Display.setFont(&fonts::Font4);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(rx, y);
+  M5.Display.print("TODAY");
+  M5.Display.drawFastHLine(rx, y + 26, rw, COLOR_BLACK);
+  y += 34;
+
+  snprintf(buf, sizeof(buf), "%.1f kWh", d.pvEnergyToday);
+  printRow("Solar generated:", buf);
+
+  snprintf(buf, sizeof(buf), "%.1f kWh", d.loadEnergyToday);
+  printRow("House consumed:", buf);
+
+  snprintf(buf, sizeof(buf), "%.1f kWh", d.batteryChargeToday);
+  printRow("Battery charged:", buf);
+
+  snprintf(buf, sizeof(buf), "%.1f kWh", d.batteryDischargeToday);
+  printRow("Battery used:", buf);
+
+  snprintf(buf, sizeof(buf), "%.1f kWh", d.exportEnergyToday);
+  printRow("Exported:", buf);
+
+  snprintf(buf, sizeof(buf), "%.1f kWh", d.importEnergyToday);
+  printRow("Imported:", buf);
+
+  // ── Footer ───────────────────────────────────────────────────────────────
+  int footerY = SCREEN_HEIGHT - 26;
+  M5.Display.drawFastHLine(marginX, footerY - 4, SCREEN_WIDTH - marginX * 2, COLOR_GRAY);
+  M5.Display.setFont(&fonts::Font2);
+  M5.Display.setTextColor(COLOR_BLACK);
+
+  extern GivEnergyMQTT *mqttClient;
+  if (mqttClient) {
+    bool wifiOk = mqttClient->isWiFiConnected();
+    bool mqttOk = mqttClient->isMQTTConnected();
+    M5.Display.setCursor(marginX, footerY);
+    if (!wifiOk) M5.Display.print("WiFi: --");
+    else if (!mqttOk) M5.Display.print("MQTT: Connecting...");
+    else {
+      char rssi[24];
+      snprintf(rssi, sizeof(rssi), "WiFi: %ddBm", mqttClient->getRSSI());
+      M5.Display.print(rssi);
+    }
+  }
+
+  if (d.lastUpdateTime > 0) {
+    unsigned long ago = (millis() - d.lastUpdateTime) / 1000;
+    char agoStr[32];
+    if (ago < 60) snprintf(agoStr, sizeof(agoStr), "%lus ago", ago);
+    else snprintf(agoStr, sizeof(agoStr), "%lum %lus ago", ago / 60, ago % 60);
+    int aw = M5.Display.textWidth(agoStr);
+    M5.Display.setCursor(SCREEN_WIDTH / 2 - aw / 2, footerY);
+    M5.Display.print(agoStr);
+  }
+}
+
+// ============================================================================
+// Home Theme: Today's Story
+// Shows where solar went and what powered the house, as proportional bars.
+// ============================================================================
+void UIManager::drawHomeGivEnergyTodaysStory() {
+  const GivEnergy::SolarData &d = _solarData;
+
+  const int marginX = 18;
+  const int menuBtnGuard = 95; // don't draw into menu button area top-right
+
+  // ── Top strip: live NOW values ────────────────────────────────────────────
+  // Four compact tiles across the full width
+  const int tileY = 8;
+  const int tileH = 68;
+  const int tileW = (SCREEN_WIDTH - marginX * 2) / 4;
+
+  auto drawNowTile = [&](int idx, const char *title, const char *val,
+                         const char *sub) {
+    int tx = marginX + idx * tileW;
+    M5.Display.drawRect(tx, tileY, tileW, tileH, COLOR_BLACK);
+    // Title
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setCursor(tx + 6, tileY + 4);
+    M5.Display.print(title);
+    // Value
+    M5.Display.setFont(&fonts::DejaVu24);
+    int vw = M5.Display.textWidth(val);
+    M5.Display.setCursor(tx + tileW / 2 - vw / 2, tileY + 18);
+    M5.Display.print(val);
+    // Sub-label
+    M5.Display.setFont(&fonts::Font2);
+    int sw = M5.Display.textWidth(sub);
+    M5.Display.setCursor(tx + tileW / 2 - sw / 2, tileY + tileH - 18);
+    M5.Display.print(sub);
+  };
+
+  char vbuf[24];
+  snprintf(vbuf, sizeof(vbuf), "%.0fW", d.pvPowerTotal);
+  drawNowTile(0, "SOLAR", vbuf, d.pvPowerTotal > 5 ? "generating" : "idle");
+
+  snprintf(vbuf, sizeof(vbuf), "%.0f%%", d.batteryPercent);
+  const char *batSub = (d.chargePower > 5) ? "charging" :
+                       (d.dischargePower > 5) ? "discharging" : "idle";
+  drawNowTile(1, "BATTERY", vbuf, batSub);
+
+  if (d.importPower > 5)
+    snprintf(vbuf, sizeof(vbuf), "%.0fW", d.importPower);
+  else if (d.exportPower > 5)
+    snprintf(vbuf, sizeof(vbuf), "%.0fW", d.exportPower);
+  else
+    snprintf(vbuf, sizeof(vbuf), "0W");
+  const char *gridSub = (d.importPower > 5) ? "importing" :
+                        (d.exportPower > 5) ? "exporting" : "idle";
+  drawNowTile(2, "GRID", vbuf, gridSub);
+
+  snprintf(vbuf, sizeof(vbuf), "%.0fW", d.loadPower);
+  drawNowTile(3, "HOUSE", vbuf, "consuming");
+
+  // ── Divider ───────────────────────────────────────────────────────────────
+  int divY = tileY + tileH + 8;
+  M5.Display.drawFastHLine(marginX, divY, SCREEN_WIDTH - marginX * 2, COLOR_BLACK);
+
+  // ── Bar chart helper ───────────────────────────────────────────────────────
+  // Draws a labelled horizontal proportional bar
+  const int barAreaX = marginX + 220; // start of bar area
+  const int barAreaW = SCREEN_WIDTH - barAreaX - marginX - 90;
+  const int barH = 24;
+
+  auto drawEnergyBar = [&](int barY, const char *label, float kwh, float total,
+                            const char *kwhStr) {
+    // Label (left column, right-aligned)
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setTextColor(COLOR_BLACK);
+    int lw = M5.Display.textWidth(label);
+    M5.Display.setCursor(barAreaX - lw - 8, barY + 4);
+    M5.Display.print(label);
+
+    // Bar background + fill
+    M5.Display.drawRect(barAreaX, barY, barAreaW, barH, COLOR_BLACK);
+    if (total > 0.01f) {
+      int fillW = (int)((kwh / total) * (barAreaW - 2));
+      fillW = constrain(fillW, 0, barAreaW - 2);
+      if (fillW > 0)
+        M5.Display.fillRect(barAreaX + 1, barY + 1, fillW, barH - 2, COLOR_DARK_GRAY);
+    }
+
+    // kWh + percentage right of bar
+    char pctBuf[24];
+    if (total > 0.01f)
+      snprintf(pctBuf, sizeof(pctBuf), "%s  %.0f%%", kwhStr,
+               (kwh / total) * 100.0f);
+    else
+      snprintf(pctBuf, sizeof(pctBuf), "%s", kwhStr);
+    M5.Display.setCursor(barAreaX + barAreaW + 6, barY + 4);
+    M5.Display.print(pctBuf);
+  };
+
+  // ── Section 1: Where did today's solar go? ─────────────────────────────────
+  int secY = divY + 10;
+  M5.Display.setFont(&fonts::Font4);
+  M5.Display.setTextColor(COLOR_BLACK);
+  char secTitle[64];
+  snprintf(secTitle, sizeof(secTitle), "Where did today's solar go?  (%.1f kWh generated)",
+           d.pvEnergyToday);
+  M5.Display.setCursor(marginX, secY);
+  M5.Display.print(secTitle);
+  secY += 30;
+
+  // Derive solar destinations from daily totals
+  // Solar to battery ≈ batteryChargeToday (most battery charge comes from solar)
+  // Solar to grid    = exportEnergyToday
+  // Solar to house   = pvEnergyToday - exportEnergyToday - batteryChargeToday
+  float solarTotal = d.pvEnergyToday;
+  float sToBattery = d.batteryChargeToday;
+  float sToGrid    = d.exportEnergyToday;
+  float sToHouse   = max(0.0f, solarTotal - sToBattery - sToGrid);
+
+  char kwBuf[16];
+  snprintf(kwBuf, sizeof(kwBuf), "%.1f kWh", sToHouse);
+  drawEnergyBar(secY, "-> House", sToHouse, solarTotal, kwBuf);
+  secY += barH + 8;
+
+  snprintf(kwBuf, sizeof(kwBuf), "%.1f kWh", sToBattery);
+  drawEnergyBar(secY, "-> Battery", sToBattery, solarTotal, kwBuf);
+  secY += barH + 8;
+
+  snprintf(kwBuf, sizeof(kwBuf), "%.1f kWh", sToGrid);
+  drawEnergyBar(secY, "-> Grid", sToGrid, solarTotal, kwBuf);
+  secY += barH + 14;
+
+  // ── Divider ───────────────────────────────────────────────────────────────
+  M5.Display.drawFastHLine(marginX, secY, SCREEN_WIDTH - marginX * 2, COLOR_GRAY);
+  secY += 10;
+
+  // ── Section 2: What powered the house? ────────────────────────────────────
+  M5.Display.setFont(&fonts::Font4);
+  M5.Display.setTextColor(COLOR_BLACK);
+  snprintf(secTitle, sizeof(secTitle), "What powered the house?  (%.1f kWh consumed)",
+           d.loadEnergyToday);
+  M5.Display.setCursor(marginX, secY);
+  M5.Display.print(secTitle);
+  secY += 30;
+
+  float houseTotal  = d.loadEnergyToday;
+  float hFromSolar  = sToHouse; // solar that went directly to house
+  float hFromBattery = d.batteryDischargeToday;
+  float hFromGrid   = d.importEnergyToday;
+
+  snprintf(kwBuf, sizeof(kwBuf), "%.1f kWh", hFromSolar);
+  drawEnergyBar(secY, "<- Solar", hFromSolar, houseTotal, kwBuf);
+  secY += barH + 8;
+
+  snprintf(kwBuf, sizeof(kwBuf), "%.1f kWh", hFromBattery);
+  drawEnergyBar(secY, "<- Battery", hFromBattery, houseTotal, kwBuf);
+  secY += barH + 8;
+
+  snprintf(kwBuf, sizeof(kwBuf), "%.1f kWh", hFromGrid);
+  drawEnergyBar(secY, "<- Grid", hFromGrid, houseTotal, kwBuf);
+  secY += barH + 10;
+
+  // ── Footer ────────────────────────────────────────────────────────────────
+  int footerY = SCREEN_HEIGHT - 26;
+  M5.Display.drawFastHLine(marginX, footerY - 4, SCREEN_WIDTH - marginX * 2, COLOR_GRAY);
+  M5.Display.setFont(&fonts::Font2);
+  M5.Display.setTextColor(COLOR_BLACK);
+
+  extern GivEnergyMQTT *mqttClient;
+  if (mqttClient && mqttClient->isWiFiConnected()) {
+    char rssi[32];
+    snprintf(rssi, sizeof(rssi), "WiFi: %ddBm  MQTT: %s",
+             mqttClient->getRSSI(),
+             mqttClient->isMQTTConnected() ? "Live" : "Connecting...");
+    M5.Display.setCursor(marginX, footerY);
+    M5.Display.print(rssi);
+  } else {
+    M5.Display.setCursor(marginX, footerY);
+    M5.Display.print("WiFi: --");
+  }
+
+  if (d.lastUpdateTime > 0) {
+    unsigned long ago = (millis() - d.lastUpdateTime) / 1000;
+    char agoStr[32];
+    if (ago < 60) snprintf(agoStr, sizeof(agoStr), "%lus ago", ago);
+    else snprintf(agoStr, sizeof(agoStr), "%lum %lus ago", ago / 60, ago % 60);
+    int aw = M5.Display.textWidth(agoStr);
+    M5.Display.setCursor(SCREEN_WIDTH / 2 - aw / 2, footerY);
+    M5.Display.print(agoStr);
+  }
+}
+
 void UIManager::drawBatteryBar(float percent) {
   int barY = 5;
   int barHeight = BATTERY_BAR_HEIGHT - 10;
@@ -2235,13 +2600,21 @@ void UIManager::drawSettingsScreen() {
         (config && config->isHomeMode()) ? "Mode: HOME" : "Mode: CAMPER";
     drawButton(col2X, row3Y, btnW, btnH, modeLabel);
 
-    String theme = config ? config->getTheme() : "classic_grid";
-    const char *themeName = "Classic";
-    if (theme == "compact_status") themeName = "Compact";
-    else if (theme == "horizontal_bars") themeName = "H-Bars";
-    else if (theme == "sector") themeName = "Sector";
-    char themeLabel[24];
-    snprintf(themeLabel, sizeof(themeLabel), "Theme: %s", themeName);
+    char themeLabel[32];
+    if (config && config->isHomeMode()) {
+      String ht = config->getHomeTheme();
+      const char *htName = "Flow";
+      if (ht == "battery_focus") htName = "Battery";
+      else if (ht == "todays_story") htName = "Today";
+      snprintf(themeLabel, sizeof(themeLabel), "Theme: %s", htName);
+    } else {
+      String theme = config ? config->getTheme() : "classic_grid";
+      const char *themeName = "Classic";
+      if (theme == "compact_status") themeName = "Compact";
+      else if (theme == "horizontal_bars") themeName = "H-Bars";
+      else if (theme == "sector") themeName = "Sector";
+      snprintf(themeLabel, sizeof(themeLabel), "Theme: %s", themeName);
+    }
     drawButton(col3X, row3Y, btnW, btnH, themeLabel);
   }
 
@@ -2345,18 +2718,33 @@ void UIManager::handleSettingsTouch(int x, int y) {
   if (isHit(col3X, row3Y, btnW, btnH)) {
     extern Config *config;
     if (config) {
-      String theme = config->getTheme();
-      if (theme == "classic_grid") {
-        config->setTheme("compact_status");
-      } else if (theme == "compact_status") {
-        config->setTheme("horizontal_bars");
-      } else if (theme == "horizontal_bars") {
-        config->setTheme("sector");
+      if (config->isHomeMode()) {
+        // Cycle home mode themes: energy_flow -> battery_focus -> todays_story -> energy_flow
+        String ht = config->getHomeTheme();
+        if (ht == "energy_flow") {
+          config->setHomeTheme("battery_focus");
+        } else if (ht == "battery_focus") {
+          config->setHomeTheme("todays_story");
+        } else {
+          config->setHomeTheme("energy_flow");
+        }
+        config->save("/config/settings.json");
+        Serial.printf("UI: Home theme changed to %s\n", config->getHomeTheme().c_str());
       } else {
-        config->setTheme("classic_grid");
+        // Cycle campervan themes
+        String theme = config->getTheme();
+        if (theme == "classic_grid") {
+          config->setTheme("compact_status");
+        } else if (theme == "compact_status") {
+          config->setTheme("horizontal_bars");
+        } else if (theme == "horizontal_bars") {
+          config->setTheme("sector");
+        } else {
+          config->setTheme("classic_grid");
+        }
+        config->save("/config/settings.json");
+        Serial.printf("UI: Theme changed to %s\n", config->getTheme().c_str());
       }
-      config->save("/config/settings.json");
-      Serial.printf("UI: Theme changed to %s\n", config->getTheme().c_str());
     }
     _needsRefresh = true;
     _lastRefresh = 0;
