@@ -17,6 +17,7 @@ void Config::setDefaults() {
   _wifiSSID = "";
   _wifiPassword = "";
   _theme = "classic_grid";
+  _homeTheme = "energy_flow";
   _autoSleepMinutes = 60; // Default to 60 minutes (User Request)
   _timezoneOffset = 0;
   _weatherAPIKey = "";
@@ -95,6 +96,7 @@ bool Config::load(const char *path) {
   // Display
   if (doc["display"].is<JsonObject>()) {
     _theme = doc["display"]["theme"] | "classic_grid";
+    _homeTheme = doc["display"]["home_theme"] | "energy_flow";
     _autoSleepMinutes = doc["display"]["auto_sleep_minutes"] | 5;
   }
 
@@ -147,6 +149,7 @@ bool Config::save(const char *path) {
 
   // Display (nested format to match load)
   doc["display"]["theme"] = _theme;
+  doc["display"]["home_theme"] = _homeTheme;
   doc["display"]["auto_sleep_minutes"] = _autoSleepMinutes;
 
   // Timezone
@@ -184,6 +187,8 @@ void Config::setWiFi(const String &ssid, const String &password) {
 void Config::setFossibotMAC(const String &mac) { _fossibotMAC = mac; }
 
 void Config::setTheme(const String &theme) { _theme = theme; }
+
+void Config::setHomeTheme(const String &theme) { _homeTheme = theme; }
 
 void Config::setAutoSleepMinutes(int minutes) { _autoSleepMinutes = minutes; }
 
