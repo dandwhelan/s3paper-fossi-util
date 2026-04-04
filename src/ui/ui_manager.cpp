@@ -584,11 +584,14 @@ void UIManager::updateSolarData(const GivEnergy::SolarData &data) {
   if (_currentScreen != ScreenID::HOME)
     return;
 
-  // Smart refresh: only update if data changed significantly
-  if (_solarData.hasSignificantChange()) {
+  // Enforce a strict 30-second update rate to prevent screen flashing
+  // Solar data changes constantly, so we shouldn't rely purely on "significant changes"
+  static unsigned long lastSolarRefresh = 0;
+  if (millis() - lastSolarRefresh >= 30000 || lastSolarRefresh == 0) {
     _needsRefresh = true;
-    _lastRefresh = 0;
+    _lastRefresh = 0; // Force immediate refresh in main loop
     _solarData.markRefreshed();
+    lastSolarRefresh = millis();
   }
 }
 

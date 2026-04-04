@@ -192,10 +192,33 @@ void setup() {
 
   // Load configuration
   config = new Config();
+  bool configLoaded = true;
   if (!config->load("/config/settings.json")) {
-    Serial.println("Using default configuration");
-    config->setDefaults();
+    Serial.println("Failed to load /config/settings.json, trying /settings.json");
+    if (!config->load("/settings.json")) {
+      Serial.println("Using default configuration");
+      config->setDefaults();
+      configLoaded = false;
+    }
   }
+
+  // Debug output to screen for 4 seconds so user can see it
+  M5.Display.fillScreen(TFT_WHITE);
+  M5.Display.setTextColor(TFT_BLACK);
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(10, 30);
+  M5.Display.println("--- Boot Debug Info ---");
+  M5.Display.printf("Loaded Config: %s\n", configLoaded ? "YES" : "NO");
+  M5.Display.printf("Mode: %s\n", config->getMode().c_str());
+  if (config->isHomeMode()) {
+    M5.Display.printf("WiFi SSID: '%s'\n", config->getWiFiSSID().c_str());
+    M5.Display.printf("MQTT Broker: '%s'\n", config->getMQTTBroker().c_str());
+    M5.Display.printf("Inverter SN: '%s'\n", config->getInverterSN().c_str());
+  } else {
+    M5.Display.printf("Fossibot MAC: '%s'\n", config->getFossibotMAC().c_str());
+  }
+  M5.Display.println("\nResuming in 4 seconds...");
+  delay(4000);
 
   // Initialize UI
   uiManager = new UIManager();

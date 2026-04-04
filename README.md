@@ -76,11 +76,14 @@ The device is named e-Rex named after my recently deceased cat. He lived to the 
    └── boot.png            # (Optional) Custom boot splash screen (960x540 grayscale)
    ```
 
-   **Configuration (`/config/settings.json`):**
-   Create this file to enable Fossibot connectivity. Replace the MAC address with your device's MAC.
+   **Configuration (`/config/settings.json` or `/settings.json`):**
+   Create this file to enable connectivity features. The device runs in two primary modes:
+   - **Campervan Mode** (Default): Connects to your Fossibot Power Station via Bluetooth (BLE) to monitor battery and toggle ports.
+   - **Home Mode**: Connects to your local WiFi and MQTT Broker to display a GivEnergy solar dashboard.
 
    ```json
    {
+     "mode": "campervan",
      "wifi": {
        "ssid": "YourWiFiSSID",
        "password": "YourWiFiPassword"
@@ -88,14 +91,16 @@ The device is named e-Rex named after my recently deceased cat. He lived to the 
      "bluetooth": {
        "fossibot_mac": "XX:XX:XX:XX:XX:XX"
      },
-     "weather": {
-       "api_key": "your_openweathermap_key",
-       "city": "London",
-       "units": "metric"
+     "mqtt": {
+       "broker": "192.168.1.100",
+       "port": 1883,
+       "username": "mqtt",
+       "password": "password",
+       "inverter_sn": "CE1234G567"
      }
    }
    ```
-   *Note: If no config is found, defaults will be used and Bluetooth/WiFi features may be disabled.*
+   *Note: If no config is found, defaults will be used and Bluetooth/WiFi features will be disabled. If the device fails to find `/config/settings.json`, it will fallback to `/settings.json` placed on the root of your SD card.*
 
 For detailed developer instructions, see the [Developer Guide](docs/DEVELOPMENT.md).
 
