@@ -114,7 +114,10 @@ void UIManager::drawHomeButton() {
 }
 
 void UIManager::drawMenuButton() {
-  // Small MENU button in the top-right corner of the home screen
+  // MENU button in the bottom-right corner of the home screen
+  // Fill background white first so it's visible above status bar
+  M5.Display.fillRect(MENU_BTN_X - 2, MENU_BTN_Y - 2, MENU_BTN_W + 4, MENU_BTN_H + 4,
+                      COLOR_WHITE);
   M5.Display.drawRect(MENU_BTN_X, MENU_BTN_Y, MENU_BTN_W, MENU_BTN_H,
                       COLOR_BLACK);
   M5.Display.setTextColor(COLOR_BLACK);
@@ -1400,19 +1403,21 @@ void UIManager::drawHomeGivEnergy() {
 
     // PV Power label
     M5.Display.setFont(&fonts::DejaVu24);
+    M5.Display.setTextSize(2);
     M5.Display.setTextColor(COLOR_BLACK);
     char pvStr[16];
     snprintf(pvStr, sizeof(pvStr), "%.0f W", d.pvPowerTotal);
     int tw = M5.Display.textWidth(pvStr);
-    M5.Display.setCursor(px - tw / 2, top + ph + 20);
+    M5.Display.setCursor(px - tw / 2, top + ph + 10);
     M5.Display.print(pvStr);
+    M5.Display.setTextSize(1);
 
     // Daily solar kWh (prominent)
     M5.Display.setFont(&fonts::Font2);
     char dailyStr[32];
     snprintf(dailyStr, sizeof(dailyStr), "Today: %.1f kWh", d.pvEnergyToday);
     int dw = M5.Display.textWidth(dailyStr);
-    M5.Display.setCursor(px - dw / 2, top + ph + 48);
+    M5.Display.setCursor(px - dw / 2, top + ph + 50);
     M5.Display.print(dailyStr);
   }
 
@@ -1448,15 +1453,18 @@ void UIManager::drawHomeGivEnergy() {
 
     // SOC percentage (below battery)
     M5.Display.setFont(&fonts::DejaVu24);
+    M5.Display.setTextSize(2);
     M5.Display.setTextColor(COLOR_BLACK);
     char socStr[8];
     snprintf(socStr, sizeof(socStr), "%.0f%%", d.batteryPercent);
     int sw = M5.Display.textWidth(socStr);
-    M5.Display.setCursor(bx - sw / 2, top + bh + 8);
+    M5.Display.setCursor(bx - sw / 2, top + bh + 10);
     M5.Display.print(socStr);
+    M5.Display.setTextSize(1);
 
     // Charge/discharge power (above battery)
     M5.Display.setFont(&fonts::DejaVu24);
+    M5.Display.setTextSize(2);
     char batPwrStr[24];
     if (d.chargePower > 5) {
       snprintf(batPwrStr, sizeof(batPwrStr), "%.0f W", d.chargePower);
@@ -1466,8 +1474,9 @@ void UIManager::drawHomeGivEnergy() {
       snprintf(batPwrStr, sizeof(batPwrStr), "Idle");
     }
     int bpw = M5.Display.textWidth(batPwrStr);
-    M5.Display.setCursor(bx - bpw / 2, top - 30);
+    M5.Display.setCursor(bx - bpw / 2, top - 55);
     M5.Display.print(batPwrStr);
+    M5.Display.setTextSize(1);
   }
 
   // ==========================================================================
@@ -1496,6 +1505,7 @@ void UIManager::drawHomeGivEnergy() {
 
     // Import/Export power label
     M5.Display.setFont(&fonts::DejaVu24);
+    M5.Display.setTextSize(2);
     M5.Display.setTextColor(COLOR_BLACK);
     char gridStr[24];
     if (d.importPower > 5) {
@@ -1506,8 +1516,9 @@ void UIManager::drawHomeGivEnergy() {
       snprintf(gridStr, sizeof(gridStr), "0 W");
     }
     int gw = M5.Display.textWidth(gridStr);
-    M5.Display.setCursor(gx - gw / 2, gy - 65);
+    M5.Display.setCursor(gx - gw / 2, gy - 90);
     M5.Display.print(gridStr);
+    M5.Display.setTextSize(1);
 
     // Import/Export label (below tower)
     M5.Display.setFont(&fonts::Font2);
@@ -1542,12 +1553,14 @@ void UIManager::drawHomeGivEnergy() {
 
     // House load power
     M5.Display.setFont(&fonts::DejaVu24);
+    M5.Display.setTextSize(2);
     M5.Display.setTextColor(COLOR_BLACK);
     char houseStr[16];
     snprintf(houseStr, sizeof(houseStr), "%.0f W", d.loadPower);
     int hw2 = M5.Display.textWidth(houseStr);
     M5.Display.setCursor(hx - hw2 / 2, hy + hh + 8);
     M5.Display.print(houseStr);
+    M5.Display.setTextSize(1);
 
     // Daily consumption
     M5.Display.setFont(&fonts::Font2);
@@ -1555,7 +1568,7 @@ void UIManager::drawHomeGivEnergy() {
     snprintf(loadDayStr, sizeof(loadDayStr), "Today: %.1f kWh",
              d.loadEnergyToday);
     int ldw = M5.Display.textWidth(loadDayStr);
-    M5.Display.setCursor(hx - ldw / 2, hy + hh + 36);
+    M5.Display.setCursor(hx - ldw / 2, hy + hh + 52);
     M5.Display.print(loadDayStr);
   }
 
@@ -1616,26 +1629,29 @@ void UIManager::drawHomeGivEnergy() {
     bool stale = d.isStale();
 
     M5.Display.setCursor(10, statusY);
+    char currTime[16];
+    RTC::getTimeString(currTime, sizeof(currTime), "%H:%M");
     if (!wifiOk) {
       M5.Display.setTextColor(COLOR_BLACK);
-      M5.Display.print("WiFi: Disconnected");
+      M5.Display.printf("WiFi: Disconnected    %s", currTime);
     } else if (!mqttOk) {
-      M5.Display.print("MQTT: Connecting...");
+      M5.Display.printf("MQTT: Connecting...    %s", currTime);
     } else if (stale) {
-      M5.Display.print("Data: Stale");
+      M5.Display.printf("Data: Stale    %s", currTime);
     } else {
-      M5.Display.print("Connected");
+      M5.Display.printf("Connected    %s", currTime);
     }
   }
 
   // Last update time (bottom-center)
   if (d.lastUpdateTime > 0) {
     unsigned long ago = (millis() - d.lastUpdateTime) / 1000;
-    char agoStr[32];
-    if (ago < 60)
-      snprintf(agoStr, sizeof(agoStr), "%lu secs ago", ago);
-    else
-      snprintf(agoStr, sizeof(agoStr), "%lum %lus ago", ago / 60, ago % 60);
+    char agoStr[64];
+    int h, m, s;
+    RTC::getTime(h, m, s);
+    int updated_seconds = (h * 3600 + m * 60 + s) - ago;
+    if (updated_seconds < 0) updated_seconds += 86400;
+    snprintf(agoStr, sizeof(agoStr), "Updated: %02d:%02d:%02d", updated_seconds / 3600, (updated_seconds % 3600) / 60, updated_seconds % 60);
     int aw = M5.Display.textWidth(agoStr);
     M5.Display.setCursor(cx - aw / 2, statusY);
     M5.Display.print(agoStr);
@@ -1714,22 +1730,24 @@ void UIManager::drawHomeGivEnergyBatteryFocus() {
 
   // Section: NOW
   M5.Display.setFont(&fonts::DejaVu24);
+  M5.Display.setTextSize(2);
   M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setCursor(rx, y);
   M5.Display.print("NOW");
-  M5.Display.drawFastHLine(rx, y + 28, rw, COLOR_BLACK);
-  y += 36;
+  M5.Display.setTextSize(1);
+  M5.Display.drawFastHLine(rx, y + 52, rw, COLOR_BLACK);
+  y += 60;
 
   // Helper: right-aligned value
   auto printRow = [&](const char *label, const char *value) {
-    M5.Display.setFont(&fonts::DejaVu18);
+    M5.Display.setFont(&fonts::DejaVu24);
     M5.Display.setTextColor(COLOR_BLACK);
     M5.Display.setCursor(rx, y);
     M5.Display.print(label);
     int vw = M5.Display.textWidth(value);
     M5.Display.setCursor(rx + rw - vw, y);
     M5.Display.print(value);
-    y += 32;
+    y += 38;
   };
 
   char buf[32];
@@ -1751,11 +1769,13 @@ void UIManager::drawHomeGivEnergyBatteryFocus() {
 
   // Section: TODAY
   M5.Display.setFont(&fonts::DejaVu24);
+  M5.Display.setTextSize(2);
   M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setCursor(rx, y);
   M5.Display.print("TODAY");
-  M5.Display.drawFastHLine(rx, y + 28, rw, COLOR_BLACK);
-  y += 36;
+  M5.Display.setTextSize(1);
+  M5.Display.drawFastHLine(rx, y + 52, rw, COLOR_BLACK);
+  y += 60;
 
   snprintf(buf, sizeof(buf), "%.1f kWh", d.pvEnergyToday);
   printRow("Solar generated:", buf);
@@ -1786,16 +1806,21 @@ void UIManager::drawHomeGivEnergyBatteryFocus() {
     bool wifiOk = mqttClient->isWiFiConnected();
     bool mqttOk = mqttClient->isMQTTConnected();
     M5.Display.setCursor(marginX, footerY);
-    if (!wifiOk) M5.Display.print("WiFi: Disconnected");
-    else if (!mqttOk) M5.Display.print("MQTT: Connecting...");
-    else M5.Display.print("Connected");
+    char currTime[16];
+    RTC::getTimeString(currTime, sizeof(currTime), "%H:%M");
+    if (!wifiOk) M5.Display.printf("WiFi: Disconnected    %s", currTime);
+    else if (!mqttOk) M5.Display.printf("MQTT: Connecting...    %s", currTime);
+    else M5.Display.printf("Connected    %s", currTime);
   }
 
   if (d.lastUpdateTime > 0) {
     unsigned long ago = (millis() - d.lastUpdateTime) / 1000;
-    char agoStr[32];
-    if (ago < 60) snprintf(agoStr, sizeof(agoStr), "%lus ago", ago);
-    else snprintf(agoStr, sizeof(agoStr), "%lum %lus ago", ago / 60, ago % 60);
+    char agoStr[64];
+    int h, m, s;
+    RTC::getTime(h, m, s);
+    int updated_seconds = (h * 3600 + m * 60 + s) - ago;
+    if (updated_seconds < 0) updated_seconds += 86400;
+    snprintf(agoStr, sizeof(agoStr), "Updated: %02d:%02d:%02d", updated_seconds / 3600, (updated_seconds % 3600) / 60, updated_seconds % 60);
     int aw = M5.Display.textWidth(agoStr);
     M5.Display.setCursor(SCREEN_WIDTH / 2 - aw / 2, footerY);
     M5.Display.print(agoStr);
@@ -1971,20 +1996,25 @@ void UIManager::drawHomeGivEnergyTodaysStory() {
 
   extern GivEnergyMQTT *mqttClient;
   M5.Display.setCursor(marginX, footerY);
+  char currTime[16];
+  RTC::getTimeString(currTime, sizeof(currTime), "%H:%M");
   if (mqttClient && mqttClient->isWiFiConnected()) {
     if (mqttClient->isMQTTConnected())
-      M5.Display.print("Connected");
+      M5.Display.printf("Connected    %s", currTime);
     else
-      M5.Display.print("MQTT: Connecting...");
+      M5.Display.printf("MQTT: Connecting...    %s", currTime);
   } else {
-    M5.Display.print("WiFi: Disconnected");
+    M5.Display.printf("WiFi: Disconnected    %s", currTime);
   }
 
   if (d.lastUpdateTime > 0) {
     unsigned long ago = (millis() - d.lastUpdateTime) / 1000;
-    char agoStr[32];
-    if (ago < 60) snprintf(agoStr, sizeof(agoStr), "%lus ago", ago);
-    else snprintf(agoStr, sizeof(agoStr), "%lum %lus ago", ago / 60, ago % 60);
+    char agoStr[64];
+    int h, m, s;
+    RTC::getTime(h, m, s);
+    int updated_seconds = (h * 3600 + m * 60 + s) - ago;
+    if (updated_seconds < 0) updated_seconds += 86400;
+    snprintf(agoStr, sizeof(agoStr), "Updated: %02d:%02d:%02d", updated_seconds / 3600, (updated_seconds % 3600) / 60, updated_seconds % 60);
     int aw = M5.Display.textWidth(agoStr);
     M5.Display.setCursor(SCREEN_WIDTH / 2 - aw / 2, footerY);
     M5.Display.print(agoStr);
