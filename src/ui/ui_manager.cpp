@@ -1618,15 +1618,13 @@ void UIManager::drawHomeGivEnergy() {
     M5.Display.setCursor(10, statusY);
     if (!wifiOk) {
       M5.Display.setTextColor(COLOR_BLACK);
-      M5.Display.print("WiFi: --");
+      M5.Display.print("WiFi: Disconnected");
     } else if (!mqttOk) {
       M5.Display.print("MQTT: Connecting...");
     } else if (stale) {
       M5.Display.print("Data: Stale");
     } else {
-      char rssiStr[24];
-      snprintf(rssiStr, sizeof(rssiStr), "WiFi: %ddBm", mqttClient->getRSSI());
-      M5.Display.print(rssiStr);
+      M5.Display.print("Connected");
     }
   }
 
@@ -1667,13 +1665,14 @@ void UIManager::drawHomeGivEnergyBatteryFocus() {
   const int divX = 260; // vertical divider X
 
   // ── Left: Battery gauge ──────────────────────────────────────────────────
-  const int gaugeW = 100;
-  const int gaugeH = contentH - 10;
+  const int gaugeW = 120;
+  const int gaugeH = contentH - 80; // shorter to leave room for large SOC text
   const int gaugeX = marginX + (divX - marginX - gaugeW) / 2;
   const int gaugeY = marginY + 5;
+  const int gaugeCx = gaugeX + gaugeW / 2;
 
   // Terminal nub
-  M5.Display.fillRect(gaugeX + gaugeW / 2 - 12, gaugeY - 8, 24, 8, COLOR_BLACK);
+  M5.Display.fillRect(gaugeCx - 15, gaugeY - 8, 30, 8, COLOR_BLACK);
 
   // Outer border (double line for emphasis)
   M5.Display.drawRect(gaugeX, gaugeY, gaugeW, gaugeH, COLOR_BLACK);
@@ -1696,27 +1695,13 @@ void UIManager::drawHomeGivEnergyBatteryFocus() {
   }
 
   // SOC % large text centred below gauge
-  M5.Display.setFont(&fonts::DejaVu24);
+  M5.Display.setFont(&fonts::DejaVu40);
   M5.Display.setTextColor(COLOR_BLACK);
   char socStr[8];
   snprintf(socStr, sizeof(socStr), "%.0f%%", d.batteryPercent);
   int socW = M5.Display.textWidth(socStr);
-  int gaugeCx = gaugeX + gaugeW / 2;
-  M5.Display.setCursor(gaugeCx - socW / 2, gaugeY + gaugeH + 6);
+  M5.Display.setCursor(gaugeCx - socW / 2, gaugeY + gaugeH + 10);
   M5.Display.print(socStr);
-
-  // Charge / discharge label
-  M5.Display.setFont(&fonts::Font2);
-  char batStateStr[32];
-  if (d.chargePower > 5)
-    snprintf(batStateStr, sizeof(batStateStr), "Charging %.0fW", d.chargePower);
-  else if (d.dischargePower > 5)
-    snprintf(batStateStr, sizeof(batStateStr), "Using %.0fW", d.dischargePower);
-  else
-    snprintf(batStateStr, sizeof(batStateStr), "Idle");
-  int bsW = M5.Display.textWidth(batStateStr);
-  M5.Display.setCursor(gaugeCx - bsW / 2, gaugeY + gaugeH + 32);
-  M5.Display.print(batStateStr);
 
   // ── Vertical divider ─────────────────────────────────────────────────────
   M5.Display.drawFastVLine(divX, marginY, contentH, COLOR_GRAY);
@@ -1728,23 +1713,23 @@ void UIManager::drawHomeGivEnergyBatteryFocus() {
   int y = marginY + 2;
 
   // Section: NOW
-  M5.Display.setFont(&fonts::Font4);
+  M5.Display.setFont(&fonts::DejaVu24);
   M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setCursor(rx, y);
   M5.Display.print("NOW");
-  M5.Display.drawFastHLine(rx, y + 26, rw, COLOR_BLACK);
-  y += 34;
+  M5.Display.drawFastHLine(rx, y + 28, rw, COLOR_BLACK);
+  y += 36;
 
   // Helper: right-aligned value
   auto printRow = [&](const char *label, const char *value) {
-    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setFont(&fonts::DejaVu18);
     M5.Display.setTextColor(COLOR_BLACK);
     M5.Display.setCursor(rx, y);
     M5.Display.print(label);
     int vw = M5.Display.textWidth(value);
     M5.Display.setCursor(rx + rw - vw, y);
     M5.Display.print(value);
-    y += 26;
+    y += 32;
   };
 
   char buf[32];
@@ -1762,15 +1747,15 @@ void UIManager::drawHomeGivEnergyBatteryFocus() {
     snprintf(buf, sizeof(buf), "Idle");
   printRow("Grid:", buf);
 
-  y += 6;
+  y += 10;
 
   // Section: TODAY
-  M5.Display.setFont(&fonts::Font4);
+  M5.Display.setFont(&fonts::DejaVu24);
   M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setCursor(rx, y);
   M5.Display.print("TODAY");
-  M5.Display.drawFastHLine(rx, y + 26, rw, COLOR_BLACK);
-  y += 34;
+  M5.Display.drawFastHLine(rx, y + 28, rw, COLOR_BLACK);
+  y += 36;
 
   snprintf(buf, sizeof(buf), "%.1f kWh", d.pvEnergyToday);
   printRow("Solar generated:", buf);
@@ -1801,13 +1786,9 @@ void UIManager::drawHomeGivEnergyBatteryFocus() {
     bool wifiOk = mqttClient->isWiFiConnected();
     bool mqttOk = mqttClient->isMQTTConnected();
     M5.Display.setCursor(marginX, footerY);
-    if (!wifiOk) M5.Display.print("WiFi: --");
+    if (!wifiOk) M5.Display.print("WiFi: Disconnected");
     else if (!mqttOk) M5.Display.print("MQTT: Connecting...");
-    else {
-      char rssi[24];
-      snprintf(rssi, sizeof(rssi), "WiFi: %ddBm", mqttClient->getRSSI());
-      M5.Display.print(rssi);
-    }
+    else M5.Display.print("Connected");
   }
 
   if (d.lastUpdateTime > 0) {
@@ -1989,16 +1970,14 @@ void UIManager::drawHomeGivEnergyTodaysStory() {
   M5.Display.setTextColor(COLOR_BLACK);
 
   extern GivEnergyMQTT *mqttClient;
+  M5.Display.setCursor(marginX, footerY);
   if (mqttClient && mqttClient->isWiFiConnected()) {
-    char rssi[32];
-    snprintf(rssi, sizeof(rssi), "WiFi: %ddBm  MQTT: %s",
-             mqttClient->getRSSI(),
-             mqttClient->isMQTTConnected() ? "Live" : "Connecting...");
-    M5.Display.setCursor(marginX, footerY);
-    M5.Display.print(rssi);
+    if (mqttClient->isMQTTConnected())
+      M5.Display.print("Connected");
+    else
+      M5.Display.print("MQTT: Connecting...");
   } else {
-    M5.Display.setCursor(marginX, footerY);
-    M5.Display.print("WiFi: --");
+    M5.Display.print("WiFi: Disconnected");
   }
 
   if (d.lastUpdateTime > 0) {
