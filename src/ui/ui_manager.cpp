@@ -2347,7 +2347,21 @@ void UIManager::handleHomeTouch(int x, int y, TouchEvent event) {
   if (event != TouchEvent::PRESS && event != TouchEvent::RELEASE)
     return;
 
+  // MENU button check first — works for all themes and both modes
+  if (hitTestMenuButton(x, y)) {
+    Buzzer::click();
+    navigateTo(ScreenID::SETTINGS);
+    return;
+  }
+
   extern Config *config;
+
+  // Home mode (GivEnergy): no interactive touch elements beyond MENU button
+  if (config && config->isHomeMode()) {
+    return;
+  }
+
+  // Campervan mode: dispatch to active Fossibot theme handler
   String theme = config ? config->getTheme() : "classic_grid";
   if (theme == "compact_status") {
     handleHomeCompactStatusTouch(x, y);
