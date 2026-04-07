@@ -299,12 +299,12 @@ bool readTouchManual(int *x, int *y) {
     // Clamp to boundaries
     if (*x < 0)
       *x = 0;
-    if (*x > 960)
-      *x = 960;
+    if (*x > 959)
+      *x = 959;
     if (*y < 0)
       *y = 0;
-    if (*y > 540)
-      *y = 540;
+    if (*y > 539)
+      *y = 539;
 
     Serial.printf("TOUCH: Mapped(%d, %d) Raw(%d, %d)\n", *x, *y, raw_x, raw_y);
 
@@ -354,8 +354,10 @@ void loop() {
   // M5.update(); // DISABLED: Conflicts with manual I2C touch reading
   // (ESP_ERR_INVALID_STATE)
 
-  // --- TOUCH POLLING MODE (INT-Gated for Power Savings) ---
-  // Only read I2C if INT pin is LOW (touch active) or if we were just touching
+  // --- TOUCH POLLING MODE ---
+  // Poll continuously instead of relying on the GT911 INT line. The project
+  // docs note that the interrupt path has been unreliable on this hardware,
+  // and if it never asserts the UI becomes completely untouchable.
   static unsigned long lastTouchPoll = 0;
   static bool wasTouching = false;
   static int lastTouchX = 0;
@@ -364,46 +366,40 @@ void loop() {
   if (millis() - lastTouchPoll > 15) {
     lastTouchPoll = millis();
 
-    // INT-Gated: Only perform I2C read if touch hardware signals activity
-    // GPIO 48 is GT911 INT pin, goes LOW when touch is detected
-    // EXCEPTION: Always poll in NOTES mode for smooth drawing (bypass INT
-    // check)
-    bool isNotes = (uiManager->getCurrentScreen() == ScreenID::NOTES);
-    bool intActive = (digitalRead(48) == LOW) || isNotes;
+    int tx, ty;
+    bool touching = readTouchManual(&tx, &ty);
+    bool validTouch =
+        touching && tx >= 0 && tx < 960 && ty >= 0 && ty < 540;
 
-    if (intActive || wasTouching) {
+    if (validTouch) {
       // IMMEDIATE WAKEUP: Reduce input latency
-      // Notify UI Manager to exit Eco Mode (logs and sets freq)
       uiManager->exitEcoMode();
+    }
 
-      int tx, ty;
-      bool touching = readTouchManual(&tx, &ty);
+    // Feed raw touch state to UI Manager for continuous drawing
+    if (validTouch) {
+      uiManager->setTouchState(tx, ty, true);
+    } else {
+      uiManager->setTouchState(lastTouchX, lastTouchY, false);
+    }
 
-      // Feed raw touch state to UI Manager for continuous drawing
-      if (touching && tx > 0 && tx < 960 && ty > 0 && ty < 540) {
-        uiManager->setTouchState(tx, ty, true);
-      } else {
-        uiManager->setTouchState(lastTouchX, lastTouchY, false);
+    if (validTouch) {
+      if (!wasTouching) {
+        // New touch started - send PRESS
+        uiManager->handleTouch(tx, ty, TouchEvent::PRESS);
+        Serial.println("EVENT: PRESS");
       }
-
-      if (touching && tx > 0 && tx < 960 && ty > 0 && ty < 540) {
-        if (!wasTouching) {
-          // New touch started - send PRESS
-          uiManager->handleTouch(tx, ty, TouchEvent::PRESS);
-          Serial.println("EVENT: PRESS");
-        }
-        wasTouching = true;
-        lastTouchX = tx;
-        lastTouchY = ty;
-      } else {
-        // No touch detected
-        if (wasTouching) {
-          // Touch just ended - send RELEASE (this triggers the action!)
-          uiManager->handleTouch(lastTouchX, lastTouchY, TouchEvent::RELEASE);
-          Serial.println("EVENT: RELEASE");
-        }
-        wasTouching = false;
+      wasTouching = true;
+      lastTouchX = tx;
+      lastTouchY = ty;
+    } else {
+      // No touch detected
+      if (wasTouching) {
+        // Touch just ended - send RELEASE (this triggers the action!)
+        uiManager->handleTouch(lastTouchX, lastTouchY, TouchEvent::RELEASE);
+        Serial.println("EVENT: RELEASE");
       }
+      wasTouching = false;
     }
   }
 
