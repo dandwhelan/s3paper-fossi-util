@@ -114,17 +114,24 @@ void UIManager::drawHomeButton() {
 }
 
 void UIManager::drawMenuButton() {
-  // MENU button in the bottom-right corner of the home screen
-  // Fill background white first so it's visible above status bar
+  // MENU button in the top-right corner of the home screen
+  // Fill background white first so it's visible above chart content
   M5.Display.fillRect(MENU_BTN_X - 2, MENU_BTN_Y - 2, MENU_BTN_W + 4, MENU_BTN_H + 4,
                       COLOR_WHITE);
   M5.Display.drawRect(MENU_BTN_X, MENU_BTN_Y, MENU_BTN_W, MENU_BTN_H,
                       COLOR_BLACK);
+  M5.Display.drawRect(MENU_BTN_X + 1, MENU_BTN_Y + 1, MENU_BTN_W - 2, MENU_BTN_H - 2,
+                      COLOR_BLACK);
   M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setFont(&fonts::DejaVu24);
   M5.Display.setTextSize(1);
+  // Draw a simple "hamburger" icon to make the entry point more obvious.
+  for (int i = 0; i < 3; i++) {
+    int ly = MENU_BTN_Y + 12 + i * 10;
+    M5.Display.drawFastHLine(MENU_BTN_X + 12, ly, 18, COLOR_BLACK);
+  }
   int tw = M5.Display.textWidth("MENU");
-  M5.Display.setCursor(MENU_BTN_X + (MENU_BTN_W - tw) / 2,
+  M5.Display.setCursor(MENU_BTN_X + 38 + (MENU_BTN_W - 38 - tw) / 2,
                        MENU_BTN_Y + (MENU_BTN_H - 24) / 2);
   M5.Display.print("MENU");
 }
@@ -341,10 +348,28 @@ void UIManager::handleTouch(int x, int y, TouchEvent event) {
 
   case TouchEvent::RELEASE:
     if (_isTouching) {
+      int deltaX = x - _touchStartX;
+      int deltaY = y - _touchStartY;
       // Check if it was a tap (not a drag)
-      int dx = abs(x - _touchStartX);
-      int dy = abs(y - _touchStartY);
+      int dx = abs(deltaX);
+      int dy = abs(deltaY);
       unsigned long duration = millis() - _touchStartTime;
+
+      if (_currentScreen == ScreenID::HOME) {
+        bool swipeLeftFromRightEdge =
+            (_touchStartX >= SCREEN_WIDTH - 170) && (deltaX <= -90) &&
+            (dy <= 120);
+        bool swipeUpFromBottomEdge =
+            (_touchStartY >= SCREEN_HEIGHT - 140) && (deltaY <= -90) &&
+            (dx <= 160);
+
+        if (swipeLeftFromRightEdge || swipeUpFromBottomEdge) {
+          Buzzer::click();
+          navigateTo(ScreenID::SETTINGS);
+          _isTouching = false;
+          break;
+        }
+      }
 
       if (dx < 20 && dy < 20 &&
           duration < 800) { // Increased duration tolerance

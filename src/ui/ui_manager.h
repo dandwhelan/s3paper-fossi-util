@@ -181,11 +181,11 @@ private:
   static const int HOME_BTN_W = 80;
   static const int HOME_BTN_H = 35;
 
-  // MENU button constants (bottom-right on home screen)
+  // MENU button constants (top-right on home screen)
   static const int MENU_BTN_W = 120;
   static const int MENU_BTN_H = 50;
   static const int MENU_BTN_X = SCREEN_WIDTH - MENU_BTN_W - 10;
-  static const int MENU_BTN_Y = SCREEN_HEIGHT - MENU_BTN_H - 10;
+  static const int MENU_BTN_Y = 10;
 
   // --- Timer State ---
   bool _timerRunning = false;
