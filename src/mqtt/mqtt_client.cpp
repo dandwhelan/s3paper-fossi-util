@@ -257,8 +257,10 @@ void GivEnergyMQTT::syncNTP() {
   Serial.println("NTP: Syncing time...");
 #endif
 
-  // Configure NTP (pool.ntp.org, no TZ offset - RTC stores UTC)
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  // Configure NTP with POSIX timezone string for UK (GMT/BST auto-switching).
+  // BST runs from last Sunday of March @ 01:00 UTC to last Sunday of October @ 02:00.
+  // Using configTzTime sets the TZ env var so getLocalTime() returns local time.
+  configTzTime("GMT0BST,M3.5.0/1,M10.5.0", "pool.ntp.org", "time.nist.gov");
 
   // Wait up to 5 seconds for NTP response
   struct tm timeinfo;

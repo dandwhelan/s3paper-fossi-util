@@ -142,8 +142,17 @@ bool UIManager::hitTestHomeButton(int x, int y) {
 }
 
 bool UIManager::hitTestMenuButton(int x, int y) {
-  return (x >= MENU_BTN_X && x < MENU_BTN_X + MENU_BTN_W && y >= MENU_BTN_Y &&
-          y < MENU_BTN_Y + MENU_BTN_H);
+  // Generous hit zone: add padding around the visual button so taps near the
+  // edges (or slightly off due to e-ink ghosting / touch calibration) still
+  // register. Extends to the top-right corner of the screen for easy access.
+  const int padLeft = 30;
+  const int padRight = 10;
+  const int padTop = 10;
+  const int padBottom = 20;
+  return (x >= MENU_BTN_X - padLeft &&
+          x < MENU_BTN_X + MENU_BTN_W + padRight &&
+          y >= MENU_BTN_Y - padTop &&
+          y < MENU_BTN_Y + MENU_BTN_H + padBottom);
 }
 
 void UIManager::update() {
@@ -1750,7 +1759,9 @@ void UIManager::drawHomeGivEnergyBatteryFocus() {
 
   // ── Right: NOW + TODAY ───────────────────────────────────────────────────
   const int rx = divX + 20;
-  const int rw = SCREEN_WIDTH - rx - marginX - 90; // leave room for menu btn
+  // Leave 140px on the right for the menu button (120px wide + 20px padding)
+  // so right-aligned values never encroach on the MENU touch/draw zone.
+  const int rw = SCREEN_WIDTH - rx - marginX - 140;
   int y = marginY + 2;
 
   // Section: NOW
