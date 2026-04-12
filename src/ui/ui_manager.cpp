@@ -101,58 +101,62 @@ const m5gfx::IFont *UIManager::getReaderFont() {
 // --- HOME / MENU button helpers ---
 
 void UIManager::drawHomeButton() {
-  // Small HOME button in the top-left corner of non-home screens
-  M5.Display.drawRect(HOME_BTN_X, HOME_BTN_Y, HOME_BTN_W, HOME_BTN_H,
-                      COLOR_BLACK);
-  M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setFont(&fonts::DejaVu24);
-  M5.Display.setTextSize(1);
-  int tw = M5.Display.textWidth("HOME");
-  M5.Display.setCursor(HOME_BTN_X + (HOME_BTN_W - tw) / 2,
-                       HOME_BTN_Y + (HOME_BTN_H - 24) / 2);
-  M5.Display.print("HOME");
+  // Small home icon in the top-right corner of non-home screens
+  const int x = MENU_ICON_X;
+  const int y = MENU_ICON_Y;
+  const int s = MENU_ICON_SIZE;
+  // White background so icon is visible over any content
+  M5.Display.fillRect(x - 2, y - 2, s + 4, s + 4, COLOR_WHITE);
+  // House outline: peaked roof + square body
+  int cx = x + s / 2;       // centre x
+  int roofY = y + 4;        // peak of roof
+  int wallTop = y + s / 2;  // where walls start (below roof)
+  int wallBot = y + s - 4;  // bottom of walls
+  int wallL = x + 6;        // left wall
+  int wallR = x + s - 6;    // right wall
+  // Roof triangle
+  M5.Display.drawLine(cx, roofY, wallL - 2, wallTop, COLOR_BLACK);
+  M5.Display.drawLine(cx, roofY, wallR + 2, wallTop, COLOR_BLACK);
+  M5.Display.drawLine(cx, roofY + 1, wallL - 2, wallTop + 1, COLOR_BLACK);
+  M5.Display.drawLine(cx, roofY + 1, wallR + 2, wallTop + 1, COLOR_BLACK);
+  // Walls
+  M5.Display.drawRect(wallL, wallTop, wallR - wallL, wallBot - wallTop, COLOR_BLACK);
+  // Door
+  int doorW = 6;
+  int doorH = (wallBot - wallTop) / 2;
+  int doorX = cx - doorW / 2;
+  M5.Display.fillRect(doorX, wallBot - doorH, doorW, doorH, COLOR_BLACK);
 }
 
 void UIManager::drawMenuButton() {
-  // MENU button in the top-right corner of the home screen
-  // Fill background white first so it's visible above chart content
-  M5.Display.fillRect(MENU_BTN_X - 2, MENU_BTN_Y - 2, MENU_BTN_W + 4, MENU_BTN_H + 4,
-                      COLOR_WHITE);
-  M5.Display.drawRect(MENU_BTN_X, MENU_BTN_Y, MENU_BTN_W, MENU_BTN_H,
-                      COLOR_BLACK);
-  M5.Display.drawRect(MENU_BTN_X + 1, MENU_BTN_Y + 1, MENU_BTN_W - 2, MENU_BTN_H - 2,
-                      COLOR_BLACK);
-  M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setFont(&fonts::DejaVu24);
-  M5.Display.setTextSize(1);
-  // Draw a simple "hamburger" icon to make the entry point more obvious.
+  // Small hamburger icon in the top-right corner of the home screen
+  const int x = MENU_ICON_X;
+  const int y = MENU_ICON_Y;
+  const int s = MENU_ICON_SIZE;
+  // White background so icon is visible over any content
+  M5.Display.fillRect(x - 2, y - 2, s + 4, s + 4, COLOR_WHITE);
+  // Three horizontal bars (hamburger icon)
+  const int barW = s - 12;
+  const int barX = x + 6;
   for (int i = 0; i < 3; i++) {
-    int ly = MENU_BTN_Y + 12 + i * 10;
-    M5.Display.drawFastHLine(MENU_BTN_X + 12, ly, 18, COLOR_BLACK);
+    int ly = y + 10 + i * 8;
+    M5.Display.drawFastHLine(barX, ly, barW, COLOR_BLACK);
+    M5.Display.drawFastHLine(barX, ly + 1, barW, COLOR_BLACK);
   }
-  int tw = M5.Display.textWidth("MENU");
-  M5.Display.setCursor(MENU_BTN_X + 38 + (MENU_BTN_W - 38 - tw) / 2,
-                       MENU_BTN_Y + (MENU_BTN_H - 24) / 2);
-  M5.Display.print("MENU");
 }
 
 bool UIManager::hitTestHomeButton(int x, int y) {
-  return (x >= HOME_BTN_X && x < HOME_BTN_X + HOME_BTN_W && y >= HOME_BTN_Y &&
-          y < HOME_BTN_Y + HOME_BTN_H);
+  // Generous hit zone around the small top-right icon
+  const int pad = 20;
+  return (x >= HOME_BTN_X - pad && x < HOME_BTN_X + HOME_BTN_W + 10 &&
+          y >= HOME_BTN_Y - 10 && y < HOME_BTN_Y + HOME_BTN_H + pad);
 }
 
 bool UIManager::hitTestMenuButton(int x, int y) {
-  // Generous hit zone: add padding around the visual button so taps near the
-  // edges (or slightly off due to e-ink ghosting / touch calibration) still
-  // register. Extends to the top-right corner of the screen for easy access.
-  const int padLeft = 30;
-  const int padRight = 10;
-  const int padTop = 10;
-  const int padBottom = 20;
-  return (x >= MENU_BTN_X - padLeft &&
-          x < MENU_BTN_X + MENU_BTN_W + padRight &&
-          y >= MENU_BTN_Y - padTop &&
-          y < MENU_BTN_Y + MENU_BTN_H + padBottom);
+  // Generous hit zone around the small top-right icon
+  const int pad = 20;
+  return (x >= MENU_BTN_X - pad && x < MENU_BTN_X + MENU_BTN_W + 10 &&
+          y >= MENU_BTN_Y - 10 && y < MENU_BTN_Y + MENU_BTN_H + pad);
 }
 
 void UIManager::update() {
@@ -421,7 +425,8 @@ void UIManager::handleTouch(int x, int y, TouchEvent event) {
             _currentScreen != ScreenID::GAME_SUDOKU &&
             _currentScreen != ScreenID::GAME_MINESWEEPER &&
             _currentScreen != ScreenID::READER &&
-            _currentScreen != ScreenID::HISTORY) {
+            _currentScreen != ScreenID::HISTORY &&
+            _currentScreen != ScreenID::SD_DIAG) {
           if (hitTestHomeButton(x, y)) {
             Buzzer::click();
             navigateTo(ScreenID::HOME);
@@ -2617,7 +2622,7 @@ void UIManager::drawSettingsScreen() {
   // Main Menu — central navigation hub (replaces old nav bar)
   M5.Display.fillScreen(COLOR_WHITE);
 
-  // HOME button (top-left)
+  // Home icon (top-right)
   drawHomeButton();
 
   // Title - centered
@@ -2677,9 +2682,9 @@ void UIManager::drawSettingsScreen() {
     drawButton(col3X, row3Y, btnW, btnH, themeLabel);
   }
 
-  // --- Battery Status (Top Right) ---
+  // --- Battery Status (Top Right, left of home icon) ---
   M5.Display.setTextSize(0.7);
-  M5.Display.setCursor(SCREEN_WIDTH - 220, 15);
+  M5.Display.setCursor(SCREEN_WIDTH - 260, 15);
   float voltage = Battery::getVoltage();
   int percentage = Battery::getPercentage();
   M5.Display.printf("Bat: %d%% (%.2fV)", percentage, voltage);
@@ -3751,8 +3756,8 @@ void UIManager::drawClockScreen() {
     }
     M5.Display.fillScreen(COLOR_WHITE);
     drawClockSidebar(0, 0, SIDEBAR_WIDTH, CONTENT_HEIGHT);
-    // Draw Exit/Back button (Top Right)
-    drawButton(SCREEN_WIDTH - 80, 10, 70, 50, "X");
+    // Draw home icon (Top Right)
+    drawHomeButton();
   }
 
   // Draw content based on current clock mode
@@ -3946,8 +3951,8 @@ void UIManager::drawCalculatorScreen() {
   const int KEYPAD_WIDTH = SCREEN_WIDTH - DISPLAY_WIDTH;
   const int CONTENT_HEIGHT = SCREEN_HEIGHT;
 
-  // Exit button "X" (Top Left)
-  drawButton(20, 10, 60, 50, "X");
+  // Home icon (Top Right)
+  drawHomeButton();
 
   // --- Left Side: Display ---
   M5.Display.setTextSize(1);
@@ -4040,8 +4045,8 @@ void UIManager::drawCalculatorScreen() {
 }
 
 void UIManager::handleCalculatorTouch(int x, int y) {
-  // Exit button "X" (Top Left)
-  if (x >= 20 && x < 80 && y >= 10 && y < 60) {
+  // Home icon (Top Right)
+  if (hitTestHomeButton(x, y)) {
     Buzzer::click();
     navigateTo(ScreenID::HOME);
     return;
@@ -4207,12 +4212,15 @@ void UIManager::drawNotesScreen() {
   }
   _notesCanvas->pushSprite(0, 0);
 
-  // Toolbar Buttons
+  // Home icon (Top Right, above toolbar)
+  drawHomeButton();
+
+  // Toolbar Buttons (shifted down to clear home icon)
   int btnX = toolbarX + 10;
   int btnW = 80;
   int btnH = 50;
-  int gap = 10;
-  int y = 10;
+  int gap = 5;
+  int y = 50;
 
   drawButton(btnX, y, btnW, btnH, "THIN");
   y += (btnH + gap);
@@ -4251,13 +4259,10 @@ void UIManager::drawNotesScreen() {
     M5.Display.print(fileInfo);
   }
 
-  // "X" Exit (Top Left)
-  drawButton(10, 10, 60, 50, "X");
-
   // Hint
   M5.Display.setTextSize(1);
   M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setCursor(80, 20);
+  M5.Display.setCursor(10, 20);
   M5.Display.print("Draw Mode");
 
   // Switch to Fastest mode for drawing responsiveness
@@ -4277,8 +4282,8 @@ void UIManager::drawNotesScreen() {
 void UIManager::handleNotesTouch(int x, int y) {
   int toolbarX = SCREEN_WIDTH - 100;
 
-  // Exit Button
-  if (x >= 10 && x < 70 && y >= 10 && y < 60) {
+  // Home icon (Top Right)
+  if (hitTestHomeButton(x, y)) {
     Buzzer::click();
     // Force clean exit to remove doodles
     M5.Display.setEpdMode(epd_mode_t::epd_quality);
@@ -4292,8 +4297,8 @@ void UIManager::handleNotesTouch(int x, int y) {
   if (x > toolbarX) {
     int btnW = 80;
     int btnH = 50;
-    int gap = 10;
-    int startY = 10;
+    int gap = 5;
+    int startY = 50;
     int btnX = toolbarX + 10;
 
     auto checkBtn = [&](int index) {
@@ -4593,13 +4598,12 @@ void UIManager::drawNotesBrowseScreen() {
   M5.Display.setCursor(20, 15);
   M5.Display.print("Notes File Browser");
 
-  // Navigation buttons (Next to X)
-  // Navigation buttons (Next to X) - Widened to 100px to fit text
+  // Navigation buttons
   drawButton(SCREEN_WIDTH - 290, 10, 100, 40, "UP");
   drawButton(SCREEN_WIDTH - 185, 10, 100, 40, "DOWN");
 
-  // Close button
-  drawButton(SCREEN_WIDTH - 80, 10, 70, 40, "X");
+  // Home icon (Top Right)
+  drawHomeButton();
 
   // Divider under header
   M5.Display.drawLine(0, 60, SCREEN_WIDTH, 60, COLOR_BLACK);
@@ -4770,8 +4774,9 @@ void UIManager::handleNotesBrowseTouch(int x, int y) {
     return;
   }
 
-  // Close button
-  if (isHit(SCREEN_WIDTH - 80, 10, 70, 40)) {
+  // Home icon (Top Right)
+  if (hitTestHomeButton(x, y)) {
+    Buzzer::click();
     navigateTo(ScreenID::NOTES);
     return;
   }
@@ -5367,13 +5372,8 @@ void UIManager::drawSDDiagScreen() {
   M5.Display.setCursor(20, 15);
   M5.Display.print("SD Card Diagnostics");
 
-  // Back Button (Top Right)
-  M5.Display.fillRect(SCREEN_WIDTH - 130, 5, 120, 50, COLOR_WHITE);
-  M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setTextSize(1); // Set size 1 for Back Button
-  M5.Display.drawRect(SCREEN_WIDTH - 130, 5, 120, 50, COLOR_BLACK);
-  M5.Display.setCursor(SCREEN_WIDTH - 110, 15);
-  M5.Display.print("BACK");
+  // Home icon (Top Right)
+  drawHomeButton();
 
   extern SDManager *sdManager;
   if (!sdManager || !sdManager->isAvailable()) {
@@ -5458,8 +5458,8 @@ void UIManager::drawSDDiagScreen() {
 }
 
 void UIManager::handleSDDiagTouch(int x, int y) {
-  // Back Button (Top Right)
-  if (x > SCREEN_WIDTH - 140 && y < 60) {
+  // Home icon (Top Right)
+  if (hitTestHomeButton(x, y)) {
     Buzzer::click();
     navigateTo(ScreenID::SETTINGS);
     return;
@@ -5766,8 +5766,8 @@ void UIManager::handleClockTouch(int x, int y, TouchEvent event) {
     return;
   }
 
-  // 2. Exit Button (Top Right)
-  if (x > SCREEN_WIDTH - 80 && y < 60) {
+  // 2. Exit icon (Top Right)
+  if (hitTestHomeButton(x, y)) {
     navigateTo(ScreenID::HOME);
     return;
   }
@@ -6085,10 +6085,12 @@ void UIManager::drawGame2048() {
     }
   }
 
-  // Buttons (above menu bar)
+  // Home icon (Top Right)
+  drawHomeButton();
+
+  // NEW GAME button (bottom)
   int btnY = SCREEN_HEIGHT - 140;
   drawButton(60, btnY, 180, 50, "NEW GAME"); // Wider button
-  drawButton(SCREEN_WIDTH - 210, btnY, 150, 50, "HOME");
 
   // Game over overlay
   if (_game2048GameOver) {
@@ -6132,7 +6134,16 @@ void UIManager::handleGame2048Touch(int x, int y, TouchEvent event) {
     return;
   }
 
-  // Check buttons (above menu bar)
+  // Home icon (Top Right)
+  if (hitTestHomeButton(x, y)) {
+    Buzzer::click();
+    game2048Save();
+    M5.Display.fillScreen(COLOR_WHITE); // Clear ghosting
+    navigateTo(ScreenID::HOME);
+    return;
+  }
+
+  // NEW GAME button (bottom)
   int btnY = SCREEN_HEIGHT - 140;
   if (y >= btnY && y < btnY + 50) {
     if (x >= 60 && x < 240) { // Wider touch zone for NEW GAME
@@ -6142,14 +6153,6 @@ void UIManager::handleGame2048Touch(int x, int y, TouchEvent event) {
       game2048Init();
       _needsRefresh = true;
       _lastRefresh = 0;
-      return;
-    }
-    if (x >= SCREEN_WIDTH - 210 && x < SCREEN_WIDTH - 60) {
-      // Home
-      Buzzer::click();
-      game2048Save();
-      M5.Display.fillScreen(COLOR_WHITE); // Clear ghosting
-      navigateTo(ScreenID::HOME);
       return;
     }
   }
@@ -6715,8 +6718,8 @@ void UIManager::drawSudokuGame() {
                                                 : "Hard";
   M5.Display.printf("SUDOKU  #%d/3 (%s)", _sudokuPuzzleNum, diff);
 
-  // HOME button (top right)
-  drawButton(850, 10, 100, 40, "HOME");
+  // Home icon (top right)
+  drawHomeButton();
 
   // ===== DIFFICULTY SELECTOR (top right, below title) =====
   int diffY = 15;
@@ -6861,8 +6864,8 @@ void UIManager::handleSudokuTouch(int x, int y, TouchEvent event) {
     return; // Block all other touches when dialog is shown
   }
 
-  // HOME button (850-950, 10-50)
-  if (x >= 850 && x < 950 && y >= 10 && y < 50) {
+  // Home icon (top right)
+  if (hitTestHomeButton(x, y)) {
     M5.Display.fillScreen(COLOR_WHITE); // Clear ghosting
     navigateTo(ScreenID::HOME);
     return;
@@ -7010,15 +7013,8 @@ void UIManager::drawHistoryScreen() {
   M5.Display.setCursor(20, 18);
   M5.Display.print(dateStr);
 
-  // EXIT button (White X in top right)
-  int cx = SCREEN_WIDTH - 40;
-  int cy = 30;
-  for (int i = -1; i <= 1; i++) {
-    M5.Display.drawLine(cx - 15 + i, cy - 15, cx + 15 + i, cy + 15,
-                        COLOR_WHITE);
-    M5.Display.drawLine(cx + 15 + i, cy - 15, cx - 15 + i, cy + 15,
-                        COLOR_WHITE);
-  }
+  // Home icon (Top Right)
+  drawHomeButton();
 
   // --- Data Analysis for Scaling ---
   uint16_t sampleCount = _powerHistory.getSampleCount(_historyViewDay);
@@ -7325,13 +7321,8 @@ void UIManager::handleHistoryTouch(int x, int y, TouchEvent event) {
     }
   }
 
-  // HOME button (top right - invisible touch zone if drawn in header,
-  // currently we are NOT drawing a home button to give more space,
-  // but user might want a way back?
-  // User said "disable the nav bar as sometimes i go back to the homepage".
-  // This implies accidental touches. I'll add a specific HOME button
-  // in the top Header area just in case they get stuck).
-  if (y < 50 && x > SCREEN_WIDTH - 100) {
+  // Home icon (top right)
+  if (hitTestHomeButton(x, y)) {
     Buzzer::click();
     navigateTo(ScreenID::HOME);
     clearSelected = true;
@@ -7418,14 +7409,8 @@ void UIManager::drawReaderBrowser() {
   int btnW = 110;
   int btnH = 40;
 
-  // HOME button (top right)
-  M5.Display.fillRect(M5.Display.width() - 120, 10, btnW, btnH, COLOR_WHITE);
-  M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setTextSize(0.6); // Smaller for buttons
-  int homeW = M5.Display.textWidth("HOME");
-  M5.Display.setCursor(M5.Display.width() - 120 + (btnW - homeW) / 2,
-                       10 + (btnH - 15) / 2);
-  M5.Display.print("HOME");
+  // Home icon (top right)
+  drawHomeButton();
 
   // REFRESH button (top right, left of HOME)
   int refreshBtnX = M5.Display.width() - 240;
@@ -7582,24 +7567,32 @@ void UIManager::drawReaderScreen() {
   int screenW = M5.Display.width();
   int screenH = M5.Display.height();
 
-  // EXIT button (left)
-  int btnW = 100; // Wider for DejaVu24
-  int btnH = 45;
-  M5.Display.fillRect(10, 5, btnW, btnH, COLOR_WHITE);
-  M5.Display.drawRect(10, 5, btnW, btnH, COLOR_BLACK);
-  M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setTextSize(0.7); // Smaller for labels
-  int exitW = M5.Display.textWidth("EXIT");
-  M5.Display.setCursor(10 + (btnW - exitW) / 2, 5 + (btnH - 18) / 2); // Center
-  M5.Display.print("EXIT");
+  // EXIT icon (top-left, small back arrow)
+  {
+    const int ix = 10, iy = 5, is = 36;
+    M5.Display.fillRect(ix - 2, iy - 2, is + 4, is + 4, COLOR_WHITE);
+    // Left arrow
+    int cx = ix + is / 2;
+    int cy = iy + is / 2;
+    M5.Display.drawLine(cx + 8, cy - 10, cx - 8, cy, COLOR_BLACK);
+    M5.Display.drawLine(cx - 8, cy, cx + 8, cy + 10, COLOR_BLACK);
+    M5.Display.drawLine(cx + 8, cy - 9, cx - 7, cy, COLOR_BLACK);
+    M5.Display.drawLine(cx - 7, cy, cx + 8, cy + 9, COLOR_BLACK);
+  }
 
-  // MENU button (right)
-  M5.Display.fillRect(screenW - btnW - 10, 5, btnW, btnH, COLOR_WHITE);
-  M5.Display.drawRect(screenW - btnW - 10, 5, btnW, btnH, COLOR_BLACK);
-  int menuTxtW = M5.Display.textWidth("MENU");
-  M5.Display.setCursor(screenW - btnW - 10 + (btnW - menuTxtW) / 2,
-                       5 + (btnH - 18) / 2);
-  M5.Display.print("MENU");
+  // MENU icon (top-right, small hamburger)
+  {
+    const int is = 36;
+    const int ix = screenW - is - 10, iy = 5;
+    M5.Display.fillRect(ix - 2, iy - 2, is + 4, is + 4, COLOR_WHITE);
+    const int barW = is - 12;
+    const int barX = ix + 6;
+    for (int i = 0; i < 3; i++) {
+      int ly = iy + 10 + i * 8;
+      M5.Display.drawFastHLine(barX, ly, barW, COLOR_BLACK);
+      M5.Display.drawFastHLine(barX, ly + 1, barW, COLOR_BLACK);
+    }
+  }
 
   // Footer navigation (Overlay)
   int footerY = screenH - 50;
@@ -8131,9 +8124,9 @@ void UIManager::handleReaderTouch(int x, int y, TouchEvent event) {
     Serial.printf("  Book list size: %d\n", _readerBookList.size());
     Buzzer::click();
 
-    // HOME button (top right)
-    if (y > 10 && y < 50 && x > M5.Display.width() - 120) {
-      Serial.println("  -> HOME button hit");
+    // Home icon (top right)
+    if (hitTestHomeButton(x, y)) {
+      Serial.println("  -> HOME icon hit");
       navigateTo(ScreenID::HOME);
       return;
     }
@@ -8520,8 +8513,8 @@ void UIManager::drawMinesweeperGame() {
   // Reset
   drawButton(modeBtnX - 120, modeBtnY, 100, 50, "RESET");
 
-  // Quit (X) Button
-  drawButton(900, 10, 50, 50, "X");
+  // Home icon (Top Right)
+  drawHomeButton();
 
   int cellSize = 60; // Increased size for better touch
   int gridX = (SCREEN_WIDTH - (12 * cellSize)) / 2; // Center horizontal
@@ -8608,8 +8601,8 @@ void UIManager::handleMinesweeperTouch(int x, int y, TouchEvent event) {
     return;
   }
 
-  // Quit (X)
-  if (x >= 900 && x < 950 && y >= 10 && y < 60) {
+  // Home icon (Top Right)
+  if (hitTestHomeButton(x, y)) {
     Buzzer::click();
     navigateTo(ScreenID::GAMES_MENU);
     return;
