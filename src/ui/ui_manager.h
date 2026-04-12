@@ -175,17 +175,21 @@ private:
   static const int POWER_BAR_HEIGHT = 16; // 2x thicker (2 lines)
   static const int PANEL_MARGIN = 10;
 
-  // HOME button constants (top-left on non-home screens)
-  static const int HOME_BTN_X = 10;
-  static const int HOME_BTN_Y = 10;
-  static const int HOME_BTN_W = 80;
-  static const int HOME_BTN_H = 35;
+  // Menu icon constants (small icon, top-right on all screens)
+  static const int MENU_ICON_SIZE = 36;
+  static const int MENU_ICON_X = SCREEN_WIDTH - MENU_ICON_SIZE - 10;
+  static const int MENU_ICON_Y = 8;
 
-  // MENU button constants (top-right on home screen)
-  static const int MENU_BTN_W = 120;
-  static const int MENU_BTN_H = 50;
-  static const int MENU_BTN_X = SCREEN_WIDTH - MENU_BTN_W - 10;
-  static const int MENU_BTN_Y = 10;
+  // Legacy aliases so hit-test helpers share one location
+  static const int HOME_BTN_X = MENU_ICON_X;
+  static const int HOME_BTN_Y = MENU_ICON_Y;
+  static const int HOME_BTN_W = MENU_ICON_SIZE;
+  static const int HOME_BTN_H = MENU_ICON_SIZE;
+
+  static const int MENU_BTN_X = MENU_ICON_X;
+  static const int MENU_BTN_Y = MENU_ICON_Y;
+  static const int MENU_BTN_W = MENU_ICON_SIZE;
+  static const int MENU_BTN_H = MENU_ICON_SIZE;
 
   // --- Timer State ---
   bool _timerRunning = false;
@@ -215,8 +219,8 @@ private:
                       int minutes, bool isInput);
   void drawStatusPanel(int x, int y, int w, int h);
   void drawClockWeatherPanel(int x, int y, int w, int h);
-  void drawHomeButton();   // Draw HOME button (top-left) on non-home screens
-  void drawMenuButton();   // Draw MENU button (top-right) on home screen
+  void drawHomeButton();   // Draw home icon (top-right) on non-home screens
+  void drawMenuButton();   // Draw hamburger icon (top-right) on home screen
   bool hitTestHomeButton(int x, int y); // Test if touch hits HOME button
   bool hitTestMenuButton(int x, int y); // Test if touch hits MENU button on home
 
