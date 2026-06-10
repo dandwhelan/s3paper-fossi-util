@@ -8,6 +8,12 @@ Candidate features for future releases, identified from a codebase review
 - **Minesweeper difficulty levels** — Easy (10 mines), Medium (16), Hard (24)
   selectable in-game, mirroring the Sudoku selector.
 - **GAME_NONOGRAM removed** — was a stub ScreenID with no implementation.
+- **Home screen refresh gating** — the 60s auto-refresh and BLE-driven
+  refreshes now skip the full e-ink redraw when SOC/power deltas are below
+  the configured `eink` thresholds and the on-screen clock minute (where the
+  theme shows one) hasn't changed. Last-drawn values are cached at draw time.
+- **Eco-mode touch polling** — touch poll interval widens from 15 ms to
+  30 ms while in eco mode (80 MHz) to cut idle I2C traffic.
 
 ## Tier 1 — High value, low effort
 
@@ -57,8 +63,6 @@ Candidate features for future releases, identified from a codebase review
 
 ## Performance improvements (separate workstream)
 
-- Skip full-screen e-ink refresh in `drawHomeScreen()` when SOC/power deltas
-  are below the configured thresholds; cache last-drawn values.
 - Replace blocking `delay(50)` during BLE connect in `main.cpp` with a
   non-blocking early return.
 - Allocate `_notesCanvas`/`_previewCanvas` once (in PSRAM) instead of
@@ -67,7 +71,5 @@ Candidate features for future releases, identified from a codebase review
   getters every loop in `checkPowerManagement()`.
 - Replace String-based CSV parsing in `power_history.cpp` (`indexOf` per
   line) with C-style `strtok` parsing into fixed buffers.
-- Widen touch polling interval from 15 ms to ~30 ms while in eco mode
-  (80 MHz).
 - Guard the SD power-cycle in `flushToSD()` against concurrent e-ink
   refreshes.

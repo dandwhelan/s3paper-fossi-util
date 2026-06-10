@@ -204,9 +204,27 @@ void UIManager::update() {
   }
 
   // Auto-refresh Home Screen every 60 seconds (User Request)
+  // Skip the full e-ink redraw when nothing visible changed: data deltas are
+  // below the configured thresholds and the on-screen clock (if the active
+  // theme shows one) hasn't ticked to a new minute.
   if (_currentScreen == ScreenID::HOME && (millis() - _lastRefresh > 60000)) {
-    Serial.println("UI: 60s Auto-refresh trigger");
-    _needsRefresh = true;
+    extern Config *config;
+    bool clockChanged = false;
+    if (homeThemeShowsClock()) {
+      int h, m, s;
+      RTC::getTime(h, m, s);
+      clockChanged = (m != _lastRenderedMinute);
+    }
+    bool dataChanged = (config && config->isHomeMode())
+                           ? _solarDataDirty
+                           : shouldUpdateDashboard(_powerData);
+    if (clockChanged || dataChanged) {
+      Serial.println("UI: 60s Auto-refresh trigger");
+      _needsRefresh = true;
+    } else {
+      // Nothing to show — re-arm the timer without touching the display
+      _lastRefresh = millis();
+    }
   }
 
   // Auto-refresh Timers screen every 15 seconds when a timer is active
@@ -646,9 +664,30 @@ void UIManager::forceRefresh() {
 // Drawing Methods
 // ============================================================================
 
+// Themes that render a HH:MM clock need a redraw when the minute changes;
+// the others can skip refreshes while power data is stable.
+bool UIManager::homeThemeShowsClock() {
+  extern Config *config;
+  if (!config)
+    return false;
+  if (config->isHomeMode())
+    return true; // All GivEnergy layouts show the time
+  String theme = config->getTheme();
+  return theme == "compact_status" || theme == "horizontal_bars";
+}
+
 void UIManager::drawHomeScreen() {
   extern Config *config;
   Serial.println("UI: Drawing home screen");
+
+  // Cache what this draw renders so auto-refresh can skip unchanged frames
+  {
+    int h, m, s;
+    RTC::getTime(h, m, s);
+    _lastRenderedMinute = m;
+  }
+  _solarDataDirty = false;
+  _lastRenderedData = _powerData;
 
   M5.Display.fillScreen(COLOR_WHITE);
 
@@ -5040,22 +5079,30 @@ bool UIManager::shouldUpdateDashboard(const Fossibot::PowerBankData &newData) {
   if (newData.acActive != _lastRenderedData.acActive)
     return true;
 
-  // 2. Battery Percentage Change (Any change is significant for user)
-  if (newData.batteryPercent != _lastRenderedData.batteryPercent)
+  // 2. Battery Percentage Change (configured threshold, default 1%)
+  extern Config *config;
+  int socThreshold = config ? config->getSOCChangeThreshold() : 1;
+  if (abs((int)newData.batteryPercent - (int)_lastRenderedData.batteryPercent) >=
+      socThreshold)
     return true;
 
-  // 3. Power Jitter Filtering (Only update if power changes > 50 Watts)
-  // Input Power
-  if (abs(newData.inputPower - _lastRenderedData.inputPower) > 50)
+  // 3. Power Jitter Filtering (configured threshold, default 50W)
+  int powerThreshold = config ? config->getPowerChangeThreshold() : 50;
+  if (abs(newData.inputPower - _lastRenderedData.inputPower) > powerThreshold)
     return true;
 
-  // Output Power
-  if (abs(newData.outputPower - _lastRenderedData.outputPower) > 50)
+  if (abs(newData.outputPower - _lastRenderedData.outputPower) > powerThreshold)
     return true;
 
-  // 4. Force update every 30 seconds regardless of data to keep clock/time sync
-  if (millis() - _lastDashboardUpdate > 30000)
-    return true;
+  // 4. Refresh when the on-screen clock minute changes (only for themes that
+  // show a clock). Previously this was a blanket 30s force-update, which
+  // defeated the threshold filtering above.
+  if (homeThemeShowsClock()) {
+    int h, m, s;
+    RTC::getTime(h, m, s);
+    if (m != _lastRenderedMinute)
+      return true;
+  }
 
   return false;
 }

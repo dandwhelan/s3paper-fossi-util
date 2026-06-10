@@ -371,6 +371,8 @@ private:
   // Power Management & Smart Refresh
   unsigned long _lastDashboardUpdate = 0;
   bool shouldUpdateDashboard(const Fossibot::PowerBankData &newData);
+  bool homeThemeShowsClock();
+  int _lastRenderedMinute = -1; // Clock minute at last home screen draw
   void runSDMountTest();
   char _sdDiagResult[256] = ""; // Stores test result text
 

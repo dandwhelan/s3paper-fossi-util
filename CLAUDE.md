@@ -200,7 +200,7 @@ else
     },
     "timezone": { "offset_hours": 0 },
     "weather": { "api_key": "", "city": "London", "units": "metric" },
-    "eink": { "soc_change_threshold": 1, "power_change_threshold": 5 }
+    "eink": { "soc_change_threshold": 1, "power_change_threshold": 50 }
 }
 ```
 
