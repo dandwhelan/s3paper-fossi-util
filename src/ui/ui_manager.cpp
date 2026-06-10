@@ -8418,9 +8418,11 @@ void UIManager::minesweeperInit() {
   _mineInputMode = false; // Reveal
   _mineGameOver = false;
 
-  // Place 12 mines (for 7x12 grid)
+  // Mine count by difficulty (7x12 grid = 84 cells)
+  int mineCount = (_mineDifficulty == 0) ? 10 : (_mineDifficulty == 1) ? 16 : 24;
+
   int minesPlaced = 0;
-  while (minesPlaced < 12) {
+  while (minesPlaced < mineCount) {
     int r = random(7);
     int c = random(12);
     if (!_mineGrid[r][c]) {
@@ -8504,6 +8506,16 @@ void UIManager::drawMinesweeperGame() {
   M5.Display.setCursor(20, 20);
   M5.Display.print("MINESWEEPER");
 
+  // Difficulty selector
+  int diffBtnX = 180;
+  int diffBtnW = 80;
+  int diffGap = 5;
+  drawButton(diffBtnX, 10, diffBtnW, 50, "EASY", _mineDifficulty == 0);
+  drawButton(diffBtnX + diffBtnW + diffGap, 10, diffBtnW, 50, "MED",
+             _mineDifficulty == 1);
+  drawButton(diffBtnX + 2 * (diffBtnW + diffGap), 10, diffBtnW, 50, "HARD",
+             _mineDifficulty == 2);
+
   // Mode Toggle
   int modeBtnX = 600;
   int modeBtnY = 10;
@@ -8576,6 +8588,25 @@ void UIManager::handleMinesweeperTouch(int x, int y, TouchEvent event) {
 
   int modeBtnX = 600;
   int modeBtnY = 10;
+
+  // Difficulty selector
+  int diffBtnX = 180;
+  int diffBtnW = 80;
+  int diffGap = 5;
+  if (y >= 10 && y < 60 && x >= diffBtnX &&
+      x < diffBtnX + 3 * diffBtnW + 2 * diffGap) {
+    byte newDiff = (x - diffBtnX) / (diffBtnW + diffGap);
+    if (newDiff > 2)
+      newDiff = 2;
+    if (newDiff != _mineDifficulty) {
+      Buzzer::click();
+      _mineDifficulty = newDiff;
+      minesweeperInit();
+      M5.Display.setEpdMode(epd_mode_t::epd_quality);
+      forceRefresh();
+    }
+    return;
+  }
 
   // Mode Toggle
   if (x >= modeBtnX && x < modeBtnX + 100 && y >= modeBtnY &&

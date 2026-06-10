@@ -25,7 +25,6 @@ enum class ScreenID {
   HOME,
   GAMES_MENU,
   GAME_2048,
-  GAME_NONOGRAM,
   GAME_MINESWEEPER,
   GAME_SUDOKU,
   READER,
@@ -421,6 +420,7 @@ private:
   int8_t _mineState[7][12]; // 0=Covered, 1=Revealed, 2=Flagged
   bool _mineInputMode;      // False=Reveal, True=Flag
   bool _mineGameOver;
+  byte _mineDifficulty = 0; // 0=easy, 1=medium, 2=hard
 
   // Minesweeper Methods
   void drawMinesweeperGame();

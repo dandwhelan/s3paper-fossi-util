@@ -128,7 +128,6 @@ Complete audit of all 18 ScreenID values to ensure nothing is orphaned:
 | GAME_2048 | Games → 2048 | Exit → GAMES_MENU |
 | GAME_SUDOKU | Games → Sudoku | Exit → GAMES_MENU |
 | GAME_MINESWEEPER | Games → Mine | Exit → GAMES_MENU |
-| GAME_NONOGRAM | Games (if active) | Exit → GAMES_MENU |
 | HISTORY | Menu tile | Back → HOME |
 | SD_DIAG | Menu → Settings → SD | Back → SETTINGS |
 | WEATHER | (if used) | Back → HOME |
