@@ -64,13 +64,13 @@ struct SolarData {
                             int powerThreshold = 10) const {
     if (lastBatteryPercent < 0)
       return true; // First data
-    if (abs(batteryPercent - lastBatteryPercent) >= socThreshold)
+    if (fabsf(batteryPercent - lastBatteryPercent) >= socThreshold)
       return true;
-    if (abs(pvPowerTotal - lastPvPowerTotal) >= powerThreshold)
+    if (fabsf(pvPowerTotal - lastPvPowerTotal) >= powerThreshold)
       return true;
-    if (abs(loadPower - lastLoadPower) >= powerThreshold)
+    if (fabsf(loadPower - lastLoadPower) >= powerThreshold)
       return true;
-    if (abs(gridPower - lastGridPower) >= powerThreshold)
+    if (fabsf(gridPower - lastGridPower) >= powerThreshold)
       return true;
     return false;
   }
@@ -96,7 +96,7 @@ struct SolarData {
  * Format watts for display: "1,250W" or "0W"
  */
 inline String formatWatts(float watts) {
-  int w = (int)abs(watts);
+  int w = (int)fabsf(watts);
   if (w >= 1000) {
     return String(w / 1000) + "," + String((w % 1000) / 100) +
            String((w % 100) / 10) + String(w % 10) + "W";

@@ -159,7 +159,7 @@ private:
 
   // Power bank data cache (Campervan mode)
   Fossibot::PowerBankData _powerData;
-  bool _powerDataDirty;
+  bool _powerDataDirty = false;
 
   // Solar data cache (Home mode)
   GivEnergy::SolarData _solarData;

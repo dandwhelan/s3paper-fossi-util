@@ -14,7 +14,8 @@ FossibotBLE::FossibotBLE()
       _notifyChar(nullptr), _initialized(false), _connected(false),
       _scanning(false), _connecting(false), _autoReconnect(false), _lastPoll(0),
       _lastSettingsPoll(0), _lastReconnectAttempt(0), _retryStartTime(0),
-      _consecutiveFailures(0), _firstAttemptDone(false),
+      _retryInterval(RETRY_INTERVAL_BASE_MS), _consecutiveFailures(0),
+      _firstAttemptDone(false),
       _bootAutoEnableTriggered(false), _socThreshold(1), _powerThreshold(5),
       _autoEnableState(AutoEnableState::IDLE), _autoEnableTimer(0) {
   _instance = this;
@@ -75,6 +76,25 @@ void FossibotBLE::startScan() {
   Serial.printf("BLE: State after connect: autoReconnect=%d, connected=%d, "
                 "firstAttemptDone=%d\n",
                 _autoReconnect, _connected, _firstAttemptDone);
+}
+
+void FossibotBLE::setRadioEnabled(bool enabled) {
+  if (enabled == _initialized)
+    return;
+
+  if (enabled) {
+    Serial.println("BLE: Radio enabled by user");
+    init();
+    resumeRetry();
+  } else {
+    Serial.println("BLE: Radio disabled by user - powering down BT controller");
+    pauseRetry();
+    disconnect();
+    // deinit(true) also destroys the client created by createClient()
+    _client = nullptr;
+    NimBLEDevice::deinit(true);
+    _initialized = false;
+  }
 }
 
 void FossibotBLE::stopScan() {
@@ -310,8 +330,6 @@ void FossibotBLE::update() {
   if (_autoReconnect && !_connected) {
     const unsigned long RETRY_TIMEOUT_MS =
         55 * 60 * 1000; // 55 minutes (before 60 min deep sleep)
-    const unsigned long RETRY_INTERVAL_MS =
-        30000; // 30 seconds between attempts
 
     // Initialize retry cycle timing on first attempt
     if (!_firstAttemptDone) {
@@ -329,7 +347,7 @@ void FossibotBLE::update() {
     }
 
     unsigned long timeSinceLastAttempt = millis() - _lastReconnectAttempt;
-    if (timeSinceLastAttempt > RETRY_INTERVAL_MS) {
+    if (timeSinceLastAttempt > _retryInterval) {
       _lastReconnectAttempt = millis();
       unsigned long elapsedMin = (millis() - _retryStartTime) / 60000;
       unsigned long elapsedSec = ((millis() - _retryStartTime) / 1000) % 60;
@@ -346,10 +364,15 @@ void FossibotBLE::update() {
 
       if (!connectToDevice()) {
         _consecutiveFailures++;
+        // Exponential backoff: each failure doubles the wait, up to 5 min.
+        // Each attempt boosts the CPU to 240MHz, so spacing them out saves
+        // real power when the Fossibot is out of range.
+        _retryInterval = min(_retryInterval * 2, (unsigned long)RETRY_INTERVAL_MAX_MS);
         Serial.printf("BLE: Failed (%d total). Next retry in %lu seconds\n",
-                      _consecutiveFailures, RETRY_INTERVAL_MS / 1000);
+                      _consecutiveFailures, _retryInterval / 1000);
       } else {
         _consecutiveFailures = 0; // Reset on success
+        _retryInterval = RETRY_INTERVAL_BASE_MS;
         Serial.println("BLE: Connection successful!");
       }
     }
@@ -748,6 +771,7 @@ void FossibotBLE::onDisconnect(NimBLEClient *client) {
     _consecutiveFailures = 0;
     _firstAttemptDone = false;
     _retryStartTime = 0;
+    _retryInterval = RETRY_INTERVAL_BASE_MS;
   } else {
     Serial.println("BLE: Was not connected - keeping retry state");
   }

@@ -49,6 +49,12 @@ public:
   String getFossibotMAC() const { return _fossibotMAC; }
   void setFossibotMAC(const String &mac);
 
+  // Radio enable toggles (persisted so an OFF radio stays off across reboots)
+  bool getBluetoothEnabled() const { return _bluetoothEnabled; }
+  void setBluetoothEnabled(bool enabled) { _bluetoothEnabled = enabled; }
+  bool getWiFiEnabled() const { return _wifiEnabled; }
+  void setWiFiEnabled(bool enabled) { _wifiEnabled = enabled; }
+
   // MQTT settings (Home mode)
   String getMQTTBroker() const { return _mqttBroker; }
   int getMQTTPort() const { return _mqttPort; }
@@ -101,6 +107,10 @@ private:
 
   // Bluetooth
   String _fossibotMAC;
+
+  // Radio enable toggles
+  bool _bluetoothEnabled;
+  bool _wifiEnabled;
 
   // MQTT
   String _mqttBroker;

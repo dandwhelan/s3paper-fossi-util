@@ -187,8 +187,8 @@ else
 ```json
 {
     "mode": "campervan",              // "campervan" or "home"
-    "wifi": { "ssid": "", "password": "" },            // Home mode only
-    "bluetooth": { "fossibot_mac": "XX:XX:XX:XX:XX:XX" }, // Campervan only
+    "wifi": { "ssid": "", "password": "", "enabled": true },            // Home mode only
+    "bluetooth": { "fossibot_mac": "XX:XX:XX:XX:XX:XX", "enabled": true }, // Campervan only
     "mqtt": {                                           // Home mode only
         "broker": "", "port": 1883,
         "username": "", "password": "",
