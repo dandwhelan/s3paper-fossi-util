@@ -170,7 +170,7 @@ else
 | NOTES_BROWSE | Browse saved notes |
 | READER | EPUB/TXT e-reader |
 | GAMES_MENU | Game selection |
-| GAME_2048 / GAME_SUDOKU / GAME_MINESWEEPER / GAME_NONOGRAM | Individual games |
+| GAME_2048 / GAME_SUDOKU / GAME_MINESWEEPER | Individual games |
 | HISTORY | Power data history charts |
 
 ### Screens (Campervan Only)
@@ -200,7 +200,7 @@ else
     },
     "timezone": { "offset_hours": 0 },
     "weather": { "api_key": "", "city": "London", "units": "metric" },
-    "eink": { "soc_change_threshold": 1, "power_change_threshold": 5 }
+    "eink": { "soc_change_threshold": 1, "power_change_threshold": 50 }
 }
 ```
 

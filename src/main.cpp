@@ -363,7 +363,12 @@ void loop() {
   static int lastTouchX = 0;
   static int lastTouchY = 0;
 
-  if (millis() - lastTouchPoll > 15) {
+  // Poll at 15ms normally; relax to 30ms in eco mode (80MHz) to reduce I2C
+  // traffic and CPU wakeups while idle. First touch exits eco mode, restoring
+  // the fast poll rate.
+  unsigned long touchPollInterval =
+      (uiManager && uiManager->isEcoMode()) ? 30 : 15;
+  if (millis() - lastTouchPoll > touchPollInterval) {
     lastTouchPoll = millis();
 
     int tx, ty;

@@ -28,6 +28,6 @@
     },
     "eink": {
         "soc_change_threshold": 1,
-        "power_change_threshold": 5
+        "power_change_threshold": 50
     }
 }

@@ -24,7 +24,7 @@ void Config::setDefaults() {
   _weatherCity = "London";
   _weatherUnits = "metric";
   _socChangeThreshold = 1;   // Refresh on 1% SOC change
-  _powerChangeThreshold = 5; // Refresh on 5W power change
+  _powerChangeThreshold = 50; // Refresh on 50W power change (jitter filter)
 
   _alarmEnabled = false;
   _alarmHour = 7;
@@ -97,7 +97,7 @@ bool Config::load(const char *path) {
   if (doc["display"].is<JsonObject>()) {
     _theme = doc["display"]["theme"] | "classic_grid";
     _homeTheme = doc["display"]["home_theme"] | "energy_flow";
-    _autoSleepMinutes = doc["display"]["auto_sleep_minutes"] | 5;
+    _autoSleepMinutes = doc["display"]["auto_sleep_minutes"] | 50;
   }
 
   // Timezone
@@ -115,7 +115,7 @@ bool Config::load(const char *path) {
   // eInk thresholds
   if (doc["eink"].is<JsonObject>()) {
     _socChangeThreshold = doc["eink"]["soc_change_threshold"] | 1;
-    _powerChangeThreshold = doc["eink"]["power_change_threshold"] | 5;
+    _powerChangeThreshold = doc["eink"]["power_change_threshold"] | 50;
   }
 
   Serial.println("Config: Loaded successfully");

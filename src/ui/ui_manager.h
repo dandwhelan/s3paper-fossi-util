@@ -25,7 +25,6 @@ enum class ScreenID {
   HOME,
   GAMES_MENU,
   GAME_2048,
-  GAME_NONOGRAM,
   GAME_MINESWEEPER,
   GAME_SUDOKU,
   READER,
@@ -372,6 +371,8 @@ private:
   // Power Management & Smart Refresh
   unsigned long _lastDashboardUpdate = 0;
   bool shouldUpdateDashboard(const Fossibot::PowerBankData &newData);
+  bool homeThemeShowsClock();
+  int _lastRenderedMinute = -1; // Clock minute at last home screen draw
   void runSDMountTest();
   char _sdDiagResult[256] = ""; // Stores test result text
 
@@ -421,6 +422,7 @@ private:
   int8_t _mineState[7][12]; // 0=Covered, 1=Revealed, 2=Flagged
   bool _mineInputMode;      // False=Reveal, True=Flag
   bool _mineGameOver;
+  byte _mineDifficulty = 0; // 0=easy, 1=medium, 2=hard
 
   // Minesweeper Methods
   void drawMinesweeperGame();
