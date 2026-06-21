@@ -538,7 +538,8 @@ void UIManager::navigateTo(ScreenID screen) {
                                  _previousScreen == ScreenID::NOTES ||
                                  _previousScreen == ScreenID::GAMES_MENU ||
                                  _previousScreen == ScreenID::GAME_2048 ||
-                                 _previousScreen == ScreenID::GAME_SUDOKU);
+                                 _previousScreen == ScreenID::GAME_SUDOKU ||
+                                 _previousScreen == ScreenID::GAME_MINESWEEPER);
 
   if (enteringIntensiveScreen && !leavingIntensiveScreen) {
     extern FossibotBLE *bleClient;
@@ -2954,8 +2955,12 @@ void UIManager::drawDeviceSettingsScreen() {
     drawButton(160, y, 120, 50, wifiEnabled ? "ON" : "OFF", wifiEnabled);
   } else {
     extern FossibotBLE *bleClient;
-    bool bleEnabled = (bleClient && bleClient->isRadioEnabled() &&
-                       bleClient->isAutoReconnectEnabled());
+    // Reflect the radio's actual power state only. _autoReconnect is paused
+    // transiently on intensive screens (Reader/Games) for power saving; folding
+    // it in here made the toggle read "OFF" while the radio was still on, and
+    // the tap handler (which keys off isRadioEnabled() alone) would then
+    // deinit the radio and persist bluetooth.enabled=false on the next tap.
+    bool bleEnabled = (bleClient && bleClient->isRadioEnabled());
     M5.Display.setCursor(20, y + 15);
     M5.Display.print("Bluetooth:");
     drawButton(160, y, 120, 50, bleEnabled ? "ON" : "OFF", bleEnabled);
