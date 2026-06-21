@@ -191,6 +191,13 @@ private:
   static const int MENU_BTN_W = MENU_ICON_SIZE;
   static const int MENU_BTN_H = MENU_ICON_SIZE;
 
+  // Labeled "DASHBOARD" button on the MENU screen (top-left) — an explicit,
+  // discoverable way back to the home dashboard.
+  static const int DASH_BTN_X = 20;
+  static const int DASH_BTN_Y = 12;
+  static const int DASH_BTN_W = 180;
+  static const int DASH_BTN_H = 46;
+
   // --- Timer State ---
   bool _timerRunning = false;
   int _timerDurationSeconds = 0; // Initial setting
