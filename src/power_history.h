@@ -44,8 +44,10 @@ public:
   // Should we flush to SD? (every 15 minutes)
   bool shouldFlush();
 
-  // Flush pending samples to SD card
-  bool flushToSD();
+  // Flush pending samples to SD card.
+  // fileDayOffset selects the target CSV file (0 = today's date); the
+  // midnight rollover passes 1 so yesterday's tail lands in yesterday's file.
+  bool flushToSD(uint8_t fileDayOffset = 0);
 
   // Load history from SD card on boot
   bool loadFromSD();

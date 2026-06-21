@@ -2929,15 +2929,25 @@ void UIManager::drawDeviceSettingsScreen() {
   }
   drawButton(340, y, 60, 60, "+");
 
-  // --- Bluetooth & Deep Sleep Test Row ---
+  // --- Radio toggle & Deep Sleep Test Row ---
   y = 320;
 
-  // Bluetooth toggle
-  extern FossibotBLE *bleClient;
-  bool bleEnabled = (bleClient && bleClient->isAutoReconnectEnabled());
-  M5.Display.setCursor(20, y + 15);
-  M5.Display.print("Bluetooth:");
-  drawButton(160, y, 120, 50, bleEnabled ? "ON" : "OFF", bleEnabled);
+  // Radio toggle: Bluetooth in Campervan mode, WiFi in Home mode
+  extern Config *config;
+  if (config && config->isHomeMode()) {
+    extern GivEnergyMQTT *mqttClient;
+    bool wifiEnabled = (mqttClient && mqttClient->isRadioEnabled());
+    M5.Display.setCursor(20, y + 15);
+    M5.Display.print("WiFi:");
+    drawButton(160, y, 120, 50, wifiEnabled ? "ON" : "OFF", wifiEnabled);
+  } else {
+    extern FossibotBLE *bleClient;
+    bool bleEnabled = (bleClient && bleClient->isRadioEnabled() &&
+                       bleClient->isAutoReconnectEnabled());
+    M5.Display.setCursor(20, y + 15);
+    M5.Display.print("Bluetooth:");
+    drawButton(160, y, 120, 50, bleEnabled ? "ON" : "OFF", bleEnabled);
+  }
 
   // Test Deep Sleep button
   drawButton(350, y, 180, 50, "Test Sleep");
@@ -3033,24 +3043,30 @@ void UIManager::handleDeviceSettingsTouch(int x, int y) {
   // Trigger refresh for any date/time/sleep value change above
   _needsRefresh = true;
 
-  // --- Bluetooth & Deep Sleep Test Row ---
+  // --- Radio toggle & Deep Sleep Test Row ---
   int rowBT = 320;
 
-  // Bluetooth toggle
+  // Radio toggle: Bluetooth in Campervan mode, WiFi in Home mode.
+  // Persisted to config so an OFF radio stays off across reboots.
   if (isHit(160, rowBT, 120, 50)) {
-    extern FossibotBLE *bleClient;
-    if (bleClient) {
-      if (bleClient->isAutoReconnectEnabled()) {
-        // Disable Bluetooth
-        bleClient->pauseRetry();
-        if (bleClient->isConnected()) {
-          bleClient->disconnect();
+    extern Config *config;
+    if (config && config->isHomeMode()) {
+      extern GivEnergyMQTT *mqttClient;
+      if (mqttClient) {
+        bool enable = !mqttClient->isRadioEnabled();
+        mqttClient->setRadioEnabled(enable);
+        config->setWiFiEnabled(enable);
+        config->save("/config/settings.json");
+      }
+    } else {
+      extern FossibotBLE *bleClient;
+      if (bleClient) {
+        bool enable = !bleClient->isRadioEnabled();
+        bleClient->setRadioEnabled(enable);
+        if (config) {
+          config->setBluetoothEnabled(enable);
+          config->save("/config/settings.json");
         }
-        Serial.println("Bluetooth disabled by user");
-      } else {
-        // Enable Bluetooth
-        bleClient->resumeRetry();
-        Serial.println("Bluetooth enabled by user");
       }
     }
     _needsRefresh = true;
@@ -5338,9 +5354,10 @@ void UIManager::enterDeepSleep() {
   // 1. Show sleep image with "zzz" overlay
   showSleepImage();
 
-  // Wait 5 seconds for e-ink to fully refresh before sleeping
-  Serial.println("Deep sleep: Waiting 5s for display...");
-  delay(5000);
+  // Wait for the e-ink quality refresh to complete before sleeping
+  Serial.println("Deep sleep: Waiting for display...");
+  M5.Display.waitDisplay();
+  delay(1000); // Margin for the panel to settle after the controller reports idle
 
   // 2. Turn off peripherals
   // M5.Power.setExtOutput(false); // CAUTION: If this powers Touch, wake fails.

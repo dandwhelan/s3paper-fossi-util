@@ -4,6 +4,7 @@
 
 #include "mqtt_client.h"
 #include "../hardware/rtc.h"
+#include <esp_sntp.h>
 #include <sys/time.h>
 #include <time.h>
 
@@ -35,7 +36,9 @@ void GivEnergyMQTT::init(const String &ssid, const String &password,
 
   _mqttClient.setServer(_broker.c_str(), _port);
   _mqttClient.setCallback(messageCallback);
-  _mqttClient.setBufferSize(256); // GivTCP payloads are small
+  // GivTCP payloads are small, but topic strings alone approach 80 bytes;
+  // 512 gives safe headroom (PubSubClient drops oversized messages silently)
+  _mqttClient.setBufferSize(512);
 
   _initialized = true;
 
@@ -44,30 +47,46 @@ void GivEnergyMQTT::init(const String &ssid, const String &password,
                 _broker.c_str(), _port, _inverterSN.c_str());
 #endif
 
-  // Start WiFi connection
-  connectWiFi();
+  // Start WiFi connection (unless the radio is user-disabled)
+  if (_radioEnabled) {
+    connectWiFi();
+  }
 }
 
 void GivEnergyMQTT::update() {
-  if (!_initialized)
+  if (!_initialized || !_radioEnabled)
     return;
 
   // Handle WiFi connection
   if (!isWiFiConnected()) {
+    // Clean up dead MQTT socket when WiFi drops
+    if (_wasWiFiConnected) {
+      _wasWiFiConnected = false;
+      _data.connected = false;
+      _mqttClient.disconnect();
+#ifdef SERIAL_DEBUG
+      Serial.println("MQTT: WiFi dropped - MQTT socket closed");
+#endif
+    }
+
     if (_wifiConnecting) {
       // Check if connection attempt timed out
       if (millis() - _wifiConnectStart > WIFI_CONNECT_TIMEOUT) {
         _wifiConnecting = false;
         WiFi.disconnect(true);
+        // Exponential backoff: double interval up to the cap
+        _wifiRetryInterval =
+            min(_wifiRetryInterval * 2, (unsigned long)RETRY_INTERVAL_MAX);
 #ifdef SERIAL_DEBUG
-        Serial.println("MQTT: WiFi connection timed out");
+        Serial.printf("MQTT: WiFi connection timed out (next retry in %lus)\n",
+                      _wifiRetryInterval / 1000);
 #endif
       }
       return;
     }
 
     // Retry WiFi connection
-    if (millis() - _lastWiFiAttempt > WIFI_RETRY_INTERVAL) {
+    if (millis() - _lastWiFiAttempt > _wifiRetryInterval) {
       connectWiFi();
     }
     return;
@@ -76,20 +95,33 @@ void GivEnergyMQTT::update() {
   // WiFi is connected - handle MQTT
   if (_wifiConnecting) {
     _wifiConnecting = false;
+    _wasWiFiConnected = true;
     _data.connected = true;
+    _wifiRetryInterval = WIFI_RETRY_INTERVAL; // Reset backoff on success
+
+    // Modem power save: radio sleeps between DTIM beacons. Saves ~60-80mA;
+    // MQTT subscribe latency impact is negligible for a 30s-throttled e-ink UI.
+    WiFi.setSleep(true);
+
 #ifdef SERIAL_DEBUG
     Serial.printf("MQTT: WiFi connected! IP=%s, RSSI=%d\n",
                   WiFi.localIP().toString().c_str(), WiFi.RSSI());
 #endif
 
-    // Sync time from NTP on first WiFi connection
+    // Kick off NTP sync on first WiFi connection (non-blocking; completion
+    // is detected in checkNTP() below)
     if (!_ntpSynced) {
-      syncNTP();
+      startNTP();
     }
   }
 
+  // Check for async NTP completion
+  if (_ntpPending) {
+    checkNTP();
+  }
+
   if (!_mqttClient.connected()) {
-    if (millis() - _lastMQTTAttempt > MQTT_RETRY_INTERVAL) {
+    if (millis() - _lastMQTTAttempt > _mqttRetryInterval) {
       connectMQTT();
     }
     return;
@@ -97,6 +129,33 @@ void GivEnergyMQTT::update() {
 
   // Process incoming MQTT messages
   _mqttClient.loop();
+}
+
+void GivEnergyMQTT::setRadioEnabled(bool enabled) {
+  if (_radioEnabled == enabled)
+    return;
+
+  _radioEnabled = enabled;
+
+  if (enabled) {
+#ifdef SERIAL_DEBUG
+    Serial.println("MQTT: WiFi radio enabled by user");
+#endif
+    _wifiRetryInterval = WIFI_RETRY_INTERVAL;
+    _mqttRetryInterval = MQTT_RETRY_INTERVAL;
+    if (_initialized)
+      connectWiFi();
+  } else {
+#ifdef SERIAL_DEBUG
+    Serial.println("MQTT: WiFi radio disabled by user");
+#endif
+    _mqttClient.disconnect();
+    _wifiConnecting = false;
+    _wasWiFiConnected = false;
+    _data.connected = false;
+    WiFi.disconnect(true); // Also erases in-RAM session state
+    WiFi.mode(WIFI_OFF);   // Power the radio down completely
+  }
 }
 
 bool GivEnergyMQTT::isWiFiConnected() const {
@@ -148,10 +207,14 @@ void GivEnergyMQTT::connectMQTT() {
 #ifdef SERIAL_DEBUG
     Serial.println("MQTT: Connected to broker!");
 #endif
+    _mqttRetryInterval = MQTT_RETRY_INTERVAL; // Reset backoff on success
     subscribeTopics();
   } else {
+    // Exponential backoff: double interval up to the cap
+    _mqttRetryInterval = min(_mqttRetryInterval * 2, (unsigned long)RETRY_INTERVAL_MAX);
 #ifdef SERIAL_DEBUG
-    Serial.printf("MQTT: Connection failed, rc=%d\n", _mqttClient.state());
+    Serial.printf("MQTT: Connection failed, rc=%d (next retry in %lus)\n",
+                  _mqttClient.state(), _mqttRetryInterval / 1000);
 #endif
   }
 }
@@ -252,25 +315,31 @@ void GivEnergyMQTT::messageCallback(char *topic, byte *payload,
   }
 }
 
-void GivEnergyMQTT::syncNTP() {
+void GivEnergyMQTT::startNTP() {
 #ifdef SERIAL_DEBUG
-  Serial.println("NTP: Syncing time...");
+  Serial.println("NTP: Sync started (async)...");
 #endif
 
   // Configure NTP with POSIX timezone string for UK (GMT/BST auto-switching).
   // BST runs from last Sunday of March @ 01:00 UTC to last Sunday of October @ 02:00.
-  // Using configTzTime sets the TZ env var so getLocalTime() returns local time.
+  // configTzTime is asynchronous - SNTP fetches in the background and sets the
+  // system clock when a response arrives. checkNTP() detects completion, so the
+  // main loop is never blocked waiting for a server.
   configTzTime("GMT0BST,M3.5.0/1,M10.5.0", "pool.ntp.org", "time.nist.gov");
+  _ntpPending = true;
+}
 
-  // Wait up to 5 seconds for NTP response
+void GivEnergyMQTT::checkNTP() {
+  // The system clock is seeded from the battery-backed RTC at boot, so a
+  // plausible timestamp alone doesn't prove NTP landed - ask SNTP directly.
+  if (sntp_get_sync_status() != SNTP_SYNC_STATUS_COMPLETED)
+    return; // Not synced yet - check again next loop
+
+  time_t now = time(nullptr);
   struct tm timeinfo;
-  if (!getLocalTime(&timeinfo, 5000)) {
-#ifdef SERIAL_DEBUG
-    Serial.println("NTP: Failed to get time");
-#endif
-    return;
-  }
+  localtime_r(&now, &timeinfo);
 
+  _ntpPending = false;
   _ntpSynced = true;
 
   // Write back to RTC for persistence across reboots

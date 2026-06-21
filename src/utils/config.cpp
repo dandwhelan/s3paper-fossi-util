@@ -30,6 +30,9 @@ void Config::setDefaults() {
   _alarmHour = 7;
   _alarmMinute = 0;
 
+  _bluetoothEnabled = true;
+  _wifiEnabled = true;
+
   // MQTT defaults
   _mqttBroker = "";
   _mqttPort = 1883;
@@ -93,6 +96,14 @@ bool Config::load(const char *path) {
     Serial.println("Config: No fossibot_mac found in config");
   }
 
+  // Radio enable toggles
+  if (doc["bluetooth"].is<JsonObject>()) {
+    _bluetoothEnabled = doc["bluetooth"]["enabled"] | true;
+  }
+  if (doc["wifi"].is<JsonObject>()) {
+    _wifiEnabled = doc["wifi"]["enabled"] | true;
+  }
+
   // Display
   if (doc["display"].is<JsonObject>()) {
     _theme = doc["display"]["theme"] | "classic_grid";
@@ -100,16 +111,34 @@ bool Config::load(const char *path) {
     _autoSleepMinutes = doc["display"]["auto_sleep_minutes"] | 50;
   }
 
-  // Timezone
+  // Timezone (flat key fallback for configs written by older save())
   if (doc["timezone"].is<JsonObject>()) {
     _timezoneOffset = doc["timezone"]["offset_hours"] | 0;
+  } else if (doc["timezone_offset"].is<int>()) {
+    _timezoneOffset = doc["timezone_offset"];
   }
 
-  // Weather
+  // Alarm
+  if (doc["alarm"].is<JsonObject>()) {
+    _alarmEnabled = doc["alarm"]["enabled"] | false;
+    _alarmHour = doc["alarm"]["hour"] | 7;
+    _alarmMinute = doc["alarm"]["minute"] | 0;
+  } else if (doc["alarm_enabled"].is<bool>()) {
+    // Flat key fallback for configs written by older save()
+    _alarmEnabled = doc["alarm_enabled"] | false;
+    _alarmHour = doc["alarm_hour"] | 7;
+    _alarmMinute = doc["alarm_minute"] | 0;
+  }
+
+  // Weather (flat key fallback for configs written by older save())
   if (doc["weather"].is<JsonObject>()) {
     _weatherAPIKey = doc["weather"]["api_key"].as<String>();
     _weatherCity = doc["weather"]["city"] | "London";
     _weatherUnits = doc["weather"]["units"] | "metric";
+  } else if (doc["weather_key"].is<const char *>()) {
+    _weatherAPIKey = doc["weather_key"].as<String>();
+    _weatherCity = doc["weather_city"] | "London";
+    _weatherUnits = doc["weather_units"] | "metric";
   }
 
   // eInk thresholds
@@ -136,9 +165,11 @@ bool Config::save(const char *path) {
   // WiFi
   doc["wifi"]["ssid"] = _wifiSSID;
   doc["wifi"]["password"] = _wifiPassword;
+  doc["wifi"]["enabled"] = _wifiEnabled;
 
   // Bluetooth
   doc["bluetooth"]["fossibot_mac"] = _fossibotMAC;
+  doc["bluetooth"]["enabled"] = _bluetoothEnabled;
 
   // MQTT
   doc["mqtt"]["broker"] = _mqttBroker;
@@ -152,25 +183,27 @@ bool Config::save(const char *path) {
   doc["display"]["home_theme"] = _homeTheme;
   doc["display"]["auto_sleep_minutes"] = _autoSleepMinutes;
 
-  // Timezone
-  doc["timezone_offset"] = _timezoneOffset;
+  // Timezone (nested format to match load)
+  doc["timezone"]["offset_hours"] = _timezoneOffset;
 
-  // Alarm
-  doc["alarm_enabled"] = _alarmEnabled;
-  doc["alarm_hour"] = _alarmHour;
-  doc["alarm_minute"] = _alarmMinute;
+  // Alarm (nested format to match load)
+  doc["alarm"]["enabled"] = _alarmEnabled;
+  doc["alarm"]["hour"] = _alarmHour;
+  doc["alarm"]["minute"] = _alarmMinute;
 
-  // Weather
-  doc["weather_key"] = _weatherAPIKey;
-  doc["weather_city"] = _weatherCity;
-  doc["weather_units"] = _weatherUnits;
+  // Weather (nested format to match load)
+  doc["weather"]["api_key"] = _weatherAPIKey;
+  doc["weather"]["city"] = _weatherCity;
+  doc["weather"]["units"] = _weatherUnits;
 
-  // eInk thresholds (removed as per instruction's implied flattening)
+  // eInk thresholds (nested format to match load)
+  doc["eink"]["soc_change_threshold"] = _socChangeThreshold;
+  doc["eink"]["power_change_threshold"] = _powerChangeThreshold;
 
   String output;
-  serializeJson(doc, output); // Changed to serializeJson as per instruction
+  serializeJson(doc, output);
 
-  if (sdManager->writeFile(path, output)) { // Changed to use output string
+  if (sdManager->writeFile(path, output)) {
     Serial.println("Config: Saved successfully");
     return true;
   }

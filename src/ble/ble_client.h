@@ -84,6 +84,7 @@ public:
     _consecutiveFailures = 0;  // Reset so we get full retry attempts
     _firstAttemptDone = false; // Allow immediate retry attempt
     _retryStartTime = 0;       // Reset 55 min timeout
+    _retryInterval = RETRY_INTERVAL_BASE_MS; // Reset backoff
     Serial.println("BLE: Auto-retry RESUMED (counters reset)");
   }
 
@@ -91,6 +92,14 @@ public:
    * Check if BLE auto-reconnect is enabled
    */
   bool isAutoReconnectEnabled() const { return _autoReconnect; }
+
+  /**
+   * Enable/disable the BLE radio entirely (user toggle).
+   * Disabling deinitializes the BT controller to actually power it down;
+   * pauseRetry() alone leaves the radio initialized and drawing power.
+   */
+  void setRadioEnabled(bool enabled);
+  bool isRadioEnabled() const { return _initialized; }
 
   /**
    * Disconnect from the device
@@ -207,6 +216,7 @@ private:
   // Retry state (moved from static locals to allow proper reset)
   unsigned long _lastReconnectAttempt;
   unsigned long _retryStartTime; // When retry cycle began (for 55 min timeout)
+  unsigned long _retryInterval;  // Current backoff interval
   int _consecutiveFailures;
   bool _firstAttemptDone;
 
@@ -227,7 +237,10 @@ private:
   AutoEnableState _autoEnableState;
   unsigned long _autoEnableTimer;
 
-  // Power optimized polling intervals (middle ground)
+  // Reconnect backoff: 30s base, doubling to a 5 min cap
+  static const unsigned long RETRY_INTERVAL_BASE_MS = 30000;
+  static const unsigned long RETRY_INTERVAL_MAX_MS = 300000;
+
   // Power optimized polling intervals (middle ground)
   static const unsigned long POLL_INTERVAL = 45000; // 45s (middle ground)
   static const unsigned long SETTINGS_POLL_INTERVAL =

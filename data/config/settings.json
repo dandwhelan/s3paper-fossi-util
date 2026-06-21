@@ -2,10 +2,12 @@
     "mode": "campervan",
     "wifi": {
         "ssid": "",
-        "password": ""
+        "password": "",
+        "enabled": true
     },
     "bluetooth": {
-        "fossibot_mac": "DC:1E:D5:E4:07:1E"
+        "fossibot_mac": "DC:1E:D5:E4:07:1E",
+        "enabled": true
     },
     "mqtt": {
         "broker": "",

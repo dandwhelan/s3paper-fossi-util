@@ -202,29 +202,35 @@ void setup() {
     }
   }
 
-  // Debug output to screen for 4 seconds so user can see it
-  M5.Display.fillScreen(TFT_WHITE);
-  M5.Display.setTextColor(TFT_BLACK);
-  M5.Display.setTextSize(2);
-  M5.Display.setCursor(10, 30);
-  M5.Display.println("--- Boot Debug Info ---");
-  M5.Display.printf("Loaded Config: %s\n", configLoaded ? "YES" : "NO");
-  M5.Display.printf("Mode: %s\n", config->getMode().c_str());
-  if (config->isHomeMode()) {
-    M5.Display.printf("WiFi SSID: '%s'\n", config->getWiFiSSID().c_str());
-    M5.Display.printf("MQTT Broker: '%s'\n", config->getMQTTBroker().c_str());
-    M5.Display.printf("Inverter SN: '%s'\n", config->getInverterSN().c_str());
-  } else {
-    M5.Display.printf("Fossibot MAC: '%s'\n", config->getFossibotMAC().c_str());
+  // Show boot debug screen only when config didn't load - on a healthy boot
+  // this just added 4 seconds of fixed delay to every wake
+  if (!configLoaded) {
+    M5.Display.fillScreen(TFT_WHITE);
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.setTextSize(2);
+    M5.Display.setCursor(10, 30);
+    M5.Display.println("--- Boot Debug Info ---");
+    M5.Display.println("Loaded Config: NO (using defaults)");
+    M5.Display.printf("Mode: %s\n", config->getMode().c_str());
+    if (config->isHomeMode()) {
+      M5.Display.printf("WiFi SSID: '%s'\n", config->getWiFiSSID().c_str());
+      M5.Display.printf("MQTT Broker: '%s'\n", config->getMQTTBroker().c_str());
+      M5.Display.printf("Inverter SN: '%s'\n", config->getInverterSN().c_str());
+    } else {
+      M5.Display.printf("Fossibot MAC: '%s'\n",
+                        config->getFossibotMAC().c_str());
+    }
+    M5.Display.println("\nResuming in 4 seconds...");
+    delay(4000);
   }
-  M5.Display.println("\nResuming in 4 seconds...");
-  delay(4000);
 
   // Initialize UI
   uiManager = new UIManager();
   uiManager->init();
 
-  // Initialize connectivity based on mode
+  // Initialize connectivity based on mode. Clients are always created so the
+  // Settings toggle can enable/disable the radio at runtime; the persisted
+  // toggle decides whether the radio actually powers up at boot.
   if (config->isHomeMode()) {
     Serial.println("Mode: HOME (WiFi + MQTT / GivEnergy)");
     initMQTT();
@@ -540,26 +546,34 @@ void initSD() {
 void initBLE() {
   Serial.println("Initializing BLE...");
 
-  // Small delay to let BLE radio stabilize on cold boot
-  delay(500);
-
   bleClient = new FossibotBLE();
 
   // Get MAC address from config
   String macAddress = config->getFossibotMAC();
 
-  if (macAddress.length() > 0) {
-    Serial.printf("Fossibot MAC: %s\n", macAddress.c_str());
-    bleClient->setTargetMAC(macAddress);
-    bleClient->init();
-    // NOTE: startScan() is now called in loop() AFTER first screen draw
-    // to prevent EPD/BLE DMA contention crash
-    Serial.println(
-        "BLE: Init complete. Connection will start after first draw.");
-  } else {
+  if (macAddress.length() == 0) {
     Serial.println("No Fossibot MAC configured. BLE disabled.");
     Serial.println("Configure MAC address in /config/settings.json");
+    return;
   }
+
+  Serial.printf("Fossibot MAC: %s\n", macAddress.c_str());
+  bleClient->setTargetMAC(macAddress);
+
+  if (!config->getBluetoothEnabled()) {
+    // User turned Bluetooth off in Settings - leave the radio powered down.
+    // The Settings toggle re-initializes it on demand.
+    Serial.println("BLE: Disabled in settings - radio off");
+    return;
+  }
+
+  // Small delay to let BLE radio stabilize on cold boot
+  delay(500);
+  bleClient->init();
+  // NOTE: startScan() is now called in loop() AFTER first screen draw
+  // to prevent EPD/BLE DMA contention crash
+  Serial.println(
+      "BLE: Init complete. Connection will start after first draw.");
 }
 
 void initMQTT() {
@@ -578,8 +592,17 @@ void initMQTT() {
   }
 
   mqttClient = new GivEnergyMQTT();
+
+  if (!config->getWiFiEnabled()) {
+    // User turned WiFi off in Settings - keep the radio powered down.
+    // The Settings toggle re-enables it on demand.
+    mqttClient->setRadioEnabled(false);
+  }
+
   mqttClient->init(ssid, password, broker, port, config->getMQTTUsername(),
                    config->getMQTTPassword(), inverterSN);
 
-  Serial.println("MQTT: Init complete. WiFi connecting...");
+  Serial.println(config->getWiFiEnabled()
+                     ? "MQTT: Init complete. WiFi connecting..."
+                     : "MQTT: Init complete. WiFi disabled in settings.");
 }

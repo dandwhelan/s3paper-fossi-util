@@ -53,6 +53,9 @@ void PowerHistory::addSample(uint8_t batteryPct, uint16_t inputW,
   if (dayIndex != _currentDayIndex) {
     advanceToNextDay();
     _currentDayIndex = dayIndex;
+    // The ring buffer slot for the new day still holds week-old samples;
+    // clear it so they don't render as part of today's chart.
+    memset(_historyData[dayIndex], 0, sizeof(_historyData[dayIndex]));
   }
 
   // Calculate minute of day (0-1439)
@@ -116,33 +119,36 @@ bool PowerHistory::shouldFlush() {
   return (now - _lastFlushTime) >= (FLUSH_INTERVAL_MINS * 60);
 }
 
-bool PowerHistory::flushToSD() {
+bool PowerHistory::flushToSD(uint8_t fileDayOffset) {
   Serial.println("[PowerHistory] Flushing to SD...");
-
-  // CRITICAL: Power cycle SD card before write to ensure reliability (The
-  // "Reset Trick")
-  if (sdManager) {
-    if (!sdManager->powerCycleAndReinit()) {
-      Serial.println("[PowerHistory] SD Reset Failed! Aborting flush.");
-      return false;
-    }
-  } else {
-    Serial.println("[PowerHistory] Warning: sdManager is NULL");
-  }
 
   // Create /history directory if it doesn't exist
   if (!SD.exists("/history")) {
     SD.mkdir("/history");
   }
 
-  // Get filename for today
-  String filename = getFilenameForDay(0);
+  String filename = getFilenameForDay(fileDayOffset);
 
-  // Open file in append mode
+  // Open file in append mode. Only power cycle the SD card (the "Reset
+  // Trick") if the open fails - cycling on every flush costs ~1s of latency
+  // and a power spike every 15 minutes for no benefit when the card is fine.
   File file = SD.open(filename, FILE_APPEND);
   if (!file) {
-    Serial.printf("[PowerHistory] Failed to open %s\n", filename.c_str());
-    return false;
+    Serial.printf("[PowerHistory] Failed to open %s - power cycling SD\n",
+                  filename.c_str());
+    if (!sdManager || !sdManager->powerCycleAndReinit()) {
+      Serial.println("[PowerHistory] SD Reset Failed! Aborting flush.");
+      return false;
+    }
+    if (!SD.exists("/history")) {
+      SD.mkdir("/history");
+    }
+    file = SD.open(filename, FILE_APPEND);
+    if (!file) {
+      Serial.printf("[PowerHistory] Still failed to open %s\n",
+                    filename.c_str());
+      return false;
+    }
   }
 
   // If file is new, write CSV header
@@ -219,6 +225,14 @@ bool PowerHistory::loadFromSD() {
 
     while (file.available()) {
       String line = file.readStringUntil('\n');
+      // A CSV row is ~40 chars max; anything longer means a corrupted file
+      // (e.g. lost newline) and readStringUntil could otherwise pull the
+      // whole remaining file into one heap String.
+      if (line.length() > 128) {
+        Serial.printf("[PowerHistory] Corrupt line in %s, aborting load\n",
+                      filename.c_str());
+        break;
+      }
       line.trim();
       if (line.length() == 0)
         continue;
@@ -262,10 +276,11 @@ bool PowerHistory::loadFromSD() {
 void PowerHistory::advanceToNextDay() {
   Serial.println("[PowerHistory] Advancing to next day");
 
-  // Flush any remaining samples from TODAY before switching
-  // Force flush by artificially extending the range if needed
+  // Flush any remaining samples from the day that just ended. The clock has
+  // already rolled past midnight, so its file is "yesterday" (offset 1) -
+  // flushing to offset 0 would append yesterday's tail to today's file.
   _currentSampleIndex = SAMPLES_PER_DAY - 1;
-  flushToSD();
+  flushToSD(1);
 
   // Reset tracking for new day (will be set in addSample or init)
   _lastFlushedSample = 0;
