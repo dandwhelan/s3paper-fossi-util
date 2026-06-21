@@ -2664,6 +2664,12 @@ void UIManager::drawSettingsScreen() {
   // Home icon (top-right)
   drawHomeButton();
 
+  // Prominent, clearly-labeled button back to the dashboard (top-left).
+  // The small house icon alone is easy to miss / confuse with the menu icon,
+  // so the navigation hub also gets an explicit labeled control.
+  drawButton(DASH_BTN_X, DASH_BTN_Y, DASH_BTN_W, DASH_BTN_H, "< DASHBOARD",
+             true);
+
   // Title - centered
   M5.Display.setTextSize(2);
   M5.Display.setTextColor(COLOR_BLACK);
@@ -2738,6 +2744,12 @@ void UIManager::handleSettingsTouch(int x, int y) {
     }
     return false;
   };
+
+  // Dashboard button (top-left): return to the home dashboard.
+  if (isHit(DASH_BTN_X, DASH_BTN_Y, DASH_BTN_W, DASH_BTN_H)) {
+    navigateTo(ScreenID::HOME);
+    return;
+  }
 
   int btnW = 200;
   int btnH = 80;
