@@ -120,7 +120,7 @@ private:
   String _inverterSN;
 
   // Display
-  String _theme;      // Campervan themes: classic_grid|compact_status|horizontal_bars|sector
+  String _theme;      // Campervan themes: classic_grid|compact_status|horizontal_bars|sector|live_graph
   String _homeTheme;  // Home themes: energy_flow|battery_focus|todays_story
   int _autoSleepMinutes;
 

@@ -565,6 +565,15 @@ void FossibotBLE::setChargeLimit(int percent) {
   Serial.printf("BLE: Charge limit set to %d%%\n", percent);
 }
 
+void FossibotBLE::setChargeSpeed(int level) {
+  if (level < 1)
+    level = 1;
+  if (level > 5)
+    level = 5;
+  sendCommand(Fossibot::ControlReg::AC_CHARGE_SPEED_SET, level);
+  Serial.printf("BLE: AC charge speed set to %d/5\n", level);
+}
+
 void FossibotBLE::setScreenTimeout(int minutes) {
   if (minutes < 0)
     minutes = 0;
@@ -725,6 +734,9 @@ void FossibotBLE::parseSettingsData(const uint8_t *data, size_t length) {
   };
 
   // Parse Fossibot settings registers
+  uint16_t chargeSpeed = getRegValue(13);
+  if (chargeSpeed >= 1 && chargeSpeed <= 5)
+    _data.acChargeSpeed = chargeSpeed;
   _data.lightMode = getRegValue(27);
   _data.buzzerEnabled = (getRegValue(56) == 1);
   _data.silentCharging = (getRegValue(57) == 1);

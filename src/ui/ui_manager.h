@@ -235,6 +235,7 @@ private:
   void drawHomeCompactStatus();
   void drawHomeHorizontalBars();
   void drawHomeSector();
+  void drawHomeLiveGraph();
 
   // Home mode (GivEnergy) dashboard themes
   void drawHomeGivEnergy();              // energy_flow (default)
@@ -278,6 +279,7 @@ private:
   int _fossiACStandby = 60;              // Minutes (0=never)
   int _fossiDCStandby = 60;              // Minutes (0=never)
   int _fossiUSBStandby = 300;            // Seconds (0=never)
+  int _fossiChargeSpeed = 3;             // AC charge speed setpoint (1-5)
   int _fossiScheduleChargeHour = -1;     // -1=off, 0-23 = target hour
   int _fossiScheduleChargeMin = 0;       // 0-59 = target minute
   int _fossiScheduleChargeRemaining = 0; // Read from Reg 63 (minutes)
@@ -438,6 +440,17 @@ private:
   void minesweeperCheckWin();
   int minesweeperCountNeighbors(int r, int c);
   void minesweeperReveal(int r, int c);
+
+  // Live Graph theme: rolling 10-minute IN/OUT power buffer (RAM only,
+  // resets on deep sleep). Sampled every GRAPH_SAMPLE_MS in update().
+  static const int GRAPH_SAMPLES = 60;               // 10 min @ 10s
+  static const unsigned long GRAPH_SAMPLE_MS = 10000; // 10 seconds
+  float _graphIn[GRAPH_SAMPLES] = {};
+  float _graphOut[GRAPH_SAMPLES] = {};
+  int _graphHead = 0;  // Next write index (ring buffer)
+  int _graphCount = 0; // Valid samples stored (<= GRAPH_SAMPLES)
+  unsigned long _lastGraphSample = 0;
+  void samplePowerGraph();
 
   // Power History (data collection active, UI Phase 3)
   PowerHistory _powerHistory;
