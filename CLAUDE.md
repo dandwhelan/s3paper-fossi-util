@@ -22,7 +22,7 @@ Set via `"mode"` in `/config/settings.json` on the SD card. Changeable from Sett
 | **Target device** | Fossibot F3600 Pro power bank | GivEnergy inverter via GivTCP3 |
 | **Data direction** | Bidirectional (read + write) | Read-only (MQTT subscribe) |
 | **Deep sleep** | Yes, after inactivity | Disabled (mains-powered) |
-| **Home screen themes** | 4 themes (classic_grid, compact_status, horizontal_bars, sector) | Energy Flow Diagram (single layout) |
+| **Home screen themes** | 5 themes (classic_grid, compact_status, horizontal_bars, sector, live_graph) | Energy Flow Diagram (single layout) |
 | **Fossibot settings** | Available (Quick Actions, Power Limits, Timers) | Not available |
 | **NTP time sync** | No (RTC only) | Yes, on WiFi connect |
 
@@ -195,7 +195,7 @@ else
         "inverter_sn": ""
     },
     "display": {
-        "theme": "classic_grid",      // Campervan only (classic_grid|compact_status|horizontal_bars|sector)
+        "theme": "classic_grid",      // Campervan only (classic_grid|compact_status|horizontal_bars|sector|live_graph)
         "auto_sleep_minutes": 5
     },
     "timezone": { "offset_hours": 0 },

@@ -183,6 +183,18 @@ void UIManager::update() {
     }
   }
 
+  // Live Graph theme: sample IN/OUT power every 10s into the rolling
+  // 10-minute buffer. Sampled regardless of current screen so the graph
+  // is populated when the user returns to the dashboard.
+  {
+    extern Config *config;
+    if ((!config || config->isCampervanMode()) &&
+        millis() - _lastGraphSample >= GRAPH_SAMPLE_MS) {
+      _lastGraphSample = millis();
+      samplePowerGraph();
+    }
+  }
+
   // Check for Book Loading Task completion
   if (g_bookLoadingComplete) {
     g_bookLoadingComplete = false;
@@ -597,6 +609,7 @@ void UIManager::updatePowerBankData(const Fossibot::PowerBankData &data) {
     _fossiLightMode = data.lightMode;
     _fossiChargeLimit = data.chargeLimit;
     _fossiDischargeLimit = data.dischargeLimit;
+    _fossiChargeSpeed = data.acChargeSpeed;
     _fossiScreenTimeout = data.screenTimeout;
     _fossiACStandby = data.acStandby;
     _fossiDCStandby = data.dcStandby;
@@ -674,7 +687,10 @@ bool UIManager::homeThemeShowsClock() {
   if (config->isHomeMode())
     return true; // All GivEnergy layouts show the time
   String theme = config->getTheme();
-  return theme == "compact_status" || theme == "horizontal_bars";
+  // live_graph shows a clock AND its graph scrolls with time, so the
+  // minute-change check also guarantees a refresh every 60s for it.
+  return theme == "compact_status" || theme == "horizontal_bars" ||
+         theme == "live_graph";
 }
 
 void UIManager::drawHomeScreen() {
@@ -703,24 +719,38 @@ void UIManager::drawHomeScreen() {
       drawHomeGivEnergy(); // "energy_flow" (default)
     }
     drawMenuButton();
-    M5.Display.display();
     return;
   }
 
   // Campervan mode: Dispatch to active Fossibot theme
   String theme = config ? config->getTheme() : "classic_grid";
+
+  // setEpdMode() governs the *next* panel flush (the single display() call
+  // at the end of UIManager::update()), so it must be set before drawing,
+  // not after — and re-asserted every draw since a prior live_graph frame
+  // can leave the panel in fastest mode for a later theme.
+  if (theme == "live_graph") {
+    // Fastest 1-bit mode: shortest panel drive time per refresh (less
+    // energy per update, not just wall-clock speed). The graph avoids
+    // relying on gray fills so nothing is lost switching out of epd_text.
+    M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+  } else {
+    M5.Display.setEpdMode(epd_mode_t::epd_text);
+  }
+
   if (theme == "compact_status") {
     drawHomeCompactStatus();
   } else if (theme == "horizontal_bars") {
     drawHomeHorizontalBars();
   } else if (theme == "sector") {
     drawHomeSector();
+  } else if (theme == "live_graph") {
+    drawHomeLiveGraph();
   } else {
     drawHomeClassicGrid();
   }
 
   drawMenuButton(); // MENU button on home screen (top-right)
-  M5.Display.display();
 }
 
 // ============================================================================
@@ -1265,6 +1295,241 @@ void UIManager::drawHomeSector() {
   } else {
     M5.Display.drawCircle(connX, connY, 6, COLOR_BLACK);
     M5.Display.drawLine(connX - 6, connY - 6, connX + 6, connY + 6, COLOR_BLACK);
+  }
+}
+
+// ============================================================================
+// Theme: Live Graph (rolling 10-minute IN/OUT power chart)
+// ============================================================================
+
+void UIManager::samplePowerGraph() {
+  // When disconnected, record zeros so gaps are visible rather than
+  // freezing at the last known value.
+  _graphIn[_graphHead] = _powerData.connected ? _powerData.inputPower : 0.0f;
+  _graphOut[_graphHead] = _powerData.connected ? _powerData.outputPower : 0.0f;
+  _graphHead = (_graphHead + 1) % GRAPH_SAMPLES;
+  if (_graphCount < GRAPH_SAMPLES)
+    _graphCount++;
+}
+
+void UIManager::drawHomeLiveGraph() {
+  drawBatteryBar(_powerData.batteryPercent);
+
+  int margin = 10;
+  int toggleStripH = 60;
+  int toggleY = SCREEN_HEIGHT - toggleStripH;
+
+  // --- Right info column: current values + clock ---
+  int infoW = 210;
+  int infoX = SCREEN_WIDTH - infoW - margin;
+
+  // --- Graph panel (left of info column) ---
+  int graphX = margin;
+  int graphY = BATTERY_BAR_HEIGHT + margin;
+  int graphW = infoX - margin * 2;
+  int graphH = toggleY - graphY - margin;
+
+  if (_powerData.hasError()) {
+    drawErrorBanner(graphX, graphY, graphW, 80);
+    graphY += 90;
+    graphH -= 90;
+  }
+
+  M5.Display.drawRect(graphX, graphY, graphW, graphH, COLOR_BLACK);
+
+  // Plot area inside the frame: room for Y labels left, X labels bottom
+  int plotX = graphX + 78;
+  int plotY = graphY + 14;
+  int plotW = graphW - 92;
+  int plotH = graphH - 52;
+
+  // Autoscale Y to the peak in the buffer, snapped to a "nice" ceiling
+  float peak = 0.0f;
+  for (int i = 0; i < _graphCount; i++) {
+    int idx = (_graphHead - _graphCount + i + GRAPH_SAMPLES) % GRAPH_SAMPLES;
+    if (_graphIn[idx] > peak)
+      peak = _graphIn[idx];
+    if (_graphOut[idx] > peak)
+      peak = _graphOut[idx];
+  }
+  const float niceMax[] = {100, 200, 500, 1000, 1500, 2000, 3000};
+  float yMax = 3000;
+  for (float m : niceMax) {
+    if (peak <= m) {
+      yMax = m;
+      break;
+    }
+  }
+
+  M5.Display.setFont(&fonts::DejaVu24);
+  M5.Display.setTextSize(1);
+  M5.Display.setTextColor(COLOR_BLACK);
+
+  // Horizontal gridlines + Y axis labels at 0 / 50% / 100%
+  char lbl[16];
+  for (int g = 0; g <= 4; g++) {
+    int gy = plotY + plotH - (plotH * g) / 4;
+    if (g > 0) { // dotted gridline (skip baseline, drawn solid below)
+      for (int gx = plotX; gx < plotX + plotW; gx += 8)
+        M5.Display.drawPixel(gx, gy, COLOR_GRAY);
+    }
+    if (g % 2 == 0) {
+      snprintf(lbl, sizeof(lbl), "%.0fW", yMax * g / 4.0f);
+      int tw = M5.Display.textWidth(lbl);
+      M5.Display.setCursor(plotX - tw - 6, gy - 10);
+      M5.Display.print(lbl);
+    }
+  }
+  // Axes
+  M5.Display.drawFastHLine(plotX, plotY + plotH, plotW, COLOR_BLACK);
+  M5.Display.drawFastVLine(plotX, plotY, plotH, COLOR_BLACK);
+
+  // X axis labels: -10m ... now
+  const char *xLabels[] = {"-10m", "-5m", "now"};
+  for (int i = 0; i < 3; i++) {
+    int lx = plotX + (plotW * i) / 2;
+    int tw = M5.Display.textWidth(xLabels[i]);
+    M5.Display.setCursor(lx - (i == 0 ? 0 : (i == 2 ? tw : tw / 2)),
+                         plotY + plotH + 8);
+    M5.Display.print(xLabels[i]);
+  }
+
+  // --- Plot the two series (newest sample pinned to the right edge) ---
+  auto sampleX = [&](int slot) {
+    return plotX + 2 + ((plotW - 4) * slot) / (GRAPH_SAMPLES - 1);
+  };
+  auto sampleY = [&](float watts) {
+    float f = watts / yMax;
+    if (f > 1.0f)
+      f = 1.0f;
+    if (f < 0.0f)
+      f = 0.0f;
+    return plotY + plotH - 2 - (int)((plotH - 4) * f);
+  };
+
+  if (_graphCount < 2) {
+    M5.Display.setTextColor(COLOR_GRAY);
+    const char *msg = "Collecting data...";
+    int tw = M5.Display.textWidth(msg);
+    M5.Display.setCursor(plotX + (plotW - tw) / 2, plotY + plotH / 2 - 12);
+    M5.Display.print(msg);
+  } else {
+    for (int i = 1; i < _graphCount; i++) {
+      int idxA =
+          (_graphHead - _graphCount + i - 1 + GRAPH_SAMPLES) % GRAPH_SAMPLES;
+      int idxB = (_graphHead - _graphCount + i + GRAPH_SAMPLES) % GRAPH_SAMPLES;
+      int slotA = GRAPH_SAMPLES - _graphCount + i - 1;
+      int slotB = slotA + 1;
+      int xA = sampleX(slotA), xB = sampleX(slotB);
+
+      // OUT drawn as a dashed black line (skip every other segment) so it
+      // stays distinct from IN in 1-bit fastest EPD mode, where gray fills
+      // don't render reliably.
+      if (i % 2 == 1) {
+        int oyA = sampleY(_graphOut[idxA]), oyB = sampleY(_graphOut[idxB]);
+        for (int t = -2; t <= 2; t++)
+          M5.Display.drawLine(xA, oyA + t, xB, oyB + t, COLOR_BLACK);
+      }
+
+      // IN drawn solid so the two series stay visually distinct
+      int iyA = sampleY(_graphIn[idxA]), iyB = sampleY(_graphIn[idxB]);
+      for (int t = -2; t <= 2; t++)
+        M5.Display.drawLine(xA, iyA + t, xB, iyB + t, COLOR_BLACK);
+    }
+    // Markers on the newest points
+    int newest = (_graphHead - 1 + GRAPH_SAMPLES) % GRAPH_SAMPLES;
+    M5.Display.fillCircle(sampleX(GRAPH_SAMPLES - 1),
+                          sampleY(_graphIn[newest]), 5, COLOR_BLACK);
+    M5.Display.drawCircle(sampleX(GRAPH_SAMPLES - 1),
+                          sampleY(_graphOut[newest]), 5, COLOR_BLACK);
+  }
+
+  // Legend (top-left inside the frame) — solid swatch for IN, dashed for OUT
+  int legX = plotX + 10;
+  int legY = plotY + 6;
+  M5.Display.fillRect(legX, legY + 6, 26, 6, COLOR_BLACK);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(legX + 34, legY);
+  M5.Display.print("IN");
+  M5.Display.fillRect(legX + 100, legY + 6, 6, 6, COLOR_BLACK);
+  M5.Display.fillRect(legX + 110, legY + 6, 6, 6, COLOR_BLACK);
+  M5.Display.fillRect(legX + 120, legY + 6, 6, 6, COLOR_BLACK);
+  M5.Display.setCursor(legX + 134, legY);
+  M5.Display.print("OUT");
+
+  // --- Right info column ---
+  int y = graphY;
+
+  // Clock
+  int h, m, s;
+  RTC::getTime(h, m, s);
+  char timeStr[8];
+  snprintf(timeStr, sizeof(timeStr), "%02d:%02d", h, m);
+  M5.Display.setTextSize(2);
+  int tw = M5.Display.textWidth(timeStr);
+  M5.Display.setCursor(infoX + (infoW - tw) / 2, y);
+  M5.Display.print(timeStr);
+  y += 70;
+
+  char wBuf[16];
+
+  // IN current value + time to full
+  M5.Display.setTextSize(1);
+  M5.Display.setCursor(infoX, y);
+  M5.Display.print("IN");
+  snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.inputPower);
+  M5.Display.setTextSize(3);
+  tw = M5.Display.textWidth(wBuf);
+  M5.Display.setCursor(infoX + infoW - tw, y + 26);
+  M5.Display.print(wBuf);
+  M5.Display.setTextSize(1);
+  String ft = Fossibot::formatTime(_powerData.minutesToFull);
+  M5.Display.setCursor(infoX, y + 100);
+  M5.Display.printf("%s to full", ft.c_str());
+  y += 140;
+
+  M5.Display.drawFastHLine(infoX, y, infoW, COLOR_GRAY);
+  y += 15;
+
+  // OUT current value + time remaining
+  M5.Display.setCursor(infoX, y);
+  M5.Display.print("OUT");
+  snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.outputPower);
+  M5.Display.setTextSize(3);
+  tw = M5.Display.textWidth(wBuf);
+  M5.Display.setCursor(infoX + infoW - tw, y + 26);
+  M5.Display.print(wBuf);
+  M5.Display.setTextSize(1);
+  String et = Fossibot::formatTime(_powerData.minutesToEmpty);
+  M5.Display.setCursor(infoX, y + 100);
+  M5.Display.printf("%s remaining", et.c_str());
+
+  // --- Bottom toggle strip (same geometry as Compact Status so the
+  //     Compact Status touch handler can be reused) ---
+  M5.Display.drawFastHLine(0, toggleY, SCREEN_WIDTH, COLOR_GRAY);
+  int toggleSpacing = SCREEN_WIDTH / 4;
+  const char *toggleNames[] = {"USB", "DC", "AC"};
+  bool toggleStates[] = {_powerData.usbActive, _powerData.dcActive,
+                         _powerData.acActive};
+  M5.Display.setTextColor(COLOR_BLACK);
+  for (int i = 0; i < 3; i++) {
+    int cx = toggleSpacing * (i + 1);
+    M5.Display.setTextSize(2);
+    int ltw = M5.Display.textWidth(toggleNames[i]);
+    M5.Display.setCursor(cx - ltw / 2, toggleY + 5);
+    M5.Display.print(toggleNames[i]);
+    drawToggle(cx - 15, toggleY + 10, "", toggleStates[i]);
+  }
+
+  // Connection indicator (far right of toggle strip)
+  int connX = SCREEN_WIDTH - 40;
+  int connDotY = toggleY + 30;
+  if (_powerData.connected) {
+    M5.Display.fillCircle(connX, connDotY, 6, COLOR_BLACK);
+  } else {
+    M5.Display.drawCircle(connX, connDotY, 6, COLOR_BLACK);
+    M5.Display.drawLine(connX - 6, connDotY - 6, connX + 6, connDotY + 6,
+                        COLOR_BLACK);
   }
 }
 
@@ -2450,6 +2715,9 @@ void UIManager::handleHomeTouch(int x, int y, TouchEvent event) {
     handleHomeHorizontalBarsTouch(x, y);
   } else if (theme == "sector") {
     handleHomeSectorTouch(x, y);
+  } else if (theme == "live_graph") {
+    // Live Graph uses the same bottom toggle strip as Compact Status
+    handleHomeCompactStatusTouch(x, y);
   } else {
     handleHomeClassicGridTouch(x, y);
   }
@@ -2723,6 +2991,7 @@ void UIManager::drawSettingsScreen() {
       if (theme == "compact_status") themeName = "Compact";
       else if (theme == "horizontal_bars") themeName = "H-Bars";
       else if (theme == "sector") themeName = "Sector";
+      else if (theme == "live_graph") themeName = "Graph";
       snprintf(themeLabel, sizeof(themeLabel), "Theme: %s", themeName);
     }
     drawButton(col3X, row3Y, btnW, btnH, themeLabel);
@@ -2855,6 +3124,8 @@ void UIManager::handleSettingsTouch(int x, int y) {
           config->setTheme("horizontal_bars");
         } else if (theme == "horizontal_bars") {
           config->setTheme("sector");
+        } else if (theme == "sector") {
+          config->setTheme("live_graph");
         } else {
           config->setTheme("classic_grid");
         }
@@ -3156,6 +3427,7 @@ void UIManager::drawFossibotSettingsScreen() {
       _fossiLightMode = data.lightMode;
       _fossiDischargeLimit = data.dischargeLimit;
       _fossiChargeLimit = data.chargeLimit;
+      _fossiChargeSpeed = data.acChargeSpeed;
       _fossiScreenTimeout = data.screenTimeout;
       _fossiSysStandby = data.sysStandby;
       _fossiACStandby = data.acStandby;
@@ -3222,6 +3494,16 @@ void UIManager::drawFossibotSettingsScreen() {
   M5.Display.setCursor(labelX, y);
   M5.Display.print("Discharge Limit");
   snprintf(limitStr, sizeof(limitStr), "%d%%", _fossiDischargeLimit);
+  drawButton(toggleX - 60, y - 10, 50, 40, "-");
+  M5.Display.setCursor(toggleX + 5, y);
+  M5.Display.print(limitStr);
+  drawButton(toggleX + 70, y - 10, 50, 40, "+");
+  y += rowH;
+
+  // Charge Speed (AC charge rate setpoint, ~220W per step on EU units)
+  M5.Display.setCursor(labelX, y);
+  M5.Display.print("Charge Speed");
+  snprintf(limitStr, sizeof(limitStr), "%d/5", _fossiChargeSpeed);
   drawButton(toggleX - 60, y - 10, 50, 40, "-");
   M5.Display.setCursor(toggleX + 5, y);
   M5.Display.print(limitStr);
@@ -3401,6 +3683,32 @@ void UIManager::handleFossibotSettingsTouch(int x, int y) {
     _lastTimerSetTime = millis(); // Prevent BLE sync from overwriting
     if (bleClient && bleClient->isConnected()) {
       bleClient->setDischargeLimit(_fossiDischargeLimit);
+    }
+    forceRefresh();
+    return;
+  }
+  baseY += rowH;
+
+  // Charge Speed -
+  if (isHit(toggleX - 60, baseY - 10, 50, 40)) {
+    _fossiChargeSpeed--;
+    if (_fossiChargeSpeed < 1)
+      _fossiChargeSpeed = 1;
+    _lastTimerSetTime = millis(); // Prevent BLE sync from overwriting
+    if (bleClient && bleClient->isConnected()) {
+      bleClient->setChargeSpeed(_fossiChargeSpeed);
+    }
+    forceRefresh();
+    return;
+  }
+  // Charge Speed +
+  if (isHit(toggleX + 70, baseY - 10, 50, 40)) {
+    _fossiChargeSpeed++;
+    if (_fossiChargeSpeed > 5)
+      _fossiChargeSpeed = 5;
+    _lastTimerSetTime = millis(); // Prevent BLE sync from overwriting
+    if (bleClient && bleClient->isConnected()) {
+      bleClient->setChargeSpeed(_fossiChargeSpeed);
     }
     forceRefresh();
     return;

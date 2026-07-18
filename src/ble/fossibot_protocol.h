@@ -251,6 +251,7 @@ struct PowerBankData {
   int dcStandby = 60;            // Minutes (reg 61)
   int usbStandby = 300;          // Seconds (reg 62)
   int scheduleCharge = 0;        // Minutes remaining (reg 63)
+  int acChargeSpeed = 3;         // AC charge speed setpoint 1-5 (reg 13)
 
   // For change detection
   float lastBatteryPercent = -1.0f;

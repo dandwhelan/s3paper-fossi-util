@@ -151,6 +151,11 @@ public:
   void setChargeLimit(int percent);
 
   /**
+   * Set AC charge speed setpoint (1-5, ~220W per step on EU units)
+   */
+  void setChargeSpeed(int level);
+
+  /**
    * Set screen timeout in minutes (0=never)
    */
   void setScreenTimeout(int minutes);
