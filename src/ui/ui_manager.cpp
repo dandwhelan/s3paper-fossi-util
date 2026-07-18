@@ -699,6 +699,8 @@ void UIManager::drawHomeScreen() {
       drawHomeGivEnergyBatteryFocus();
     } else if (ht == "todays_story") {
       drawHomeGivEnergyTodaysStory();
+    } else if (ht == "house_scene") {
+      drawHomeGivEnergyHouseScene();
     } else {
       drawHomeGivEnergy(); // "energy_flow" (default)
     }
@@ -1694,6 +1696,15 @@ void UIManager::drawHomeGivEnergy() {
   // ==========================================================================
   // 9. Status bar (bottom)
   // ==========================================================================
+  drawGivEnergyStatusBar();
+}
+
+// ============================================================================
+// Shared bottom status bar for GivEnergy home themes:
+// connection state + clock, last-update time, daily import/export totals.
+// ============================================================================
+void UIManager::drawGivEnergyStatusBar() {
+  const GivEnergy::SolarData &d = _solarData;
   int statusY = SCREEN_HEIGHT - 28;
   M5.Display.drawFastHLine(10, statusY - 4, SCREEN_WIDTH - 20, COLOR_GRAY);
 
@@ -1732,7 +1743,7 @@ void UIManager::drawHomeGivEnergy() {
     if (updated_seconds < 0) updated_seconds += 86400;
     snprintf(agoStr, sizeof(agoStr), "Updated: %02d:%02d:%02d", updated_seconds / 3600, (updated_seconds % 3600) / 60, updated_seconds % 60);
     int aw = M5.Display.textWidth(agoStr);
-    M5.Display.setCursor(cx - aw / 2, statusY);
+    M5.Display.setCursor(SCREEN_WIDTH / 2 - aw / 2, statusY);
     M5.Display.print(agoStr);
   }
 
@@ -1745,6 +1756,380 @@ void UIManager::drawHomeGivEnergy() {
     M5.Display.setCursor(SCREEN_WIDTH - ew - 100, statusY);
     M5.Display.print(expStr);
   }
+}
+
+// ============================================================================
+// Home Theme: House Scene (Predbat-style)
+// Isometric house with solar roof, garage and grid pylon. Live power values
+// are pinned to the scene as badges, connected by dashed flow lines that
+// converge on a ground-level junction (thickness = power magnitude).
+// ============================================================================
+void UIManager::drawHomeGivEnergyHouseScene() {
+  const GivEnergy::SolarData &d = _solarData;
+
+  // --- Isometric projection ---
+  // a = depth axis (right-down), b = width axis (left-down), h = height (up)
+  const int ox = 430, oy = 310;   // Scene origin (a=0, b=0, h=0)
+  const int du = 24, hu = 22;     // Iso unit sizes
+  struct Pt {
+    int x, y;
+  };
+  auto iso = [&](float a, float b, float h) -> Pt {
+    return {(int)(ox + (a - b) * du), (int)(oy + (a + b) * (du / 2.0f) - h * hu)};
+  };
+  auto fillQuad = [](Pt p0, Pt p1, Pt p2, Pt p3, uint16_t color) {
+    M5.Display.fillTriangle(p0.x, p0.y, p1.x, p1.y, p2.x, p2.y, color);
+    M5.Display.fillTriangle(p0.x, p0.y, p2.x, p2.y, p3.x, p3.y, color);
+  };
+  auto outlineQuad = [](Pt p0, Pt p1, Pt p2, Pt p3, uint16_t color) {
+    M5.Display.drawLine(p0.x, p0.y, p1.x, p1.y, color);
+    M5.Display.drawLine(p1.x, p1.y, p2.x, p2.y, color);
+    M5.Display.drawLine(p2.x, p2.y, p3.x, p3.y, color);
+    M5.Display.drawLine(p3.x, p3.y, p0.x, p0.y, color);
+  };
+
+  // House dimensions (iso units)
+  const float A = 9.0f;      // Depth (along ridge)
+  const float B = 5.0f;      // Width
+  const float WALL = 3.2f;   // Eaves height
+  const float RIDGE = 5.6f;  // Ridge height (at b = B/2)
+
+  // --- Ground shadow ---
+  M5.Display.fillEllipse(500, 462, 330, 42, COLOR_LIGHT_GRAY);
+
+  // --- Roof: back slope (barely visible sliver past the ridge) ---
+  {
+    Pt eL = iso(0, 0, WALL), eR = iso(A, 0, WALL);            // Eaves edge
+    Pt rL = iso(0, B / 2, RIDGE), rR = iso(A, B / 2, RIDGE);  // Ridge edge
+    fillQuad(eL, eR, rR, rL, COLOR_LIGHT_GRAY);
+    outlineQuad(eL, eR, rR, rL, COLOR_BLACK);
+  }
+
+  // --- Roof: front slope (solar array on the big visible plane) ---
+  {
+    Pt rL = iso(0, B / 2, RIDGE), rR = iso(A, B / 2, RIDGE);
+    Pt eL = iso(0, B, WALL), eR = iso(A, B, WALL);
+    fillQuad(rL, rR, eR, eL, COLOR_DARK_GRAY);
+    // Panel grid (white cell borders)
+    for (int i = 1; i < 6; i++) {
+      float a = A * i / 6.0f;
+      Pt pr = iso(a, B / 2, RIDGE), pe = iso(a, B, WALL);
+      M5.Display.drawLine(pr.x, pr.y, pe.x, pe.y, COLOR_WHITE);
+    }
+    for (int j = 1; j < 3; j++) {
+      float bj = B / 2 + (B / 2) * j / 3.0f;
+      float hj = RIDGE + (WALL - RIDGE) * j / 3.0f;
+      Pt mL = iso(0, bj, hj), mR = iso(A, bj, hj);
+      M5.Display.drawLine(mL.x, mL.y, mR.x, mR.y, COLOR_WHITE);
+    }
+    outlineQuad(rL, rR, eR, eL, COLOR_BLACK);
+  }
+
+  // --- Right gable wall (a = A) + gable triangle ---
+  {
+    Pt g0 = iso(A, 0, 0), g1 = iso(A, B, 0);
+    Pt t0 = iso(A, 0, WALL), t1 = iso(A, B, WALL);
+    Pt rp = iso(A, B / 2, RIDGE);
+    fillQuad(g0, g1, t1, t0, COLOR_WHITE);
+    outlineQuad(g0, g1, t1, t0, COLOR_BLACK);
+    M5.Display.fillTriangle(t0.x, t0.y, t1.x, t1.y, rp.x, rp.y, COLOR_WHITE);
+    M5.Display.drawLine(t0.x, t0.y, rp.x, rp.y, COLOR_BLACK);
+    M5.Display.drawLine(t1.x, t1.y, rp.x, rp.y, COLOR_BLACK);
+    M5.Display.drawLine(t0.x, t0.y, t1.x, t1.y, COLOR_BLACK);
+    // Gable window
+    Pt w0 = iso(A, 1.8f, 1.2f), w1 = iso(A, 3.2f, 1.2f);
+    Pt w2 = iso(A, 3.2f, 2.4f), w3 = iso(A, 1.8f, 2.4f);
+    fillQuad(w0, w1, w2, w3, COLOR_LIGHT_GRAY);
+    outlineQuad(w0, w1, w2, w3, COLOR_BLACK);
+  }
+
+  // --- Front wall (b = B) with door + window ---
+  {
+    Pt g0 = iso(0, B, 0), g1 = iso(A, B, 0);
+    Pt t1 = iso(A, B, WALL), t0 = iso(0, B, WALL);
+    fillQuad(g0, g1, t1, t0, COLOR_WHITE);
+    outlineQuad(g0, g1, t1, t0, COLOR_BLACK);
+    // Door
+    Pt d0 = iso(6.2f, B, 0), d1 = iso(7.6f, B, 0);
+    Pt d2 = iso(7.6f, B, 2.2f), d3 = iso(6.2f, B, 2.2f);
+    fillQuad(d0, d1, d2, d3, COLOR_DARK_GRAY);
+    // Window
+    Pt w0 = iso(4.0f, B, 1.2f), w1 = iso(5.4f, B, 1.2f);
+    Pt w2 = iso(5.4f, B, 2.4f), w3 = iso(4.0f, B, 2.4f);
+    fillQuad(w0, w1, w2, w3, COLOR_LIGHT_GRAY);
+    outlineQuad(w0, w1, w2, w3, COLOR_BLACK);
+  }
+
+  // --- Garage (front-left, flat roof) footprint a 0..3, b B..B+4 ---
+  {
+    const float GA = 3.0f, GB = B + 4.0f, GH = 2.2f;
+    Pt g0 = iso(0, B, 0), g1 = iso(GA, B, 0), g2 = iso(GA, GB, 0), g3 = iso(0, GB, 0);
+    Pt t0 = iso(0, B, GH), t1 = iso(GA, B, GH), t2 = iso(GA, GB, GH), t3 = iso(0, GB, GH);
+    // Flat roof
+    fillQuad(t0, t1, t2, t3, COLOR_LIGHT_GRAY);
+    outlineQuad(t0, t1, t2, t3, COLOR_BLACK);
+    // Side wall (a = GA)
+    fillQuad(g1, g2, t2, t1, COLOR_WHITE);
+    outlineQuad(g1, g2, t2, t1, COLOR_BLACK);
+    // Front wall (b = GB) with garage door
+    fillQuad(g3, g2, t2, t3, COLOR_WHITE);
+    outlineQuad(g3, g2, t2, t3, COLOR_BLACK);
+    Pt gd0 = iso(0.4f, GB, 0), gd1 = iso(2.6f, GB, 0);
+    Pt gd2 = iso(2.6f, GB, 1.7f), gd3 = iso(0.4f, GB, 1.7f);
+    fillQuad(gd0, gd1, gd2, gd3, COLOR_LIGHT_GRAY);
+    outlineQuad(gd0, gd1, gd2, gd3, COLOR_BLACK);
+    for (int i = 1; i < 4; i++) {
+      float h = 1.7f * i / 4.0f;
+      Pt s0 = iso(0.4f, GB, h), s1 = iso(2.6f, GB, h);
+      M5.Display.drawLine(s0.x, s0.y, s1.x, s1.y, COLOR_GRAY);
+    }
+  }
+
+  // --- Grid pylon (right side) with wire to house ---
+  {
+    const int baseY = 458, topY = 190;
+    auto legX = [&](int y, bool left) -> int {
+      float t = (float)(y - topY) / (baseY - topY);
+      return left ? (int)(797 + (775 - 797) * t) : (int)(803 + (825 - 803) * t);
+    };
+    // Legs (2px)
+    for (int o = 0; o < 2; o++) {
+      M5.Display.drawLine(legX(baseY, true) + o, baseY, legX(topY, true) + o,
+                          topY, COLOR_BLACK);
+      M5.Display.drawLine(legX(baseY, false) + o, baseY, legX(topY, false) + o,
+                          topY, COLOR_BLACK);
+    }
+    // Rungs and cross braces
+    int prevY = topY + 30;
+    for (int y = topY + 70; y <= baseY - 10; y += 60) {
+      M5.Display.drawLine(legX(y, true), y, legX(y, false), y, COLOR_BLACK);
+      M5.Display.drawLine(legX(prevY, true), prevY, legX(y, false), y,
+                          COLOR_BLACK);
+      M5.Display.drawLine(legX(prevY, false), prevY, legX(y, true), y,
+                          COLOR_BLACK);
+      prevY = y;
+    }
+    // Cross arms + insulators
+    M5.Display.drawLine(760, 205, 840, 205, COLOR_BLACK);
+    M5.Display.drawLine(760, 206, 840, 206, COLOR_BLACK);
+    M5.Display.drawLine(770, 235, 830, 235, COLOR_BLACK);
+    M5.Display.drawFastVLine(764, 205, 8, COLOR_BLACK);
+    M5.Display.drawFastVLine(836, 205, 8, COLOR_BLACK);
+    // Top spike
+    M5.Display.drawLine(800, 175, 800, topY, COLOR_BLACK);
+    // Wire: pylon -> house ridge (sagging polyline)
+    Pt ridgeEnd = iso(A, B / 2, RIDGE);
+    M5.Display.drawLine(764, 213, 680, 285, COLOR_BLACK);
+    M5.Display.drawLine(680, 285, ridgeEnd.x, ridgeEnd.y, COLOR_BLACK);
+    // Wire continuing off-screen right
+    M5.Display.drawLine(836, 213, 959, 245, COLOR_BLACK);
+  }
+
+  // ==========================================================================
+  // Flow lines: badges -> ground-level junction bus
+  // ==========================================================================
+  auto drawDashedLine = [](int x1, int y1, int x2, int y2, int thickness,
+                           uint16_t color, int dashLen = 10, int gapLen = 7) {
+    float dx = x2 - x1, dy = y2 - y1;
+    float len = sqrtf(dx * dx + dy * dy);
+    if (len < 1)
+      return;
+    float ux = dx / len, uy = dy / len;
+    float pos = 0;
+    while (pos < len) {
+      float segEnd = pos + dashLen;
+      if (segEnd > len)
+        segEnd = len;
+      int sx = x1 + (int)(ux * pos), sy = y1 + (int)(uy * pos);
+      int ex = x1 + (int)(ux * segEnd), ey = y1 + (int)(uy * segEnd);
+      for (int t = -(thickness / 2); t <= thickness / 2; t++) {
+        int px = (int)(-uy * t), py = (int)(ux * t);
+        M5.Display.drawLine(sx + px, sy + py, ex + px, ey + py, color);
+      }
+      pos += dashLen + gapLen;
+    }
+  };
+  auto flowThickness = [](float watts) -> int {
+    float w = fabsf(watts);
+    if (w < 5)
+      return 1;
+    if (w < 500)
+      return 2;
+    if (w < 2000)
+      return 4;
+    return 5;
+  };
+  auto flowColor = [](float watts) -> uint16_t {
+    return (fabsf(watts) > 5) ? COLOR_BLACK : COLOR_LIGHT_GRAY;
+  };
+  auto drawArrow = [](int x, int y, int dir, uint16_t color) {
+    // dir: 0=down, 1=up, 2=right, 3=left
+    int sz = 7;
+    switch (dir) {
+    case 0:
+      M5.Display.fillTriangle(x, y + sz, x - sz, y - sz, x + sz, y - sz, color);
+      break;
+    case 1:
+      M5.Display.fillTriangle(x, y - sz, x - sz, y + sz, x + sz, y + sz, color);
+      break;
+    case 2:
+      M5.Display.fillTriangle(x + sz, y, x - sz, y - sz, x - sz, y + sz, color);
+      break;
+    case 3:
+      M5.Display.fillTriangle(x - sz, y, x + sz, y - sz, x + sz, y + sz, color);
+      break;
+    }
+  };
+
+  const int busY = 445;  // Ground-level flow bus
+  const int junX = 450;  // Junction (in front of the house)
+
+  float battFlow = d.chargePower > 5 ? d.chargePower : d.dischargePower;
+  float gridFlow = d.importPower > 5 ? d.importPower : d.exportPower;
+
+  // Dashed segment with a solid white underlay so it stays visible where it
+  // crosses the dark solar roof or scene line work.
+  auto flowSeg = [&](int x1, int y1, int x2, int y2, float watts) {
+    int th = flowThickness(watts);
+    drawDashedLine(x1, y1, x2, y2, th + 6, COLOR_WHITE, 10000, 1);
+    drawDashedLine(x1, y1, x2, y2, th, flowColor(watts));
+  };
+
+  // Solar: straight down the front of the house into the junction
+  flowSeg(450, 175, 450, busY, d.pvPowerTotal);
+  if (d.pvPowerTotal > 5)
+    drawArrow(450, 412, 0, COLOR_BLACK);
+
+  // Battery: down from wall badge, then along the bus to the junction
+  flowSeg(660, 262, 660, busY, battFlow);
+  flowSeg(660, busY, junX + 6, busY, battFlow);
+  if (d.chargePower > 5)
+    drawArrow(660, 350, 1, COLOR_BLACK);
+  else if (d.dischargePower > 5)
+    drawArrow(660, 350, 0, COLOR_BLACK);
+
+  // Grid: down from the pylon badge, joins the bus
+  flowSeg(830, 357, 830, busY, gridFlow);
+  flowSeg(830, busY, 660, busY, gridFlow);
+  if (d.importPower > 5)
+    drawArrow(830, 400, 0, COLOR_BLACK);
+  else if (d.exportPower > 5)
+    drawArrow(830, 400, 1, COLOR_BLACK);
+
+  // House: junction -> load badge (bottom-left)
+  flowSeg(junX, busY, 405, 468, d.loadPower);
+  if (d.loadPower > 5)
+    drawArrow(418, 462, 3, COLOR_BLACK);
+
+  // Junction dot
+  M5.Display.fillCircle(junX, busY, 6, COLOR_BLACK);
+  M5.Display.fillCircle(junX, busY, 2, COLOR_WHITE);
+
+  // ==========================================================================
+  // Badges: rounded two-line labels pinned to the scene
+  // ==========================================================================
+  // iconType: 0=sun, 1=battery, 2=house, 3=bolt
+  auto drawBadge = [&](int bcx, int bcy, const char *value, const char *sub,
+                       int iconType, bool dark) {
+    M5.Display.setFont(&fonts::Font4);
+    int vw = M5.Display.textWidth(value);
+    M5.Display.setFont(&fonts::Font2);
+    int sw = sub ? M5.Display.textWidth(sub) : 0;
+    int tw = vw > sw ? vw : sw;
+    const int iconW = 24, padX = 12, gap = 8;
+    int w = padX * 2 + iconW + gap + tw;
+    int h = sub ? 56 : 40;
+    int left = bcx - w / 2, top = bcy - h / 2;
+
+    uint16_t bg = dark ? COLOR_BLACK : COLOR_WHITE;
+    uint16_t fg = dark ? COLOR_WHITE : COLOR_BLACK;
+    M5.Display.fillRoundRect(left, top, w, h, 9, bg);
+    M5.Display.drawRoundRect(left, top, w, h, 9, COLOR_BLACK);
+    M5.Display.drawRoundRect(left + 1, top + 1, w - 2, h - 2, 9, COLOR_BLACK);
+
+    // Icon
+    int icx = left + padX + iconW / 2, icy = bcy;
+    switch (iconType) {
+    case 0: {  // Sun
+      M5.Display.fillCircle(icx, icy, 5, fg);
+      const int rays[8][2] = {{10, 0}, {-10, 0}, {0, 10}, {0, -10},
+                              {7, 7},  {7, -7},  {-7, 7}, {-7, -7}};
+      for (auto &r : rays)
+        M5.Display.drawLine(icx + r[0] * 7 / 10, icy + r[1] * 7 / 10,
+                            icx + r[0], icy + r[1], fg);
+      break;
+    }
+    case 1: {  // Battery with SOC fill
+      M5.Display.drawRect(icx - 6, icy - 8, 12, 17, fg);
+      M5.Display.fillRect(icx - 3, icy - 11, 6, 3, fg);
+      float pct = d.batteryPercent / 100.0f;
+      if (pct > 1.0f) pct = 1.0f;
+      if (pct < 0.0f) pct = 0.0f;
+      int fh = (int)(13 * pct);
+      if (fh > 0)
+        M5.Display.fillRect(icx - 4, icy + 7 - fh, 8, fh, fg);
+      break;
+    }
+    case 2:  // House
+      M5.Display.fillTriangle(icx, icy - 9, icx - 9, icy - 1, icx + 9, icy - 1,
+                              fg);
+      M5.Display.drawRect(icx - 6, icy - 1, 12, 10, fg);
+      break;
+    case 3:  // Lightning bolt
+      M5.Display.fillTriangle(icx + 3, icy - 10, icx - 6, icy + 2, icx + 1,
+                              icy + 2, fg);
+      M5.Display.fillTriangle(icx - 3, icy + 10, icx + 6, icy - 2, icx - 1,
+                              icy - 2, fg);
+      break;
+    }
+
+    int textX = left + padX + iconW + gap;
+    M5.Display.setTextColor(fg);
+    M5.Display.setTextDatum(middle_left);
+    M5.Display.setFont(&fonts::Font4);
+    M5.Display.drawString(value, textX, sub ? bcy - 10 : bcy);
+    if (sub) {
+      M5.Display.setFont(&fonts::Font2);
+      M5.Display.drawString(sub, textX, bcy + 15);
+    }
+    M5.Display.setTextDatum(top_left);
+    M5.Display.setTextColor(COLOR_BLACK);
+  };
+
+  char valStr[24], subStr[32];
+
+  // Solar (above the roof)
+  snprintf(subStr, sizeof(subStr), "Today %.1f kWh", d.pvEnergyToday);
+  drawBadge(450, 145, GivEnergy::formatWatts(d.pvPowerTotal).c_str(), subStr,
+            0, false);
+
+  // Battery (dark badge on the house, like the reference)
+  snprintf(valStr, sizeof(valStr), "%.0f%%", d.batteryPercent);
+  if (d.chargePower > 5)
+    snprintf(subStr, sizeof(subStr), "CHG %s",
+             GivEnergy::formatWatts(d.chargePower).c_str());
+  else if (d.dischargePower > 5)
+    snprintf(subStr, sizeof(subStr), "DIS %s",
+             GivEnergy::formatWatts(d.dischargePower).c_str());
+  else
+    snprintf(subStr, sizeof(subStr), "Idle");
+  drawBadge(660, 234, valStr, subStr, 1, true);
+
+  // Grid (at the pylon)
+  snprintf(subStr, sizeof(subStr), "%s",
+           d.importPower > 5    ? "Importing"
+           : d.exportPower > 5 ? "Exporting"
+                               : "Idle");
+  drawBadge(830, 329, GivEnergy::formatWatts(gridFlow).c_str(), subStr, 3,
+            false);
+
+  // House load (bottom-left)
+  snprintf(subStr, sizeof(subStr), "Today %.1f kWh", d.loadEnergyToday);
+  drawBadge(320, 470, GivEnergy::formatWatts(d.loadPower).c_str(), subStr, 2,
+            false);
+
+  // Status bar
+  drawGivEnergyStatusBar();
 }
 
 // ============================================================================
@@ -2714,7 +3099,8 @@ void UIManager::drawSettingsScreen() {
     if (config && config->isHomeMode()) {
       String ht = config->getHomeTheme();
       const char *htName = "Flow";
-      if (ht == "battery_focus") htName = "Battery";
+      if (ht == "house_scene") htName = "House";
+      else if (ht == "battery_focus") htName = "Battery";
       else if (ht == "todays_story") htName = "Today";
       snprintf(themeLabel, sizeof(themeLabel), "Theme: %s", htName);
     } else {
@@ -2835,9 +3221,12 @@ void UIManager::handleSettingsTouch(int x, int y) {
     extern Config *config;
     if (config) {
       if (config->isHomeMode()) {
-        // Cycle home mode themes: energy_flow -> battery_focus -> todays_story -> energy_flow
+        // Cycle home mode themes: energy_flow -> house_scene -> battery_focus
+        // -> todays_story -> energy_flow
         String ht = config->getHomeTheme();
         if (ht == "energy_flow") {
+          config->setHomeTheme("house_scene");
+        } else if (ht == "house_scene") {
           config->setHomeTheme("battery_focus");
         } else if (ht == "battery_focus") {
           config->setHomeTheme("todays_story");

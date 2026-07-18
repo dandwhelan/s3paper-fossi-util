@@ -121,7 +121,7 @@ private:
 
   // Display
   String _theme;      // Campervan themes: classic_grid|compact_status|horizontal_bars|sector
-  String _homeTheme;  // Home themes: energy_flow|battery_focus|todays_story
+  String _homeTheme;  // Home themes: energy_flow|house_scene|battery_focus|todays_story
   int _autoSleepMinutes;
 
   // Timezone
