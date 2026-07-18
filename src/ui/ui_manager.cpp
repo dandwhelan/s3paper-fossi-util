@@ -719,7 +719,6 @@ void UIManager::drawHomeScreen() {
       drawHomeGivEnergy(); // "energy_flow" (default)
     }
     drawMenuButton();
-    M5.Display.display();
     return;
   }
 
@@ -738,7 +737,6 @@ void UIManager::drawHomeScreen() {
   }
 
   drawMenuButton(); // MENU button on home screen (top-right)
-  M5.Display.display();
 }
 
 // ============================================================================
@@ -1412,11 +1410,11 @@ void UIManager::drawHomeLiveGraph() {
 
       // OUT first (gray) so IN (black) draws on top where they overlap
       int oyA = sampleY(_graphOut[idxA]), oyB = sampleY(_graphOut[idxB]);
-      for (int t = -1; t <= 1; t++)
+      for (int t = -2; t <= 2; t++)
         M5.Display.drawLine(xA, oyA + t, xB, oyB + t, COLOR_GRAY);
 
       int iyA = sampleY(_graphIn[idxA]), iyB = sampleY(_graphIn[idxB]);
-      for (int t = -1; t <= 1; t++)
+      for (int t = -2; t <= 2; t++)
         M5.Display.drawLine(xA, iyA + t, xB, iyB + t, COLOR_BLACK);
     }
     // Markers on the newest points
@@ -1430,11 +1428,11 @@ void UIManager::drawHomeLiveGraph() {
   // Legend (top-left inside the frame)
   int legX = plotX + 10;
   int legY = plotY + 6;
-  M5.Display.fillRect(legX, legY + 8, 26, 4, COLOR_BLACK);
+  M5.Display.fillRect(legX, legY + 6, 26, 6, COLOR_BLACK);
   M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setCursor(legX + 34, legY);
   M5.Display.print("IN");
-  M5.Display.fillRect(legX + 100, legY + 8, 26, 4, COLOR_GRAY);
+  M5.Display.fillRect(legX + 100, legY + 6, 26, 6, COLOR_GRAY);
   M5.Display.setCursor(legX + 134, legY);
   M5.Display.print("OUT");
 
