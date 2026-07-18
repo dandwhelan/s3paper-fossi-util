@@ -724,6 +724,20 @@ void UIManager::drawHomeScreen() {
 
   // Campervan mode: Dispatch to active Fossibot theme
   String theme = config ? config->getTheme() : "classic_grid";
+
+  // setEpdMode() governs the *next* panel flush (the single display() call
+  // at the end of UIManager::update()), so it must be set before drawing,
+  // not after — and re-asserted every draw since a prior live_graph frame
+  // can leave the panel in fastest mode for a later theme.
+  if (theme == "live_graph") {
+    // Fastest 1-bit mode: shortest panel drive time per refresh (less
+    // energy per update, not just wall-clock speed). The graph avoids
+    // relying on gray fills so nothing is lost switching out of epd_text.
+    M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+  } else {
+    M5.Display.setEpdMode(epd_mode_t::epd_text);
+  }
+
   if (theme == "compact_status") {
     drawHomeCompactStatus();
   } else if (theme == "horizontal_bars") {
@@ -1408,11 +1422,16 @@ void UIManager::drawHomeLiveGraph() {
       int slotB = slotA + 1;
       int xA = sampleX(slotA), xB = sampleX(slotB);
 
-      // OUT first (gray) so IN (black) draws on top where they overlap
-      int oyA = sampleY(_graphOut[idxA]), oyB = sampleY(_graphOut[idxB]);
-      for (int t = -2; t <= 2; t++)
-        M5.Display.drawLine(xA, oyA + t, xB, oyB + t, COLOR_GRAY);
+      // OUT drawn as a dashed black line (skip every other segment) so it
+      // stays distinct from IN in 1-bit fastest EPD mode, where gray fills
+      // don't render reliably.
+      if (i % 2 == 1) {
+        int oyA = sampleY(_graphOut[idxA]), oyB = sampleY(_graphOut[idxB]);
+        for (int t = -2; t <= 2; t++)
+          M5.Display.drawLine(xA, oyA + t, xB, oyB + t, COLOR_BLACK);
+      }
 
+      // IN drawn solid so the two series stay visually distinct
       int iyA = sampleY(_graphIn[idxA]), iyB = sampleY(_graphIn[idxB]);
       for (int t = -2; t <= 2; t++)
         M5.Display.drawLine(xA, iyA + t, xB, iyB + t, COLOR_BLACK);
@@ -1425,14 +1444,16 @@ void UIManager::drawHomeLiveGraph() {
                           sampleY(_graphOut[newest]), 5, COLOR_BLACK);
   }
 
-  // Legend (top-left inside the frame)
+  // Legend (top-left inside the frame) — solid swatch for IN, dashed for OUT
   int legX = plotX + 10;
   int legY = plotY + 6;
   M5.Display.fillRect(legX, legY + 6, 26, 6, COLOR_BLACK);
   M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setCursor(legX + 34, legY);
   M5.Display.print("IN");
-  M5.Display.fillRect(legX + 100, legY + 6, 26, 6, COLOR_GRAY);
+  M5.Display.fillRect(legX + 100, legY + 6, 6, 6, COLOR_BLACK);
+  M5.Display.fillRect(legX + 110, legY + 6, 6, 6, COLOR_BLACK);
+  M5.Display.fillRect(legX + 120, legY + 6, 6, 6, COLOR_BLACK);
   M5.Display.setCursor(legX + 134, legY);
   M5.Display.print("OUT");
 
