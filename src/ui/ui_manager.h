@@ -238,8 +238,10 @@ private:
 
   // Home mode (GivEnergy) dashboard themes
   void drawHomeGivEnergy();              // energy_flow (default)
+  void drawHomeGivEnergyHouseScene();    // house_scene (isometric house)
   void drawHomeGivEnergyBatteryFocus();  // battery_focus
   void drawHomeGivEnergyTodaysStory();   // todays_story
+  void drawGivEnergyStatusBar();         // Shared bottom status bar
   void drawButton(int x, int y, int w, int h, const char *label,
                   bool selected = false);
   void drawProgressBar(int x, int y, int w, int h, float percent,
