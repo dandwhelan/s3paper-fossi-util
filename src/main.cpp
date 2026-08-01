@@ -419,9 +419,11 @@ void loop() {
     // Campervan mode: BLE to Fossibot
     bleClient->update();
 
-    if (bleClient->isConnected()) {
-      uiManager->updatePowerBankData(bleClient->getData());
-    }
+    // Push data every pass, connected or not: the struct carries the link
+    // state, and the UI can only show a disconnect if it hears about it.
+    // (Previously this was gated on isConnected(), so the dashboard kept
+    // showing stale values as if the Fossibot were still linked.)
+    uiManager->updatePowerBankData(bleClient->getData());
 
     // CRITICAL: Skip UI updates during BLE connection attempts to prevent
     // EPD/BLE crash

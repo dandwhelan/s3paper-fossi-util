@@ -36,6 +36,10 @@ Communicates with the Fossibot via **modified Modbus RTU over BLE** (device addr
 
 **Critical:** CRC bytes are **high-byte first** (opposite to standard Modbus). See `docs/ble-protocol.md` and `src/ble/fossibot_protocol.h`.
 
+**Link feedback:** `FossibotBLE::getConnState()` returns a `BleConnState` (`LINK_UP`, `LINKING`, `RETRY_WAIT`, `RETRY_PAUSED`, `RETRY_STOPPED`, `RADIO_OFF`, `NO_MAC`) plus retry count, countdown to the next attempt (`getMsUntilRetry()`) and time since the link was last up (`getMsSinceLastSeen()`). The home screen renders this as an inverted status strip whenever the link is down (see UI Architecture below). Enum names deliberately avoid `DISABLED`/`CONNECTED` — the Arduino core defines those as macros.
+
+**Reconnect policy:** 30s base interval, doubling to a 5 min cap, abandoned after 55 min (deep sleep takes over at 60 min). A full client cleanup runs every 10 failures. `requestReconnectNow()` resets the backoff and arms an attempt on the next `update()` — never connect from a touch handler, the attempt blocks for up to 3s.
+
 ### Home Mode Details
 
 Connects to WiFi and subscribes to GivTCP3 MQTT topics for real-time GivEnergy data. Data arrives via three topic groups:
@@ -146,6 +150,58 @@ There are **no automated tests or linters**. Verification is done by building (`
 - **Home**: Deep sleep disabled (device is mains-powered, always-on monitoring)
 - **Battery cutoff**: Both modes sleep at 3.3V to protect Li-Po
 
+### Where the battery actually goes
+
+No power measurements have been taken on this hardware — the figures below are
+order-of-magnitude estimates from the ESP32-S3 and e-ink datasheets, useful for
+ranking optimisations, not for predicting runtime. Measure before trusting.
+
+Ranked, biggest first, for a campervan device sitting on the dashboard:
+
+1. **Being awake at all.** The main loop never light-sleeps: it spins on
+   `delay(10)` and polls the GT911 over I2C every 15ms (30ms in eco mode). At
+   80 MHz that is a continuous ~25-35 mA; at 240 MHz ~40-55 mA. Idle current
+   dominates everything else because it is paid 100% of the time. Deep sleep
+   (~0.1 mA) is the only real lever, which is why the inactivity timeout and
+   the 60-min BLE-disconnect sleep exist.
+2. **BLE.** A live connection at the configured 24-48ms interval costs a few mA
+   averaged. Failed *connection attempts* cost much more than the connection
+   itself: `connectToDevice()` boosts the CPU to 240 MHz and holds the radio for
+   up to a 3s timeout. Ten retries a minute would cost more than the link ever
+   did — hence the exponential backoff and the 55 min give-up.
+3. **WiFi (Home mode only).** ~80-120 mA average while associated. Irrelevant on
+   battery, which is why Home mode assumes mains and disables deep sleep.
+4. **E-ink refreshes.** Only significant if they are frequent — see below.
+5. **SD card.** Tens of mA in bursts during note saves, history flushes and
+   EPUB reads; negligible at rest.
+
+### E-ink refresh cost (`epd_mode_t`)
+
+Energy per refresh ≈ panel drive current × drive time, and the drive time is
+what the mode changes. Rough relative cost per full-screen update:
+
+| Mode | Waveform | Approx. drive time | Relative energy |
+|---|---|---|---|
+| `epd_quality` | 16-level greyscale, full clear | ~1-2 s | ~5-10x |
+| `epd_text` (default) | greyscale, shorter waveform | ~0.6-1 s | ~3-5x |
+| `epd_fast` | reduced levels | ~0.3-0.5 s | ~2x |
+| `epd_fastest` | 1-bit, no greys | ~0.1-0.3 s | 1x (baseline) |
+
+So fast refresh is worth roughly **3-10x less energy per update** than a quality
+refresh — but a refresh is a sub-second event on a device that redraws at most
+once a minute. Cutting refresh *frequency* (the change-threshold gating in
+`shouldUpdateDashboard()` and `bleStatusSignature()`) saves far more than
+changing the mode does, and the panel draws nothing between updates. Pick modes
+for legibility, not battery: `epd_fastest` loses the greys (Live Graph accepts
+this deliberately; the other themes rely on them).
+
+Two caveats that matter more than the mode choice:
+
+- E-ink refreshes contend with BLE for DMA on this board — see the EPD/BLE
+  pitfall below. Refresh frequency is a stability question as well as a power one.
+- Anything that keeps the CPU at 240 MHz (rendering, BLE attempts, EPUB
+  parsing) costs more than the panel does while it runs.
+
 ## UI Architecture
 
 ### Home Screen Dispatch (`drawHomeScreen()`)
@@ -156,6 +212,34 @@ if (config->isHomeMode())
 else
     dispatch to theme:       // classic_grid | compact_status | horizontal_bars | sector
 ```
+
+### Bluetooth Status Strip (Campervan only)
+
+The dashboard shows the last values received, so a dropped link would otherwise
+look identical to a live one. Whenever `bleStatusVisible()` is true (campervan
+mode and `getConnState() != LINK_UP`), each theme draws an inverted strip via
+`drawBleStatusStrip()`:
+
+- **classic_grid / sector / live_graph** — top 30px of the battery bar area
+  (`drawBatteryBar()` shrinks the bar; the error banner drops its detail line)
+- **compact_status** — top of screen between the clock and MENU (below the error
+  banner if one is showing)
+- **horizontal_bars** — lower part of row 4, clear of the toggles and date
+
+Text is `bleStatusHeadline()` + `bleStatusDetail()`, e.g. *FOSSIBOT DISCONNECTED
+— retrying: next try in 45s (3 failed), last seen 12m ago*. Tapping the strip
+calls `requestReconnectNow()` (or opens Settings when the radio is off); the
+handler runs from `handleHomeTouch()` before theme dispatch, because the strip
+can overlap output toggles that are inert while offline.
+
+Redraws are deliberately rationed: a state change refreshes immediately, while
+countdown/attempt/"last seen" changes go through `bleStatusSignature()` on the
+existing 60s pass. Elapsed time is bucketed (per minute under 10 min, then 5
+min, then hourly) so a long outage stops costing refreshes.
+
+`main.cpp` pushes `updatePowerBankData()` on **every** loop pass, connected or
+not — gating it on `isConnected()` was what left the UI believing it was still
+linked.
 
 ### Screens Available (Both Modes)
 
@@ -225,6 +309,8 @@ else
 7. **EPD/BLE contention** (Campervan): Skip UI updates during active BLE operations to avoid display corruption
 8. **MQTT update rate** (Home): Solar data updates throttled to 30-second minimum to prevent e-ink flicker
 9. **Mode requires restart**: Changing mode in settings only takes effect after device restart
+10. **Arduino macro collisions**: The ESP32 core `#define`s common all-caps words (`DISABLED`, `INPUT`, `LOW`…). Enum values like `BleConnState::RADIO_OFF` are named around them — a plain `DISABLED` will not compile
+11. **Stale UI state** (Campervan): The UI caches the last `PowerBankData` it was handed. Anything that stops feeding it (an `isConnected()` gate, a paused task) leaves the dashboard silently showing old numbers as if they were live
 
 ## SD Card Structure (runtime)
 

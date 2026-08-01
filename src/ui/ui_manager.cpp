@@ -37,6 +37,9 @@
 // You can adjust these values, or the logic in drawReaderScreen uses
 // _readerLineSpacing variable which currently defaults to 1.
 
+// Global reference to BLE client (Campervan mode; null in Home mode)
+extern FossibotBLE *bleClient;
+
 // Static flags for Task Synchronization
 static volatile bool g_bookLoadingComplete = false;
 static volatile bool g_bookLoadSuccess = false;
@@ -215,6 +218,20 @@ void UIManager::update() {
     updateNotes();
   }
 
+  // Bluetooth link state changed (dropped, gave up, paused, came back):
+  // redraw straight away so the banner never lags behind reality. The
+  // countdown inside the banner is handled by the 60s pass below.
+  if (_currentScreen == ScreenID::HOME && bleClient) {
+    int state = (int)bleClient->getConnState();
+    if (state != _lastRenderedBleState) {
+      Serial.printf("UI: BLE state changed (%d -> %d) - refreshing\n",
+                    _lastRenderedBleState, state);
+      _lastRenderedBleState = state;
+      _needsRefresh = true;
+      _lastRefresh = 0; // bypass rate limiting, this is what the user asked for
+    }
+  }
+
   // Auto-refresh Home Screen every 60 seconds (User Request)
   // Skip the full e-ink redraw when nothing visible changed: data deltas are
   // below the configured thresholds and the on-screen clock (if the active
@@ -230,7 +247,10 @@ void UIManager::update() {
     bool dataChanged = (config && config->isHomeMode())
                            ? _solarDataDirty
                            : shouldUpdateDashboard(_powerData);
-    if (clockChanged || dataChanged) {
+    // Reconnect countdown / attempt count / "last seen" moving on
+    bool bleStatusChanged =
+        bleStatusVisible() && (bleStatusSignature() != _lastRenderedBleSig);
+    if (clockChanged || dataChanged || bleStatusChanged) {
       Serial.println("UI: 60s Auto-refresh trigger");
       _needsRefresh = true;
     } else {
@@ -705,6 +725,10 @@ void UIManager::drawHomeScreen() {
   }
   _solarDataDirty = false;
   _lastRenderedData = _powerData;
+  _lastRenderedBleSig = bleStatusSignature();
+  _lastRenderedBleState =
+      bleClient ? (int)bleClient->getConnState() : -1;
+  _bleStripW = 0; // themes re-record this if they draw the strip
 
   M5.Display.fillScreen(COLOR_WHITE);
 
@@ -788,6 +812,17 @@ void UIManager::drawHomeClassicGrid() {
 // ============================================================================
 void UIManager::drawHomeCompactStatus() {
   int contentBottom = SCREEN_HEIGHT;
+
+  // --- Bluetooth status strip along the top (clock left, MENU right) ---
+  // When an error banner owns the top strip, drop below it instead.
+  if (bleStatusVisible()) {
+    if (_powerData.hasError()) {
+      drawBleStatusStrip(10, 96, SCREEN_WIDTH - 20, 30);
+    } else {
+      int stripX = 100;
+      drawBleStatusStrip(stripX, 6, MENU_ICON_X - 10 - stripX, 30);
+    }
+  }
 
   // --- Toggle strip at the very bottom, just above menu bar ---
   int toggleStripH = 60;
@@ -1165,6 +1200,13 @@ void UIManager::drawHomeHorizontalBars() {
   } else {
     M5.Display.drawCircle(connX, toggleCenterY, 6, COLOR_BLACK);
     M5.Display.drawLine(connX - 6, toggleCenterY - 6, connX + 6, toggleCenterY + 6, COLOR_BLACK);
+  }
+
+  // Bluetooth status strip: lower part of row 4, clear of toggles and date
+  if (bleStatusVisible()) {
+    int stripH = 30;
+    int stripY = row4Y + row4H - 34 - stripH;
+    drawBleStatusStrip(margin + 10, stripY, barW - 20, stripH);
   }
 }
 
@@ -2367,10 +2409,214 @@ void UIManager::drawHomeGivEnergyTodaysStory() {
   }
 }
 
+// ============================================================================
+// Bluetooth link feedback (Campervan mode)
+// ============================================================================
+// The dashboard keeps showing the last values it received, so without this
+// strip a dropped Fossibot link looks identical to a live one. Whenever the
+// link is down the home screen carries a black status strip naming the state
+// and, while auto-reconnect is running, the countdown to the next attempt.
+
+// Compact duration for the status line: "45s", "12m", "2h05m"
+static String formatBleDuration(unsigned long ms) {
+  unsigned long secs = ms / 1000;
+  if (secs < 60)
+    return String(secs) + "s";
+  unsigned long mins = secs / 60;
+  if (mins < 60)
+    return String(mins) + "m";
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%luh%02lum", mins / 60, mins % 60);
+  return String(buf);
+}
+
+bool UIManager::bleStatusVisible() {
+  extern Config *config;
+  if (config && config->isHomeMode())
+    return false;
+  if (!bleClient)
+    return false;
+  return bleClient->getConnState() != BleConnState::LINK_UP;
+}
+
+String UIManager::bleStatusHeadline() {
+  if (!bleClient)
+    return "FOSSIBOT UNAVAILABLE";
+
+  switch (bleClient->getConnState()) {
+  case BleConnState::NO_MAC:
+    return "NO FOSSIBOT PAIRED";
+  case BleConnState::RADIO_OFF:
+    return "BLUETOOTH OFF";
+  case BleConnState::LINKING:
+    return "FOSSIBOT CONNECTING";
+  case BleConnState::RETRY_PAUSED:
+    return "FOSSIBOT PAUSED";
+  case BleConnState::RETRY_STOPPED:
+  case BleConnState::RETRY_WAIT:
+  default:
+    return bleClient->hasEverConnected() ? "FOSSIBOT DISCONNECTED"
+                                         : "FOSSIBOT NOT FOUND";
+  }
+}
+
+String UIManager::bleStatusDetail() {
+  if (!bleClient)
+    return "";
+
+  switch (bleClient->getConnState()) {
+  case BleConnState::NO_MAC:
+    return "set fossibot_mac in /config/settings.json";
+  case BleConnState::RADIO_OFF:
+    return "turn Bluetooth back on in Menu > Settings";
+  case BleConnState::LINKING:
+    return "linking now...";
+  case BleConnState::RETRY_PAUSED:
+    return "auto-reconnect paused - TAP TO RETRY";
+  case BleConnState::RETRY_STOPPED:
+    return "auto-reconnect gave up - TAP TO RETRY";
+  case BleConnState::RETRY_WAIT:
+  default: {
+    unsigned long untilRetry = bleClient->getMsUntilRetry();
+    String detail = "retrying: ";
+    if (untilRetry == 0) {
+      detail += "next try now";
+    } else {
+      detail += "next try in " + formatBleDuration(untilRetry);
+    }
+    int tries = bleClient->getRetryCount();
+    if (tries > 0) {
+      detail += " (" + String(tries) + " failed)";
+    }
+    if (bleClient->hasEverConnected()) {
+      detail += ", last seen " +
+                formatBleDuration(bleClient->getMsSinceLastSeen()) + " ago";
+    }
+    return detail;
+  }
+  }
+}
+
+// Change detector so a redraw is only spent when the strip would say
+// something different. Elapsed times are bucketed (per-minute under 10 min,
+// then 5 min, then hourly) to keep e-ink refreshes rare on a long outage.
+uint32_t UIManager::bleStatusSignature() {
+  if (!bleClient)
+    return 0;
+
+  BleConnState state = bleClient->getConnState();
+  uint32_t sig = (uint32_t)state + 1;
+
+  // Only the retrying banner carries live numbers; every other state draws
+  // fixed text, so its signature must not drift (and cost refreshes).
+  if (state != BleConnState::RETRY_WAIT)
+    return sig;
+
+  int tries = bleClient->getRetryCount();
+  if (tries > 99)
+    tries = 99;
+  sig = sig * 131 + (uint32_t)tries;
+
+  unsigned long mins = bleClient->getMsSinceLastSeen() / 60000UL;
+  unsigned long bucket = (mins < 10)   ? mins
+                         : (mins < 60) ? (mins / 5) * 5
+                                       : (mins / 60) * 60;
+  sig = sig * 131 + (uint32_t)bucket;
+
+  // Coarse countdown bucket: only "due now" vs "waiting" matters visually
+  sig = sig * 131 + (bleClient->getMsUntilRetry() == 0 ? 1 : 0);
+
+  return sig;
+}
+
+void UIManager::drawBleStatusStrip(int x, int y, int w, int h) {
+  // Remember where it landed so a tap anywhere on the strip forces a retry
+  _bleStripX = x;
+  _bleStripY = y;
+  _bleStripW = w;
+  _bleStripH = h;
+
+  // Inverted block: the loudest thing available on a 1-bit-ish panel
+  M5.Display.fillRect(x, y, w, h, COLOR_BLACK);
+
+  int cy = y + h / 2;
+
+  // Warning triangle (white outline, black centre) at the left edge
+  int triX = x + 12;
+  M5.Display.fillTriangle(triX, cy + 10, triX + 10, cy - 10, triX + 20, cy + 10,
+                          COLOR_WHITE);
+  M5.Display.fillTriangle(triX + 3, cy + 7, triX + 10, cy - 5, triX + 17,
+                          cy + 7, COLOR_BLACK);
+  M5.Display.fillRect(triX + 9, cy - 3, 2, 7, COLOR_WHITE);
+  M5.Display.fillRect(triX + 9, cy + 5, 2, 2, COLOR_WHITE);
+
+  M5.Display.setTextColor(COLOR_WHITE);
+
+  // Headline
+  String headline = bleStatusHeadline();
+  M5.Display.setFont(&fonts::DejaVu24);
+  M5.Display.setTextSize(1);
+  int headX = triX + 30;
+  M5.Display.setCursor(headX, cy - 12);
+  M5.Display.print(headline);
+  int headW = M5.Display.textWidth(headline);
+
+  // Detail, right of the headline - dropped entirely if it cannot fit
+  String detail = bleStatusDetail();
+  if (detail.length() > 0) {
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setTextSize(1);
+    int detailX = headX + headW + 20;
+    int avail = (x + w - 10) - detailX;
+    if (M5.Display.textWidth(detail) <= avail) {
+      M5.Display.setCursor(detailX, cy - 8);
+      M5.Display.print(detail);
+    }
+  }
+
+  // Restore a sane default for whatever draws next
+  M5.Display.setFont(&fonts::DejaVu24);
+  M5.Display.setTextSize(1);
+  M5.Display.setTextColor(COLOR_BLACK);
+}
+
+bool UIManager::handleBleStatusTouch(int x, int y) {
+  if (_bleStripW <= 0 || !bleClient)
+    return false;
+  if (x < _bleStripX || x >= _bleStripX + _bleStripW || y < _bleStripY ||
+      y >= _bleStripY + _bleStripH)
+    return false;
+
+  BleConnState state = bleClient->getConnState();
+  Buzzer::click();
+
+  if (state == BleConnState::RADIO_OFF ||
+      state == BleConnState::NO_MAC) {
+    // Nothing to retry - send the user where they can fix it
+    navigateTo(ScreenID::SETTINGS);
+    return true;
+  }
+
+  bleClient->requestReconnectNow();
+  _needsRefresh = true;
+  _lastRefresh = 0; // show the acknowledgement immediately
+  return true;
+}
+
 void UIManager::drawBatteryBar(float percent) {
   int barY = 5;
   int barHeight = BATTERY_BAR_HEIGHT - 10;
   int barWidth = SCREEN_WIDTH - 10; // Full width with small margin
+
+  // === BLUETOOTH STATUS STRIP: takes the top of the bar area when the
+  // Fossibot link is down. What is left below still shows the last known
+  // charge, which is exactly what the numbers on screen are: last known. ===
+  if (bleStatusVisible()) {
+    const int stripH = 30;
+    drawBleStatusStrip(5, barY, barWidth, stripH);
+    barY += stripH + 2;
+    barHeight -= stripH + 2;
+  }
 
   // === ERROR BANNER: Replace battery bar when device has active fault ===
   if (_powerData.hasError()) {
@@ -2422,6 +2668,11 @@ void UIManager::drawBatteryBar(float percent) {
     M5.Display.fillRect(triX2 + 11, triCY + 7, 3, 3, COLOR_WHITE);
 
     // Show error code, protection flags, and classification on second line
+    // (skipped when the Bluetooth strip has taken part of the bar area)
+    if (barHeight < 60) {
+      Serial.println("UI: Error banner detail line suppressed (BLE strip)");
+      return;
+    }
     M5.Display.setTextSize(1);
     char detailStr[64];
     const char *classification =
@@ -2686,9 +2937,6 @@ void UIManager::drawButton(int x, int y, int w, int h, const char *label,
   M5.Display.print(label);
 }
 
-// Global reference to BLE client
-extern FossibotBLE *bleClient;
-
 void UIManager::handleHomeTouch(int x, int y, TouchEvent event) {
   if (event != TouchEvent::PRESS && event != TouchEvent::RELEASE)
     return;
@@ -2704,6 +2952,14 @@ void UIManager::handleHomeTouch(int x, int y, TouchEvent event) {
 
   // Home mode (GivEnergy): no interactive touch elements beyond MENU button
   if (config && config->isHomeMode()) {
+    return;
+  }
+
+  // Bluetooth status strip (only present while the link is down) - tapping
+  // it forces an immediate reconnect attempt instead of waiting out the
+  // backoff. Checked before the theme handlers because it can overlap the
+  // (inert while offline) output toggles.
+  if (event == TouchEvent::RELEASE && handleBleStatusTouch(x, y)) {
     return;
   }
 
@@ -3411,7 +3667,12 @@ void UIManager::drawFossibotSettingsScreen() {
   // Title
   M5.Display.setTextSize(2); // Reverted 3 -> 2
   M5.Display.setTextColor(COLOR_BLACK);
+  // Flag the link state in the title: every control on this screen is a
+  // no-op while the Fossibot is offline, which is otherwise silent.
   String title = "Fossibot Settings";
+  if (bleClient && !bleClient->isConnected()) {
+    title += " (OFFLINE)";
+  }
   M5.Display.setCursor((SCREEN_WIDTH - M5.Display.textWidth(title)) / 2, 15);
   M5.Display.print(title);
 
@@ -3777,6 +4038,9 @@ void UIManager::drawFossibotTimersScreen() {
   M5.Display.setTextSize(2);
   M5.Display.setCursor(SCREEN_WIDTH / 2 - 120, 15);
   M5.Display.print("Fossibot Timers");
+  if (bleClient && !bleClient->isConnected()) {
+    M5.Display.print(" (OFFLINE)");
+  }
 
   M5.Display.setTextSize(1);
   int y = 65;
