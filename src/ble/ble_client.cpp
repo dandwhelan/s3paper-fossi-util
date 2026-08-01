@@ -127,8 +127,20 @@ bool FossibotBLE::connectToDevice() {
   if (!_client) {
     _client = NimBLEDevice::createClient();
     _client->setClientCallbacks(this);
-    _client->setConnectionParams(24, 48, 0,
-                                 400); // 24-48ms interval (power optimized)
+    // Connection interval 200-400ms (units of 1.25ms), latency 0,
+    // supervision timeout 6s (units of 10ms).
+    //
+    // We are the central, so we transmit an anchor packet every interval
+    // whether or not there is data. The old 30-60ms interval meant ~20-30
+    // radio events per second to carry data we only request every 45s
+    // (POLL_INTERVAL); this cuts that by roughly 7-10x. Cost is up to ~0.4s
+    // before a toggle command goes out, and a status response spanning a
+    // couple of connection events - both invisible at this poll rate.
+    //
+    // Supervision timeout must exceed maxInterval * 2; 6s also rides out a
+    // missed event or two in a van where the link is marginal. The Fossibot
+    // may counter-propose its own parameters.
+    _client->setConnectionParams(160, 320, 0, 600);
     _client->setConnectTimeout(
         3); // 3 second timeout - keep short for touch responsiveness
   }

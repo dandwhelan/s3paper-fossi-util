@@ -60,17 +60,30 @@ Connects to WiFi and subscribes to GivTCP3 MQTT topics for real-time GivEnergy d
 - **Config**: `platformio.ini`
 
 ```bash
-pio run                  # Build
+pio run                  # Build (development env, serial logging on)
 pio run -t upload        # Flash to device via USB
 pio device monitor       # Serial monitor (115200 baud)
 pio run -t clean         # Clean build artifacts
+
+pio run -e m5paper_s3_release -t upload   # Production: no serial, no USB CDC
 ```
+
+Two envs share `[common]` flags: `m5paper_s3` (default, `SERIAL_DEBUG` +
+`ARDUINO_USB_CDC_ON_BOOT=1`) and `m5paper_s3_release` for battery use. Most
+`Serial.print` calls are *not* wrapped in `#ifdef SERIAL_DEBUG`, so the release
+env silences them by never opening the port (`cfg.serial_baudrate = 0` in
+`main.cpp`) plus `ARDUINO_USB_CDC_ON_BOOT=0` — dropping the flag alone would
+not. No serial log means no exception decoder: flash the debug env to chase a
+crash.
 
 There are **no automated tests or linters**. Verification is done by building (`pio run`) and testing on hardware.
 
 ### Build flags
 
-- `-DSERIAL_DEBUG` — enables serial logging; comment out for production
+- `-DSERIAL_DEBUG` — gates `Serial.begin()` and `cfg.serial_baudrate`; use the
+  `m5paper_s3_release` env rather than editing this flag by hand
+- `-DARDUINO_USB_CDC_ON_BOOT` — 1 in the dev env, 0 in release (points `Serial`
+  at UART0 instead of running the USB CDC stack)
 - `-DBOARD_HAS_PSRAM` — enables PSRAM for large allocations
 - `-Os` — optimize for size (flash is limited)
 
@@ -156,19 +169,27 @@ No power measurements have been taken on this hardware — the figures below are
 order-of-magnitude estimates from the ESP32-S3 and e-ink datasheets, useful for
 ranking optimisations, not for predicting runtime. Measure before trusting.
 
+**Constraint that shapes everything:** the Fossibot link must stay up, and deep
+sleep powers down the BLE controller. Deep sleep is therefore a shutdown
+strategy (inactivity timeout, 60-min disconnect), not an idle strategy.
+
 Ranked, biggest first, for a campervan device sitting on the dashboard:
 
 1. **Being awake at all.** The main loop never light-sleeps: it spins on
    `delay(10)` and polls the GT911 over I2C every 15ms (30ms in eco mode). At
    80 MHz that is a continuous ~25-35 mA; at 240 MHz ~40-55 mA. Idle current
-   dominates everything else because it is paid 100% of the time. Deep sleep
-   (~0.1 mA) is the only real lever, which is why the inactivity timeout and
-   the 60-min BLE-disconnect sleep exist.
-2. **BLE.** A live connection at the configured 24-48ms interval costs a few mA
-   averaged. Failed *connection attempts* cost much more than the connection
-   itself: `connectToDevice()` boosts the CPU to 240 MHz and holds the radio for
-   up to a 3s timeout. Ten retries a minute would cost more than the link ever
-   did — hence the exponential backoff and the 55 min give-up.
+   dominates everything else because it is paid 100% of the time — and the
+   usual fix is unavailable: the Arduino core here is built with
+   `# CONFIG_PM_ENABLE is not set` and `# CONFIG_BT_CTRL_MODEM_SLEEP is not
+   set`, so there is no tickless idle and the BT controller does not idle its
+   radio between connection events. See `docs/roadmap.md` → Battery life.
+2. **BLE.** As *central* we transmit an anchor packet every connection interval
+   whether or not there is data, so the interval is the lever (now 200-400ms;
+   it was 30-60ms, carrying data requested only every 45s). Failed *connection
+   attempts* cost much more than the connection itself: `connectToDevice()`
+   boosts the CPU to 240 MHz and holds the radio for up to a 3s timeout. Ten
+   retries a minute would cost more than the link ever did — hence the
+   exponential backoff and the 55 min give-up.
 3. **WiFi (Home mode only).** ~80-120 mA average while associated. Irrelevant on
    battery, which is why Home mode assumes mains and disables deep sleep.
 4. **E-ink refreshes.** Only significant if they are frequent — see below.
