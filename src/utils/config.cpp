@@ -33,6 +33,11 @@ void Config::setDefaults() {
   _bluetoothEnabled = true;
   _wifiEnabled = true;
 
+  // SwitchBot Bot over the Fossibot power button. Defaults to the Bot fitted
+  // in the van so a config written before this setting existed still works.
+  _switchbotMAC = "EC:6F:02:46:5F:64";
+  _switchbotPassword = "";
+
   // MQTT defaults
   _mqttBroker = "";
   _mqttPort = 1883;
@@ -94,6 +99,18 @@ bool Config::load(const char *path) {
                   _fossibotMAC.c_str());
   } else {
     Serial.println("Config: No fossibot_mac found in config");
+  }
+
+  // SwitchBot Bot - keep the built-in default when the key is absent so an
+  // older settings.json does not silently disable the power-on button.
+  if (doc["bluetooth"].is<JsonObject>()) {
+    if (doc["bluetooth"]["switchbot_mac"].is<const char *>()) {
+      _switchbotMAC = doc["bluetooth"]["switchbot_mac"].as<String>();
+    }
+    if (doc["bluetooth"]["switchbot_password"].is<const char *>()) {
+      _switchbotPassword = doc["bluetooth"]["switchbot_password"].as<String>();
+    }
+    Serial.printf("Config: switchbot_mac = '%s'\n", _switchbotMAC.c_str());
   }
 
   // Radio enable toggles
@@ -169,6 +186,8 @@ bool Config::save(const char *path) {
 
   // Bluetooth
   doc["bluetooth"]["fossibot_mac"] = _fossibotMAC;
+  doc["bluetooth"]["switchbot_mac"] = _switchbotMAC;
+  doc["bluetooth"]["switchbot_password"] = _switchbotPassword;
   doc["bluetooth"]["enabled"] = _bluetoothEnabled;
 
   // MQTT
@@ -218,6 +237,12 @@ void Config::setWiFi(const String &ssid, const String &password) {
 }
 
 void Config::setFossibotMAC(const String &mac) { _fossibotMAC = mac; }
+
+void Config::setSwitchbotMAC(const String &mac) { _switchbotMAC = mac; }
+
+void Config::setSwitchbotPassword(const String &password) {
+  _switchbotPassword = password;
+}
 
 void Config::setTheme(const String &theme) { _theme = theme; }
 

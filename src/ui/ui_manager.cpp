@@ -6,6 +6,7 @@
 
 #include "ui_manager.h"
 #include "../ble/ble_client.h"
+#include "../ble/switchbot_client.h"
 #include "../mqtt/mqtt_client.h"
 #include "../fonts/ReaderFonts.h"  // Reader font family registry
 #include "../fonts/TerminusBold.h" // Terminus Bold font
@@ -39,6 +40,24 @@
 
 // Global reference to BLE client (Campervan mode; null in Home mode)
 extern FossibotBLE *bleClient;
+
+// SwitchBot Bot parked over the Fossibot's physical power button. Null in Home
+// mode, and null until initBLE() runs.
+extern SwitchBotBLE *switchbotClient;
+
+// Home-screen power confirmation dialog geometry, kept in one place so the
+// draw and the touch handler cannot drift apart. Screen is 960x540.
+namespace {
+const int PWR_CONFIRM_W = 520;
+const int PWR_CONFIRM_H = 210;
+const int PWR_CONFIRM_X = (960 - PWR_CONFIRM_W) / 2;
+const int PWR_CONFIRM_Y = (540 - PWR_CONFIRM_H) / 2;
+const int PWR_CONFIRM_BTN_W = 180;
+const int PWR_CONFIRM_BTN_H = 60;
+const int PWR_CONFIRM_BTN_Y = PWR_CONFIRM_Y + PWR_CONFIRM_H - 80;
+const int PWR_CONFIRM_YES_X = PWR_CONFIRM_X + 40;
+const int PWR_CONFIRM_NO_X = PWR_CONFIRM_X + PWR_CONFIRM_W - 40 - PWR_CONFIRM_BTN_W;
+} // namespace
 
 // Static flags for Task Synchronization
 static volatile bool g_bookLoadingComplete = false;
@@ -520,6 +539,11 @@ void UIManager::navigateTo(ScreenID screen) {
   _lastRefresh = 0; // Force immediate refresh on navigation
   Serial.printf("UI: Navigate to screen %d\n", (int)screen);
 
+  // Leaving home disarms the power-off dialog. An edge-swipe gesture is tested
+  // before the tap filter, so it can leave the home screen while the dialog is
+  // up; without this it would still be armed on return.
+  _showHomePowerConfirm = false;
+
   // GHOSTING FIX: Force full EPD quality refresh on screen transition
   // M5.Display.setEpdMode(epd_mode_t::epd_quality); // DISABLED: Causes DMA
   // contention with BLE M5.Display.fillScreen(COLOR_WHITE); // DISABLED: Causes
@@ -728,7 +752,8 @@ void UIManager::drawHomeScreen() {
   _lastRenderedBleSig = bleStatusSignature();
   _lastRenderedBleState =
       bleClient ? (int)bleClient->getConnState() : -1;
-  _bleStripW = 0; // themes re-record this if they draw the strip
+  _bleStripW = 0;  // themes re-record this if they draw the strip
+  _pwrBtnW = 0;    // ditto for the power on/off button
 
   M5.Display.fillScreen(COLOR_WHITE);
 
@@ -775,6 +800,11 @@ void UIManager::drawHomeScreen() {
   }
 
   drawMenuButton(); // MENU button on home screen (top-right)
+
+  // Drawn last so it sits over whichever theme is active
+  if (_showHomePowerConfirm) {
+    drawHomePowerConfirm();
+  }
 }
 
 // ============================================================================
@@ -803,8 +833,14 @@ void UIManager::drawHomeClassicGrid() {
   drawStatusPanel(PANEL_MARGIN * 2 + panelWidth, topRowY, panelWidth,
                   panelHeight);
 
-  drawClockWeatherPanel(PANEL_MARGIN * 2 + panelWidth, bottomRowY, panelWidth,
-                        panelHeight);
+  int clockX = PANEL_MARGIN * 2 + panelWidth;
+  drawClockWeatherPanel(clockX, bottomRowY, panelWidth, panelHeight);
+
+  // Bottom-right of the clock/date panel. The time and date are drawn from
+  // clockX+20 and reach about 215px in, so the right third is free. Kept clear
+  // of the panel's undrawn HISTORY hit zone at x clockX+10..clockX+100.
+  drawPowerButton(clockX + panelWidth - 175, bottomRowY + panelHeight - 72, 165,
+                  58);
 }
 
 // ============================================================================
@@ -1050,6 +1086,10 @@ void UIManager::drawHomeCompactStatus() {
   }
 
   // Clock and Date removed from bottom (Clock moved to top-left)
+
+  // Clean band between the IN/OUT column and the toggle strip, right-aligned.
+  // The OUT "remaining"/"to full" line ends around y422, hence the 50px offset.
+  drawPowerButton(SCREEN_WIDTH - 180, toggleY - 50, 165, 46);
 }
 
 // ============================================================================
@@ -1202,6 +1242,11 @@ void UIManager::drawHomeHorizontalBars() {
     M5.Display.drawLine(connX - 6, toggleCenterY - 6, connX + 6, toggleCenterY + 6, COLOR_BLACK);
   }
 
+  // Power button: the column between the clock and the toggles is the only
+  // block in row 4 wide enough for the label. Sits above the Bluetooth strip
+  // band (row4Y+167..row4Y+201) and left of the toggle hit zones (x >= 500).
+  drawPowerButton(margin + 290, row4Y + 65, 175, 55);
+
   // Bluetooth status strip: lower part of row 4, clear of toggles and date
   if (bleStatusVisible()) {
     int stripH = 30;
@@ -1239,7 +1284,10 @@ void UIManager::drawHomeSector() {
   // --- Right half: Output breakdown sectors ---
   int rightX = SCREEN_WIDTH / 2 + margin;
   int rightW = SCREEN_WIDTH / 2 - margin * 2;
-  int sectorH = (availH - margin * 2) / 3; // 3 rows: USB, AC, DC
+  // The three sectors give up 22px each to reserve a power-button row at the
+  // bottom of the column. handleHomeSectorTouch recomputes this identically.
+  int pwrH = 56;
+  int sectorH = (availH - margin * 3 - pwrH) / 3; // 3 sectors + power row
 
   M5.Display.setTextColor(COLOR_BLACK);
 
@@ -1328,6 +1376,11 @@ void UIManager::drawHomeSector() {
     drawProgressBar(rightX + 15, dcY + sectorH - 20, rightW - 30, 12,
                     dcPower / maxDc, false);
   }
+
+  // Power button: reserved row under the DC sector. Stops short of the
+  // connection indicator in the corner.
+  int pwrY = dcY + sectorH + margin;
+  drawPowerButton(rightX, pwrY, rightW - 70, pwrH);
 
   // Connection indicator (bottom-right corner)
   int connX = SCREEN_WIDTH - 25;
@@ -1563,8 +1616,15 @@ void UIManager::drawHomeLiveGraph() {
     drawToggle(cx - 15, toggleY + 10, "", toggleStates[i]);
   }
 
-  // Connection indicator (far right of toggle strip)
-  int connX = SCREEN_WIDTH - 40;
+  // Power button: the right end of the toggle strip is the only gap tall
+  // enough for a full-height button in this theme (the info column above runs
+  // down to ~y444). The AC toggle's hit zone ends at x780, hence x782.
+  drawPowerButton(782, toggleY + 4, 164, toggleStripH - 12);
+
+  // Connection indicator. Moved to the free left end of the strip because the
+  // power button now occupies the right end; the strip has nothing before the
+  // USB toggle's hit zone at x180.
+  int connX = 40;
   int connDotY = toggleY + 30;
   if (_powerData.connected) {
     M5.Display.fillCircle(connX, connDotY, 6, COLOR_BLACK);
@@ -2870,6 +2930,104 @@ void UIManager::drawClockWeatherPanel(int x, int y, int w, int h) {
   M5.Display.print(dateStr);
 }
 
+// ============================================================================
+// Fossibot power on/off button (Campervan mode)
+// ============================================================================
+// Off is a Modbus write the station itself handles. On cannot be: a powered-off
+// Fossibot has no BLE radio listening, so the only way back is the SwitchBot
+// Bot pressing the physical button.
+
+const char *UIManager::powerButtonLabel() {
+  if (bleClient && bleClient->isConnected()) {
+    return "POWER OFF";
+  }
+  if (!switchbotClient) {
+    return "POWER ON";
+  }
+  if (switchbotClient->isBusy()) {
+    return switchbotClient->getStatusText();
+  }
+  // Hold a recent press outcome on the button for a few seconds, then go back
+  // to offering the action.
+  if (switchbotClient->getResultTime() != 0 &&
+      millis() - switchbotClient->getResultTime() < PWR_RESULT_HOLD_MS) {
+    return switchbotClient->getStatusText();
+  }
+  return "POWER ON";
+}
+
+void UIManager::drawPowerButton(int x, int y, int w, int h) {
+  // Remember where it landed; each theme places it differently and the touch
+  // handler tests these bounds rather than recomputing theme geometry.
+  _pwrBtnX = x;
+  _pwrBtnY = y;
+  _pwrBtnW = w;
+  _pwrBtnH = h;
+
+  // Filled while the station is on, so the destructive action reads as armed.
+  // drawButton only uses black and white, so this survives epd_fastest.
+  bool linked = bleClient && bleClient->isConnected();
+  drawButton(x, y, w, h, powerButtonLabel(), linked);
+}
+
+bool UIManager::handlePowerButtonTouch(int x, int y) {
+  if (_pwrBtnW <= 0) {
+    return false;
+  }
+  if (x < _pwrBtnX || x >= _pwrBtnX + _pwrBtnW || y < _pwrBtnY ||
+      y >= _pwrBtnY + _pwrBtnH) {
+    return false;
+  }
+
+  Buzzer::click();
+
+  if (bleClient && bleClient->isConnected()) {
+    // Cutting power in a van takes the fridge with it, so confirm first.
+    _showHomePowerConfirm = true;
+    forceRefresh();
+    return true;
+  }
+
+  if (switchbotClient) {
+    // Queued, not run here: the connect can block for seconds and this is a
+    // touch handler.
+    switchbotClient->requestPress();
+  } else {
+    Serial.println("UI: No SwitchBot client - cannot power on");
+  }
+  forceRefresh();
+  return true;
+}
+
+void UIManager::drawHomePowerConfirm() {
+  M5.Display.fillRect(PWR_CONFIRM_X, PWR_CONFIRM_Y, PWR_CONFIRM_W,
+                      PWR_CONFIRM_H, COLOR_WHITE);
+  M5.Display.drawRect(PWR_CONFIRM_X, PWR_CONFIRM_Y, PWR_CONFIRM_W,
+                      PWR_CONFIRM_H, COLOR_BLACK);
+  M5.Display.drawRect(PWR_CONFIRM_X + 1, PWR_CONFIRM_Y + 1, PWR_CONFIRM_W - 2,
+                      PWR_CONFIRM_H - 2, COLOR_BLACK);
+
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(1);
+
+  const char *title = "Power off the Fossibot?";
+  int tw = M5.Display.textWidth(title);
+  M5.Display.setCursor(PWR_CONFIRM_X + (PWR_CONFIRM_W - tw) / 2,
+                       PWR_CONFIRM_Y + 30);
+  M5.Display.print(title);
+
+  const char *note = "The SwitchBot has to press the button to restart it.";
+  tw = M5.Display.textWidth(note);
+  M5.Display.setCursor(PWR_CONFIRM_X + (PWR_CONFIRM_W - tw) / 2,
+                       PWR_CONFIRM_Y + 75);
+  M5.Display.print(note);
+
+  drawButton(PWR_CONFIRM_YES_X, PWR_CONFIRM_BTN_Y, PWR_CONFIRM_BTN_W,
+             PWR_CONFIRM_BTN_H, "POWER OFF", true);
+  drawButton(PWR_CONFIRM_NO_X, PWR_CONFIRM_BTN_Y, PWR_CONFIRM_BTN_W,
+             PWR_CONFIRM_BTN_H, "CANCEL", false);
+}
+
 // drawMenuBar() removed — bottom nav bar replaced by MENU button on home +
 // HOME button on sub-screens
 
@@ -2941,6 +3099,32 @@ void UIManager::handleHomeTouch(int x, int y, TouchEvent event) {
   if (event != TouchEvent::PRESS && event != TouchEvent::RELEASE)
     return;
 
+  // Power-off confirmation is modal: it swallows every tap, including MENU, so
+  // the dialog cannot be left armed behind another screen.
+  if (_showHomePowerConfirm) {
+    if (event != TouchEvent::RELEASE) {
+      return;
+    }
+    if (x >= PWR_CONFIRM_YES_X && x < PWR_CONFIRM_YES_X + PWR_CONFIRM_BTN_W &&
+        y >= PWR_CONFIRM_BTN_Y && y < PWR_CONFIRM_BTN_Y + PWR_CONFIRM_BTN_H) {
+      Buzzer::click();
+      if (bleClient && bleClient->isConnected()) {
+        bleClient->powerOff();
+      }
+      _showHomePowerConfirm = false;
+      forceRefresh();
+      return;
+    }
+    if (x >= PWR_CONFIRM_NO_X && x < PWR_CONFIRM_NO_X + PWR_CONFIRM_BTN_W &&
+        y >= PWR_CONFIRM_BTN_Y && y < PWR_CONFIRM_BTN_Y + PWR_CONFIRM_BTN_H) {
+      Buzzer::click();
+      _showHomePowerConfirm = false;
+      forceRefresh();
+      return;
+    }
+    return; // Block everything else while the dialog is up
+  }
+
   // MENU button check first — works for all themes and both modes
   if (hitTestMenuButton(x, y)) {
     Buzzer::click();
@@ -2952,6 +3136,13 @@ void UIManager::handleHomeTouch(int x, int y, TouchEvent event) {
 
   // Home mode (GivEnergy): no interactive touch elements beyond MENU button
   if (config && config->isHomeMode()) {
+    return;
+  }
+
+  // Power on/off button. Checked before the Bluetooth strip because in the
+  // Horizontal Bars theme the strip's band overlaps it, and "power on" is
+  // precisely what you want while the link is down.
+  if (event == TouchEvent::RELEASE && handlePowerButtonTouch(x, y)) {
     return;
   }
 
@@ -3144,7 +3335,10 @@ void UIManager::handleHomeSectorTouch(int x, int y) {
   int availH = contentBottom - topY - margin;
   int rightX = SCREEN_WIDTH / 2 + margin;
   int rightW = SCREEN_WIDTH / 2 - margin * 2;
-  int sectorH = (availH - margin * 2) / 3;
+  // Must match drawHomeSector(): the sectors are shortened to reserve a
+  // power-button row at the bottom of the column.
+  int pwrH = 56;
+  int sectorH = (availH - margin * 3 - pwrH) / 3;
 
   if (x < rightX || x > rightX + rightW) return;
 
