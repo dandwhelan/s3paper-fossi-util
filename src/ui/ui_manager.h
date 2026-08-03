@@ -242,8 +242,8 @@ private:
   // Offline -> "POWER ON", asks the SwitchBot Bot to press the physical
   //            button, since a powered-off station has no BLE to talk to.
   void drawPowerButton(int x, int y, int w, int h);
+  void drawPowerIcon(int x, int y, int w, int h, bool on);
   bool handlePowerButtonTouch(int x, int y); // true if the touch was consumed
-  const char *powerButtonLabel();
   void drawHomePowerConfirm();
 
   int _pwrBtnX = 0, _pwrBtnY = 0, _pwrBtnW = 0, _pwrBtnH = 0;

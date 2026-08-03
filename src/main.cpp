@@ -40,6 +40,17 @@ void showBootScreen();
 UIManager *uiManager = nullptr;
 FossibotBLE *bleClient = nullptr;
 SwitchBotBLE *switchbotClient = nullptr;
+
+// After the SwitchBot pushes the power button the station has to boot before
+// its BLE radio advertises - measured at around a minute on the F3600 Pro, so
+// a single optimistic retry just fails and hands back to a backoff that may
+// already be minutes long. Nudge the reconnect across a window instead, which
+// holds however long the boot actually takes.
+unsigned long powerOnRetryUntil = 0;  // millis() the window closes; 0 = idle
+unsigned long powerOnNextAttempt = 0; // millis() of the next nudge
+const unsigned long POWER_ON_FIRST_MS = 10000;
+const unsigned long POWER_ON_RETRY_EVERY_MS = 15000;
+const unsigned long POWER_ON_WINDOW_MS = 150000;
 GivEnergyMQTT *mqttClient = nullptr;
 SDManager *sdManager = nullptr;
 Config *config = nullptr;
@@ -449,6 +460,34 @@ void loop() {
     switchbotClient->update();
     if (switchbotClient->takeStatusChanged()) {
       uiManager->forceRefresh();
+
+      // A press that actuated means the station is coming up, so the backoff
+      // we accumulated while it was off is now meaningless - it could be
+      // minutes long, and the user is standing there watching. Arm a
+      // reconnect once the station has had time to boot its radio.
+      // NO_RESPONSE counts: the write was accepted, some Bots just never
+      // notify.
+      SwitchBotResult result = switchbotClient->getLastResult();
+      if (result == SwitchBotResult::OK ||
+          result == SwitchBotResult::NO_RESPONSE) {
+        powerOnNextAttempt = millis() + POWER_ON_FIRST_MS;
+        powerOnRetryUntil = millis() + POWER_ON_WINDOW_MS;
+        Serial.printf("BLE: Fossibot powering on - retrying for %lus\n",
+                      POWER_ON_WINDOW_MS / 1000);
+      }
+    }
+  }
+
+  if (powerOnRetryUntil != 0) {
+    if (!bleClient || bleClient->isConnected()) {
+      powerOnRetryUntil = 0; // linked (or no client) - stop nudging
+    } else if (millis() > powerOnRetryUntil) {
+      powerOnRetryUntil = 0; // hand back to the normal backoff
+      Serial.println("BLE: Power-on retry window closed - station never came "
+                     "up, or it is not the one we just pressed");
+    } else if (millis() >= powerOnNextAttempt) {
+      powerOnNextAttempt = millis() + POWER_ON_RETRY_EVERY_MS;
+      bleClient->requestReconnectNow();
     }
   }
 

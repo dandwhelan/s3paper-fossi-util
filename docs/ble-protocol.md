@@ -401,12 +401,25 @@ certainly actuated, so that case is reported as "no reply" rather than failure.
 
 ### Implementation notes
 
-- Addressed by MAC (`switchbot_mac` in `settings.json`), so no scan is needed.
-  Note the web PWA cannot do this - Web Bluetooth hides MACs and must show a
-  device chooser instead.
+- **A MAC is not enough - the address type matters.** The Bot uses a *random
+  static* address (`BLE_ADDR_RANDOM`, type 1), but `NimBLEAddress` defaults to
+  `BLE_ADDR_PUBLIC`. The same six bytes name a different peer under each type,
+  so a public-typed connect to a Bot fails instantly and looks exactly like an
+  out-of-range Bot. The press path therefore scans (4s, active) to find the Bot
+  and adopt the address it actually advertises, caching the result for later
+  presses; if the Bot did not advertise in that window it still tries both
+  types before giving up. A `WoHand` seen in the scan is adopted when the
+  configured MAC is absent, since a stale `switchbot_mac` is likelier than a
+  stray Bot. The web PWA never meets this problem: Web Bluetooth hides MACs and
+  its device chooser hands over an already-discovered device, address type
+  included.
 - The press is queued by the touch handler and executed from `update()`: a
   connect can block for seconds and touch handlers must stay responsive. Same
   reasoning as `FossibotBLE::requestReconnectNow()`.
+- A press that actuated (`OK`, or `NO_RESPONSE` from a Bot that never notifies)
+  arms a Fossibot reconnect 8s later via `requestReconnectNow()`. Without it the
+  station comes up while the UI sits out a backoff that may already be minutes
+  long - `main.cpp`, `powerOnReconnectAt`.
 - Connect, write, disconnect. The link is not held open; in practice the
   Fossibot link is down anyway whenever this is needed.
 - NimBLE is a singleton shared with the Fossibot client, so the press path

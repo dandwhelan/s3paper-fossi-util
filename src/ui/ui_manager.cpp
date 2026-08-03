@@ -18,6 +18,7 @@
 #include <FS.h>
 #include <SD.h>
 #include <Wire.h>
+#include <algorithm>
 
 // Colors for eInk (grayscale)
 #define COLOR_BLACK 0x0000
@@ -2937,25 +2938,6 @@ void UIManager::drawClockWeatherPanel(int x, int y, int w, int h) {
 // Fossibot has no BLE radio listening, so the only way back is the SwitchBot
 // Bot pressing the physical button.
 
-const char *UIManager::powerButtonLabel() {
-  if (bleClient && bleClient->isConnected()) {
-    return "POWER OFF";
-  }
-  if (!switchbotClient) {
-    return "POWER ON";
-  }
-  if (switchbotClient->isBusy()) {
-    return switchbotClient->getStatusText();
-  }
-  // Hold a recent press outcome on the button for a few seconds, then go back
-  // to offering the action.
-  if (switchbotClient->getResultTime() != 0 &&
-      millis() - switchbotClient->getResultTime() < PWR_RESULT_HOLD_MS) {
-    return switchbotClient->getStatusText();
-  }
-  return "POWER ON";
-}
-
 void UIManager::drawPowerButton(int x, int y, int w, int h) {
   // Remember where it landed; each theme places it differently and the touch
   // handler tests these bounds rather than recomputing theme geometry.
@@ -2964,10 +2946,53 @@ void UIManager::drawPowerButton(int x, int y, int w, int h) {
   _pwrBtnW = w;
   _pwrBtnH = h;
 
-  // Filled while the station is on, so the destructive action reads as armed.
-  // drawButton only uses black and white, so this survives epd_fastest.
   bool linked = bleClient && bleClient->isConnected();
-  drawButton(x, y, w, h, powerButtonLabel(), linked);
+
+  // A SwitchBot press in flight, or its result still on hold, needs a word
+  // ("PRESSING", "NO REPLY", ...) - the icon has no room for that, so those
+  // states keep the old text button.
+  if (!linked && switchbotClient &&
+      (switchbotClient->isBusy() ||
+       (switchbotClient->getResultTime() != 0 &&
+        millis() - switchbotClient->getResultTime() < PWR_RESULT_HOLD_MS))) {
+    drawButton(x, y, w, h, switchbotClient->getStatusText(), false);
+    return;
+  }
+
+  // Negated (black fill, white glyph) while linked, so the destructive action
+  // still reads as armed the way the old filled text button did. Two flat
+  // colors, so this survives epd_fastest.
+  drawPowerIcon(x, y, w, h, linked);
+}
+
+void UIManager::drawPowerIcon(int x, int y, int w, int h, bool on) {
+  uint16_t bg = on ? COLOR_BLACK : COLOR_WHITE;
+  uint16_t fg = on ? COLOR_WHITE : COLOR_BLACK;
+
+  M5.Display.fillRect(x, y, w, h, bg);
+  if (!on) {
+    M5.Display.drawRect(x, y, w, h, COLOR_BLACK);
+  }
+
+  // Standard "power" glyph: a broken ring with a stem through the gap.
+  int cx = x + w / 2;
+  int cy = y + h / 2;
+  int size = std::min(w, h) - 12;
+  if (size < 16) {
+    size = std::min(w, h) - 4;
+  }
+  int r = size / 2;
+  int thickness = std::max(2, r / 4);
+
+  // M5GFX arc angles are measured from 3 o'clock and run clockwise (the
+  // boundary ray is (cos, sin) with +y downward), so 12 o'clock is 270. Going
+  // 305 -> 235 the long way round leaves a 70-degree gap centered on the top
+  // for the stem to pass through.
+  M5.Display.fillArc(cx, cy, r, r - thickness, 305, 235, fg);
+
+  int stemW = std::max(2, thickness);
+  M5.Display.fillRect(cx - stemW / 2, cy - r - thickness, stemW,
+                      r + thickness, fg);
 }
 
 bool UIManager::handlePowerButtonTouch(int x, int y) {
