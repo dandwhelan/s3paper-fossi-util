@@ -10,6 +10,8 @@
 
 #include <Arduino.h>
 #include <Wire.h>
+#include <cstdio>
+#include <cstring>
 
 namespace RTC {
 
@@ -113,6 +115,36 @@ inline void setDateTime(int year, int month, int day, int hours, int minutes,
   writeReg(REG_DAYS, decToBcd(day));
   writeReg(REG_MONTHS, decToBcd(month));
   writeReg(REG_YEARS, decToBcd(year - 2000));
+}
+
+/**
+ * Firmware build date/time, parsed from __DATE__/__TIME__.
+ *
+ * Used as the fallback when the RTC has never been set (dead coin cell,
+ * first boot, chip replaced) - always closer to "now" than the BM8563
+ * power-on default of 2000-01-01, and unlike a hardcoded date it doesn't
+ * go stale as the firmware is rebuilt over time.
+ */
+inline void getBuildDateTime(int &year, int &month, int &day, int &hour,
+                              int &minute, int &second) {
+  static const char *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+  char monStr[4] = {0};
+  int d = 1, y = 2026, h = 0, mi = 0, s = 0;
+  sscanf(__DATE__, "%3s %d %d", monStr, &d, &y);
+  sscanf(__TIME__, "%d:%d:%d", &h, &mi, &s);
+  month = 1;
+  for (int i = 0; i < 12; i++) {
+    if (strncmp(monStr, months[i], 3) == 0) {
+      month = i + 1;
+      break;
+    }
+  }
+  year = y;
+  day = d;
+  hour = h;
+  minute = mi;
+  second = s;
 }
 
 /**

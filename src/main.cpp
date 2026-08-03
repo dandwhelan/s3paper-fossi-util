@@ -162,7 +162,9 @@ void setup() {
   // Sync system time from RTC
   // CRITICAL: Only sync if we have a valid date!
   // (Month/Day = 0 causes mktime to underflow to 1999)
-  if (year >= 2000 && year < 2100 && month >= 1 && day >= 1) {
+  // Lower bound is 2020, not 2000: the BM8563 powers up at 2000-01-01 after
+  // a battery drain, which would otherwise pass as "valid" and stick.
+  if (year >= 2020 && year < 2100 && month >= 1 && day >= 1) {
     struct tm tm;
     tm.tm_year = year - 1900;
     tm.tm_mon = month - 1;
@@ -182,7 +184,31 @@ void setup() {
   } else {
     Serial.printf("Warning: RTC date invalid or not set yet: %d-%d-%d\n", year,
                   month, day);
-    Serial.println("System time NOT synced. Using epoch.");
+
+    // Fall back to the firmware build time rather than leaving the clock at
+    // epoch/2000 - keeps PowerHistory filenames and the Settings date editor
+    // sane until the user sets the real date. Written back to the RTC too so
+    // it sticks across reboots instead of re-triggering this fallback.
+    int by, bm, bd, bh, bmin, bs;
+    RTC::getBuildDateTime(by, bm, bd, bh, bmin, bs);
+    Serial.printf("Falling back to firmware build time: %04d-%02d-%02d %02d:%02d:%02d\n",
+                  by, bm, bd, bh, bmin, bs);
+    RTC::setDateTime(by, bm, bd, bh, bmin, bs);
+
+    struct tm tm;
+    tm.tm_year = by - 1900;
+    tm.tm_mon = bm - 1;
+    tm.tm_mday = bd;
+    tm.tm_hour = bh;
+    tm.tm_min = bmin;
+    tm.tm_sec = bs;
+    tm.tm_isdst = -1;
+    time_t t = mktime(&tm);
+    if (t != (time_t)-1) {
+      struct timeval now_tv = {.tv_sec = t, .tv_usec = 0};
+      settimeofday(&now_tv, NULL);
+      Serial.printf("System time synced from build time: %ld\n", (long)t);
+    }
   }
 
   // Initialize hardware components

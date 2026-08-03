@@ -570,6 +570,12 @@ void UIManager::navigateTo(ScreenID screen) {
     RTC::getTime(hours, minutes, seconds);
     int year, month, day, weekday;
     RTC::getDate(year, month, day, weekday);
+    if (year < 2020) {
+      // RTC never set (dead coin cell / first boot) - start the editor from
+      // the firmware build time instead of the BM8563 power-on default of
+      // 2000-01-01, so fixing the date isn't 26 years of scrolling.
+      RTC::getBuildDateTime(year, month, day, hours, minutes, seconds);
+    }
     _editYear = year;
     _editMonth = month;
     _editDay = day;
