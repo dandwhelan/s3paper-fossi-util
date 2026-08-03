@@ -339,6 +339,87 @@ stateDiagram-v2
    - Status response should be 168 bytes
    - Shorter responses may indicate communication issues
 
+## SwitchBot Bot (power-on path)
+
+Powering the station off is a Modbus write to holding register 64, but there is
+no matching power-on register: a Fossibot that is off has its BLE radio off too,
+so nothing can reach it over the air. The way back in is a SwitchBot Bot - a
+servo-driven button pusher - stuck over the physical power button.
+
+This is a completely separate BLE peripheral from the Fossibot, with its own
+service, and it speaks nothing like Modbus. Implemented in
+`src/ble/switchbot_client.cpp`.
+
+### Service and characteristics
+
+Identical on every SwitchBot device:
+
+| UUID | Role |
+|---|---|
+| `cba20d00-224d-11e6-9fb8-0002a5d5c51b` | Communication service |
+| `cba20002-224d-11e6-9fb8-0002a5d5c51b` | Write (commands go here) |
+| `cba20003-224d-11e6-9fb8-0002a5d5c51b` | Notify (result comes back here) |
+
+### Request format
+
+Every request opens with the magic byte `0x57`. Byte 1 packs three fields:
+bits 7:6 protocol version, bits 5:4 encryption mode, bits 3:0 command. Command
+`0x01` is "execute action"; the action byte follows.
+
+| Bytes | Meaning |
+|---|---|
+| `57 01 00` | Press (push and retract) - the one we send |
+| `57 01 01` | Turn on (hold down), latch mode |
+| `57 01 02` | Turn off (release), latch mode |
+| `57 02` | Get device info (battery, firmware, mode) |
+
+If the Bot has a password set in the SwitchBot app, encryption mode 1 applies
+and the CRC32 of the password is carried in the command:
+
+```
+57 11 <crc32 big-endian, 4 bytes> 00
+```
+
+Only the CRC32 is stored on the device, never the password itself. The CRC is
+standard IEEE 802.3 (reflected, polynomial `0xEDB88320`).
+
+### Response codes
+
+First byte of the notification:
+
+| Code | Meaning |
+|---|---|
+| `0x01` | Success (a press answers `01 FF 00`) |
+| `0x02` | Bot reported an error |
+| `0x03` | Bot busy - retry shortly |
+| `0x06` | Bot battery too low to actuate |
+| `0x07` | Password required |
+| `0x09` | Wrong password |
+
+Some firmware revisions never notify at all. A write that was accepted almost
+certainly actuated, so that case is reported as "no reply" rather than failure.
+
+### Implementation notes
+
+- Addressed by MAC (`switchbot_mac` in `settings.json`), so no scan is needed.
+  Note the web PWA cannot do this - Web Bluetooth hides MACs and must show a
+  device chooser instead.
+- The press is queued by the touch handler and executed from `update()`: a
+  connect can block for seconds and touch handlers must stay responsive. Same
+  reasoning as `FossibotBLE::requestReconnectNow()`.
+- Connect, write, disconnect. The link is not held open; in practice the
+  Fossibot link is down anyway whenever this is needed.
+- NimBLE is a singleton shared with the Fossibot client, so the press path
+  initialises it only if the user has powered the radio down in Settings.
+- Same two guards the Fossibot connect path needs: boost the CPU off 80MHz eco
+  mode, and `waitDisplay()` before starting the radio.
+
+### Reference
+
+- [SwitchBot official BLE API](https://github.com/OpenWonderLabs/SwitchBotAPI-BLE) - `devicetypes/bot.md`
+- [pySwitchbot](https://github.com/Danielhiversen/pySwitchbot) - password/CRC32 variant
+- [node-switchbot](https://github.com/OpenWonderLabs/node-switchbot)
+
 ## See Also
 
 - [Hardware Guide](hardware-guide.md) - I2C and peripheral details

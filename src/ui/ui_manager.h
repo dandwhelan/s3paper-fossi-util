@@ -233,6 +233,26 @@ private:
   uint32_t _lastRenderedBleSig = 0;
   int _lastRenderedBleState = -1;
 
+  // --- Fossibot power on/off button (Campervan mode) ---
+  // Every campervan theme draws this, but each one puts it somewhere
+  // different, so the button records its own bounds for hit testing rather
+  // than the handler recomputing per-theme geometry.
+  //
+  // Linked  -> "POWER OFF", writes Modbus register 64 (after confirmation).
+  // Offline -> "POWER ON", asks the SwitchBot Bot to press the physical
+  //            button, since a powered-off station has no BLE to talk to.
+  void drawPowerButton(int x, int y, int w, int h);
+  bool handlePowerButtonTouch(int x, int y); // true if the touch was consumed
+  const char *powerButtonLabel();
+  void drawHomePowerConfirm();
+
+  int _pwrBtnX = 0, _pwrBtnY = 0, _pwrBtnW = 0, _pwrBtnH = 0;
+  bool _showHomePowerConfirm = false;
+
+  // How long a SwitchBot press result stays on the button before it reverts
+  // to "POWER ON".
+  static const unsigned long PWR_RESULT_HOLD_MS = 12000;
+
   // Drawing methods
   void drawBatteryBar(float percent);
   void drawErrorBanner(int x, int y, int w, int h);

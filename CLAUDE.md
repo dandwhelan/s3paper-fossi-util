@@ -231,7 +231,7 @@ Two caveats that matter more than the mode choice:
 if (config->isHomeMode())
     drawHomeGivEnergy()      // Energy Flow Diagram
 else
-    dispatch to theme:       // classic_grid | compact_status | horizontal_bars | sector
+    dispatch to theme:       // classic_grid | compact_status | horizontal_bars | sector | live_graph
 ```
 
 ### Bluetooth Status Strip (Campervan only)
@@ -261,6 +261,38 @@ min, then hourly) so a long outage stops costing refreshes.
 `main.cpp` pushes `updatePowerBankData()` on **every** loop pass, connected or
 not — gating it on `isConnected()` was what left the UI believing it was still
 linked.
+
+### Power On/Off Button (Campervan only)
+
+Every campervan theme draws one via `drawPowerButton()`. Its meaning flips on
+the link state, because the two directions are not symmetrical:
+
+- **Linked → "POWER OFF"** (filled). Confirms first, then writes Modbus
+  register 64. Cutting power in a van takes the fridge with it.
+- **Offline → "POWER ON"** (outlined). Asks the SwitchBot Bot to press the
+  physical button — a powered-off station has no BLE radio listening, so there
+  is no register that can do this. See
+  [BLE protocol](docs/ble-protocol.md#switchbot-bot-power-on-path).
+
+The button records its own bounds (`_pwrBtnX/Y/W/H`, reset each
+`drawHomeScreen()`) instead of the handler recomputing per-theme geometry,
+because each theme puts it somewhere different:
+
+| Theme | Placement |
+|---|---|
+| classic_grid | Bottom-right of the clock/date panel |
+| compact_status | Right end of the band above the toggle strip |
+| horizontal_bars | Row 4, between the clock and the toggles (the only block wide enough) |
+| sector | Reserved row under the DC sector — the three sectors give up 22px each |
+| live_graph | Right end of the toggle strip; the connection dot moves to the left end |
+
+`handlePowerButtonTouch()` runs from `handleHomeTouch()` **before** the
+Bluetooth strip, since in horizontal_bars the strip's band overlaps it and
+"power on" is exactly what is wanted while the link is down. The press itself is
+queued and executed from `SwitchBotBLE::update()` in the main loop, never in the
+touch handler — a connect can block for seconds. `main.cpp` calls
+`forceRefresh()` when the press result changes, so the label updates even in
+themes that skip clock-tick redraws.
 
 ### Screens Available (Both Modes)
 
@@ -293,7 +325,12 @@ linked.
 {
     "mode": "campervan",              // "campervan" or "home"
     "wifi": { "ssid": "", "password": "", "enabled": true },            // Home mode only
-    "bluetooth": { "fossibot_mac": "XX:XX:XX:XX:XX:XX", "enabled": true }, // Campervan only
+    "bluetooth": {                                      // Campervan only
+        "fossibot_mac": "XX:XX:XX:XX:XX:XX",
+        "switchbot_mac": "XX:XX:XX:XX:XX:XX",           // Bot over the power button
+        "switchbot_password": "",                       // only if set in the SwitchBot app
+        "enabled": true
+    },
     "mqtt": {                                           // Home mode only
         "broker": "", "port": 1883,
         "username": "", "password": "",

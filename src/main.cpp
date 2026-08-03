@@ -14,6 +14,7 @@
  */
 
 #include "ble/ble_client.h"
+#include "ble/switchbot_client.h"
 #include "hardware/buzzer.h"
 #include "hardware/display.h"
 #include "hardware/rtc.h"
@@ -38,6 +39,7 @@ void showBootScreen();
 // Global instances
 UIManager *uiManager = nullptr;
 FossibotBLE *bleClient = nullptr;
+SwitchBotBLE *switchbotClient = nullptr;
 GivEnergyMQTT *mqttClient = nullptr;
 SDManager *sdManager = nullptr;
 Config *config = nullptr;
@@ -441,6 +443,15 @@ void loop() {
     }
   }
 
+  // SwitchBot Bot over the Fossibot power button. Runs the queued press here
+  // rather than in the touch handler, which must not block for a connect.
+  if (switchbotClient) {
+    switchbotClient->update();
+    if (switchbotClient->takeStatusChanged()) {
+      uiManager->forceRefresh();
+    }
+  }
+
   if (mqttClient) {
     // Home mode: WiFi + MQTT to GivEnergy
     mqttClient->update();
@@ -557,6 +568,13 @@ void initBLE() {
   Serial.println("Initializing BLE...");
 
   bleClient = new FossibotBLE();
+
+  // SwitchBot Bot over the physical power button. Created before the
+  // Fossibot MAC check below, because the power-on button is exactly what you
+  // need when there is no Fossibot to talk to yet.
+  switchbotClient = new SwitchBotBLE();
+  switchbotClient->setTargetMAC(config->getSwitchbotMAC());
+  switchbotClient->setPassword(config->getSwitchbotPassword());
 
   // Get MAC address from config
   String macAddress = config->getFossibotMAC();
