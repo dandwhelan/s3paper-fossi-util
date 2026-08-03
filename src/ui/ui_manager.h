@@ -217,6 +217,22 @@ private:
   unsigned long _lastRefresh;
   bool _needsRefresh;
 
+  // --- Bluetooth link feedback (Campervan mode) ---
+  // Status strip shown on the home screen whenever the Fossibot link is
+  // down, so a disconnect (and the auto-reconnect countdown) is visible on
+  // the device instead of only in the serial log.
+  bool bleStatusVisible();                 // true when the strip should draw
+  String bleStatusHeadline();              // e.g. "FOSSIBOT DISCONNECTED"
+  String bleStatusDetail();                // e.g. "retry in 45s (try 3) ..."
+  void drawBleStatusStrip(int x, int y, int w, int h);
+  bool handleBleStatusTouch(int x, int y); // true if the touch was consumed
+  uint32_t bleStatusSignature();           // change detector for redraws
+
+  // Last drawn strip bounds (0 width = not on screen), used for hit testing
+  int _bleStripX = 0, _bleStripY = 0, _bleStripW = 0, _bleStripH = 0;
+  uint32_t _lastRenderedBleSig = 0;
+  int _lastRenderedBleState = -1;
+
   // Drawing methods
   void drawBatteryBar(float percent);
   void drawErrorBanner(int x, int y, int w, int h);

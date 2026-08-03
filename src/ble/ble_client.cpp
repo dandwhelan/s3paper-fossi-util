@@ -15,7 +15,7 @@ FossibotBLE::FossibotBLE()
       _scanning(false), _connecting(false), _autoReconnect(false), _lastPoll(0),
       _lastSettingsPoll(0), _lastReconnectAttempt(0), _retryStartTime(0),
       _retryInterval(RETRY_INTERVAL_BASE_MS), _consecutiveFailures(0),
-      _firstAttemptDone(false),
+      _firstAttemptDone(false), _lastConnectedTime(0),
       _bootAutoEnableTriggered(false), _socThreshold(1), _powerThreshold(5),
       _autoEnableState(AutoEnableState::IDLE), _autoEnableTimer(0) {
   _instance = this;
@@ -127,8 +127,20 @@ bool FossibotBLE::connectToDevice() {
   if (!_client) {
     _client = NimBLEDevice::createClient();
     _client->setClientCallbacks(this);
-    _client->setConnectionParams(24, 48, 0,
-                                 400); // 24-48ms interval (power optimized)
+    // Connection interval 200-400ms (units of 1.25ms), latency 0,
+    // supervision timeout 6s (units of 10ms).
+    //
+    // We are the central, so we transmit an anchor packet every interval
+    // whether or not there is data. The old 30-60ms interval meant ~20-30
+    // radio events per second to carry data we only request every 45s
+    // (POLL_INTERVAL); this cuts that by roughly 7-10x. Cost is up to ~0.4s
+    // before a toggle command goes out, and a status response spanning a
+    // couple of connection events - both invisible at this poll rate.
+    //
+    // Supervision timeout must exceed maxInterval * 2; 6s also rides out a
+    // missed event or two in a van where the link is marginal. The Fossibot
+    // may counter-propose its own parameters.
+    _client->setConnectionParams(160, 320, 0, 600);
     _client->setConnectTimeout(
         3); // 3 second timeout - keep short for touch responsiveness
   }
@@ -161,6 +173,7 @@ bool FossibotBLE::connectToDevice() {
 
   _connected = true;
   _data.connected = true;
+  _lastConnectedTime = millis();
   _connecting =
       false; // CRITICAL FIX: Allow UI updates to resume after connection
 
@@ -326,11 +339,14 @@ void FossibotBLE::update() {
     }
   }
 
+  // Keep "last seen" fresh while the link is up, so the disconnect banner can
+  // report how long the Fossibot has been out of contact.
+  if (_connected) {
+    _lastConnectedTime = millis();
+  }
+
   // Try to reconnect if disconnected
   if (_autoReconnect && !_connected) {
-    const unsigned long RETRY_TIMEOUT_MS =
-        55 * 60 * 1000; // 55 minutes (before 60 min deep sleep)
-
     // Initialize retry cycle timing on first attempt
     if (!_firstAttemptDone) {
       Serial.println("BLE: First retry cycle - initializing timers");
@@ -403,6 +419,61 @@ void FossibotBLE::update() {
 
 bool FossibotBLE::hasSignificantChange() const {
   return _data.hasSignificantChange(_socThreshold, _powerThreshold);
+}
+
+// ============================================================
+// Connection feedback
+// ============================================================
+
+BleConnState FossibotBLE::getConnState() const {
+  if (_targetMAC.length() == 0)
+    return BleConnState::NO_MAC;
+  if (!_initialized)
+    return BleConnState::RADIO_OFF;
+  if (_connected)
+    return BleConnState::LINK_UP;
+  if (_connecting)
+    return BleConnState::LINKING;
+  if (!_autoReconnect)
+    return BleConnState::RETRY_PAUSED;
+  if (_firstAttemptDone && (millis() - _retryStartTime > RETRY_TIMEOUT_MS))
+    return BleConnState::RETRY_STOPPED;
+  return BleConnState::RETRY_WAIT;
+}
+
+unsigned long FossibotBLE::getMsUntilRetry() const {
+  if (_connected || _connecting || !_autoReconnect || !_initialized)
+    return 0;
+  if (!_firstAttemptDone)
+    return 0; // first attempt of the cycle is due immediately
+
+  unsigned long elapsed = millis() - _lastReconnectAttempt;
+  if (elapsed >= _retryInterval)
+    return 0;
+  return _retryInterval - elapsed;
+}
+
+unsigned long FossibotBLE::getMsSinceLastSeen() const {
+  if (_lastConnectedTime == 0)
+    return 0; // never connected since boot
+  return millis() - _lastConnectedTime;
+}
+
+void FossibotBLE::requestReconnectNow() {
+  if (!_initialized) {
+    Serial.println("BLE: Reconnect requested but radio is off - ignoring");
+    return;
+  }
+
+  Serial.println("BLE: Manual reconnect requested - retrying immediately");
+  _autoReconnect = true;
+  _consecutiveFailures = 0;
+  _retryInterval = RETRY_INTERVAL_BASE_MS;
+  _retryStartTime = millis(); // restart the 55 min window
+  _firstAttemptDone = true;   // skip the "arm the timers" pass
+  // Backdate the last attempt so update() connects on its very next pass
+  // rather than blocking inside the touch handler.
+  _lastReconnectAttempt = millis() - _retryInterval - 1;
 }
 
 void FossibotBLE::requestStatusData() {
@@ -761,6 +832,7 @@ void FossibotBLE::onConnect(NimBLEClient *client) {
   Serial.println("BLE: Connected callback");
   _connected = true;
   _data.connected = true;
+  _lastConnectedTime = millis();
 }
 
 void FossibotBLE::onDisconnect(NimBLEClient *client) {

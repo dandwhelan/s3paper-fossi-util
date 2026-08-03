@@ -61,6 +61,80 @@ Candidate features for future releases, identified from a codebase review
 13. **Reader auto-scroll** — timed page advance for hands-free reading.
 14. **Calculator history** — keep and recall the last 10 calculations.
 
+## Battery life (Campervan)
+
+Context: the Fossibot link has to stay up, so deep sleep is not available as
+an idle strategy. Numbers below are order-of-magnitude estimates from
+datasheets — nothing on this hardware has been measured. See CLAUDE.md,
+"Where the battery actually goes".
+
+### Done
+
+- **Release build env** (`pio run -e m5paper_s3_release`) — drops SERIAL_DEBUG
+  and USB CDC. Note the flag alone silences almost nothing: only 14 of ~431
+  `Serial.` calls are wrapped in `#ifdef SERIAL_DEBUG`, so what actually stops
+  the traffic is leaving the port unopened (`cfg.serial_baudrate = 0`) plus
+  `ARDUINO_USB_CDC_ON_BOOT=0`. 130 KB smaller binary as a side effect.
+- **BLE connection interval 30-60ms → 200-400ms** — as central we transmit an
+  anchor packet every interval regardless of traffic, to carry data we only
+  request every 45s. ~7-10x fewer radio events.
+
+### TODO: hybrid touch polling
+
+`readTouchManual()` hits the GT911 over I2C every 15ms (30ms in eco mode),
+which stops the CPU idling for any useful length of time. The chip has an
+INT line on GPIO 48 — already used as the deep-sleep wake source — but
+interrupt-driven touch was tried and found unreliable on this hardware
+(`main.cpp`, "TOUCH POLLING MODE"), and when INT fails to assert the UI
+becomes completely untouchable.
+
+Proposed compromise, keeping that failure mode off the table:
+
+1. Poll `digitalRead(48)` at the current 15ms cadence — far cheaper than an
+   I2C transaction.
+2. Only run the full I2C read when INT asserts.
+3. Keep a slow unconditional I2C poll (~200ms) as a backstop, so a missed
+   INT costs latency rather than a dead screen.
+
+Needs on-hardware testing: confirm INT actually asserts on touch, and that
+the backstop keeps drags/handwriting in Notes smooth enough.
+
+### Not recommended: framework-level power management
+
+The textbook fix — automatic light sleep with the BT controller waking the
+CPU per connection event — is not available here. The Arduino core this
+project builds against (3.20017 / Arduino 2.0.17) ships with:
+
+```
+# CONFIG_PM_ENABLE is not set
+# CONFIG_BT_CTRL_MODEM_SLEEP is not set
+```
+
+No tickless idle, and the BT controller does not idle its radio between
+connection events. Enabling either means a custom framework build or a move
+to ESP-IDF. Large change, uncertain payoff; not worth it before someone puts
+a meter on the device.
+
+### The real decision: persistent link vs. duty cycling
+
+If a step change in battery life is ever needed, the only structural option
+on this framework is to stop holding the link open: deep sleep for 5-15 min,
+wake on timer or touch (GPIO 48 already does this), reconnect, poll, redraw,
+sleep. The e-ink holds the last frame throughout, so the dashboard still
+looks live, and nothing is lost by being disconnected — the Fossibot never
+pushes data, it only answers polls.
+
+Costs: a few seconds of reconnect before toggles work after a tap, and data
+up to N minutes stale between wakes (the status strip can show the age).
+
+**Recommendation: do not build this yet.** Its viability rests entirely on
+how reliably reconnects succeed, which is exactly what the Bluetooth status
+strip now makes visible. Run the device normally for a week; if the strip
+rarely reports failed attempts, duty cycling is the right end state. If
+reconnects regularly fail or take multiple attempts, a duty-cycled design
+would spend more energy retrying than the persistent link ever costs, and
+the hybrid touch work above is the better investment.
+
 ## Performance improvements (separate workstream)
 
 - Replace blocking `delay(50)` during BLE connect in `main.cpp` with a

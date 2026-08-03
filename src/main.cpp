@@ -53,7 +53,15 @@ void setup() {
 
   // Initialize M5Unified
   auto cfg = M5.config();
+#ifdef SERIAL_DEBUG
   cfg.serial_baudrate = 115200;
+#else
+  // Production build: leave the port unopened. Most Serial.print calls in
+  // this codebase are not wrapped in #ifdef SERIAL_DEBUG, so this (plus
+  // ARDUINO_USB_CDC_ON_BOOT=0) is what actually silences them - writes to an
+  // uninitialised UART are dropped without running the USB CDC stack.
+  cfg.serial_baudrate = 0;
+#endif
   // Disable some internal modules to prevent auto-I2C init on wrong pins
   // but keep RTC enabled for timekeeping
   cfg.internal_rtc = true; // ENABLE RTC for time/date
@@ -419,9 +427,11 @@ void loop() {
     // Campervan mode: BLE to Fossibot
     bleClient->update();
 
-    if (bleClient->isConnected()) {
-      uiManager->updatePowerBankData(bleClient->getData());
-    }
+    // Push data every pass, connected or not: the struct carries the link
+    // state, and the UI can only show a disconnect if it hears about it.
+    // (Previously this was gated on isConnected(), so the dashboard kept
+    // showing stale values as if the Fossibot were still linked.)
+    uiManager->updatePowerBankData(bleClient->getData());
 
     // CRITICAL: Skip UI updates during BLE connection attempts to prevent
     // EPD/BLE crash
