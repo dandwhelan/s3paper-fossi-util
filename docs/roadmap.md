@@ -14,23 +14,41 @@ Candidate features for future releases, identified from a codebase review
   theme shows one) hasn't changed. Last-drawn values are cached at draw time.
 - **Eco-mode touch polling** — touch poll interval widens from 15 ms to
   30 ms while in eco mode (80 MHz) to cut idle I2C traffic.
+- **Tier 1 (all four)** — see below.
 
-## Tier 1 — High value, low effort
+## Tier 1 — Done
 
-1. **Standby/scheduling UI (Campervan)** — BLE setters already exist for
-   `SCREEN_TIMEOUT` (reg 59), AC/DC/USB standby (regs 60–62), `SYS_STANDBY`
-   (reg 68), `SCHEDULE_CHARGE` (reg 63) and `MASTER_ENABLE` (reg 5) in
-   `src/ble/fossibot_protocol.h`, but only some are surfaced in the Fossibot
-   settings screens. Add the remaining control rows.
-2. **Per-port USB power breakdown** — USB-A1/A2 and C1–C4 wattages
-   (regs 30, 31, 34–37) are read but never displayed. Show a port detail
-   popup and/or History tab.
-3. **Battery voltage display + health warning** — `batteryVoltage` (reg 22)
-   is parsed but only SOC% is shown. Add to the status panel with an
-   out-of-range warning for LiFePO4 (48.0–51.5 V).
-4. **Power history export/analytics** — generate a weekly summary CSV
-   (daily averages, peaks, charge/discharge ratio) from existing
-   `/history/*.csv` data.
+1. **Standby/scheduling UI (Campervan)** — the setters were all already wired
+   to the Timers screen; what was actually missing was a way *in*. The old
+   FOSSIBOT tile on the MENU had been replaced by the mode toggle, leaving
+   `SETTINGS_FOSSIBOT` and its Timers sub-screen unreachable from the UI.
+   MENU now has a row 4 (campervan only) with FOSSIBOT and USB PORTS tiles.
+   The Timers screen also prints the device's *current* value beside each row,
+   because the preset buttons highlight nothing when the Fossibot was set from
+   its own panel or the phone app. `MASTER_ENABLE` (reg 5) is now parsed and
+   shown as status on the Fossibot settings screen, but deliberately **not**
+   writable — the protocol map documents it as a read-only holding register,
+   and a remote write that turns the station off leaves no BLE radio listening
+   to turn it back on. POWER OFF (reg 64, confirmed) is the intentional
+   version of that.
+2. **Per-port USB power breakdown** — regs 30, 31, 34–37 are now kept
+   per-port in `PowerBankData::usbPortWatts` instead of only being summed.
+   New USB Ports screen (`ScreenID::SETTINGS_FOSSIBOT_PORTS`) lists all six
+   with a bar each plus USB / AC+DC / total figures. It redraws on every BLE
+   packet rather than through `shouldUpdateDashboard()`, whose SOC/power
+   thresholds are far coarser than per-port wattage.
+3. **Battery voltage display + health warning** — pack voltage now renders on
+   all five campervan themes (`batteryVoltageLabel()`), prefixed with `!` when
+   outside the healthy LiFePO4 window (48.0–51.5 V). A voltage of 0 means
+   "never read", not "0 V", so it stays blank rather than warning on boot.
+4. **Power history export/analytics** — EXPORT button on the History screen
+   writes `/history/weekly_summary.csv`: one row per day (SOC min/max/avg,
+   mean and peak in/out, Wh in/out, charge/discharge ratio) plus a TOTAL row.
+   Computed from the in-RAM 7-day buffer, so it needs no SD re-read and does
+   not go through the String-based CSV parser. Energy is integrated across
+   consecutive samples with a 15-minute gap cap rather than assuming the
+   nominal 5-minute cadence held all day — real logs are full of holes from
+   deep sleep and BLE outages.
 
 ## Tier 2 — Medium effort, high value
 

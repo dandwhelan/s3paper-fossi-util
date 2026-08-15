@@ -22,6 +22,29 @@ struct PowerSample {
 #define HISTORY_DAYS 7        // Keep 7 days of history
 #define FLUSH_INTERVAL_MINS 15 // Flush to SD every 15 minutes
 
+// Energy integration cap. Samples are taken every 5 minutes, but the device
+// sleeps, loses the BLE link and gets carried around, so consecutive samples
+// can be hours apart. A gap wider than this is treated as "not measured"
+// rather than assumed to have held the last power reading throughout.
+#define SUMMARY_MAX_GAP_MINS 15
+
+// One day's worth of aggregated statistics, derived from the in-RAM history
+// buffer (no SD re-read, no CSV parsing).
+struct DailySummary {
+  bool valid;        // false = no samples for this day
+  char date[11];     // "YYYY-MM-DD"
+  uint16_t samples;  // Number of stored samples
+  uint8_t socMin;    // Battery % range over the day
+  uint8_t socMax;
+  uint8_t socAvg;
+  uint16_t inAvgW;   // Mean power while sampling
+  uint16_t outAvgW;
+  uint16_t inPeakW;  // Highest single sample
+  uint16_t outPeakW;
+  uint32_t inWh;     // Energy, integrated across sample gaps
+  uint32_t outWh;
+};
+
 class PowerHistory {
 public:
   PowerHistory();
@@ -51,6 +74,15 @@ public:
 
   // Load history from SD card on boot
   bool loadFromSD();
+
+  // Aggregate one day out of the in-RAM buffer (0 = today, 6 = a week ago).
+  DailySummary summariseDay(uint8_t dayOffset);
+
+  // Write a weekly analytics summary (one row per day, oldest first, plus a
+  // TOTAL row) to the given path. Overwrites any existing file.
+  // Returns the number of days with data, or -1 if the file could not be
+  // written.
+  int exportWeeklySummary(const char *path = "/history/weekly_summary.csv");
 
   // Get current day index (0-6, circular)
   uint8_t getCurrentDayIndex() const { return _currentDayIndex; }
