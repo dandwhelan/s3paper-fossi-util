@@ -750,14 +750,17 @@ void FossibotBLE::parseStatusData(const uint8_t *data, size_t length) {
   _data.protectionFlags = getRegValue(Fossibot::StatusReg::PROTECTION_FLAGS);
   _data.systemStatusFlags = getRegValue(Fossibot::StatusReg::SYSTEM_STATUS_FLAGS);
 
-  // Parse USB per-port watts (all ÷10) and sum for total USB output
+  // Parse USB per-port watts (all ÷10). Kept per-port for the USB Ports
+  // screen, then summed for the dashboard's single USB figure.
+  static const uint8_t usbRegs[Fossibot::USB_PORT_COUNT] = {
+      Fossibot::StatusReg::USB_A1_WATTS, Fossibot::StatusReg::USB_A2_WATTS,
+      Fossibot::StatusReg::USB_C1_WATTS, Fossibot::StatusReg::USB_C2_WATTS,
+      Fossibot::StatusReg::USB_C3_WATTS, Fossibot::StatusReg::USB_C4_WATTS};
   float usbTotal = 0.0f;
-  usbTotal += getRegValue(Fossibot::StatusReg::USB_A1_WATTS) / 10.0f;
-  usbTotal += getRegValue(Fossibot::StatusReg::USB_A2_WATTS) / 10.0f;
-  usbTotal += getRegValue(Fossibot::StatusReg::USB_C1_WATTS) / 10.0f;
-  usbTotal += getRegValue(Fossibot::StatusReg::USB_C2_WATTS) / 10.0f;
-  usbTotal += getRegValue(Fossibot::StatusReg::USB_C3_WATTS) / 10.0f;
-  usbTotal += getRegValue(Fossibot::StatusReg::USB_C4_WATTS) / 10.0f;
+  for (int i = 0; i < Fossibot::USB_PORT_COUNT; i++) {
+    _data.usbPortWatts[i] = getRegValue(usbRegs[i]) / 10.0f;
+    usbTotal += _data.usbPortWatts[i];
+  }
   _data.usbOutputPower = usbTotal;
 
   // Derive AC+DC output: total minus USB (clamped to 0)
@@ -805,6 +808,11 @@ void FossibotBLE::parseSettingsData(const uint8_t *data, size_t length) {
   };
 
   // Parse Fossibot settings registers
+  // Reg 5 (master system enable) is read here but never written: it is
+  // documented as a read-only holding register in this protocol map, and a
+  // remote write that turns the whole station off leaves no BLE radio
+  // listening to turn it back on. The UI shows it as status only.
+  _data.masterEnabled = (getRegValue(Fossibot::ControlReg::MASTER_ENABLE) != 0);
   uint16_t chargeSpeed = getRegValue(13);
   if (chargeSpeed >= 1 && chargeSpeed <= 5)
     _data.acChargeSpeed = chargeSpeed;
