@@ -180,6 +180,26 @@ void setup() {
   // Initialize SD card
   initSD();
 
+  // If RTC was reset due to dead battery (e.g., year < 2020), try loading fallback time from SD
+  if (year < 2020 && sdManager && sdManager->isAvailable()) {
+    time_t fallback_t = sdManager->loadRTCFallback();
+    if (fallback_t > 0) {
+      Serial.printf("RTC was reset, restoring SD fallback time: %ld\n", (long)fallback_t);
+      struct timeval now_tv = {.tv_sec = fallback_t, .tv_usec = 0};
+      settimeofday(&now_tv, NULL);
+      
+      // Update RTC chip with the fallback time
+      struct tm *tm_info = localtime(&fallback_t);
+      RTC::setDate(tm_info->tm_year + 1900, tm_info->tm_mon + 1, tm_info->tm_mday);
+      RTC::setTime(tm_info->tm_hour, tm_info->tm_min, tm_info->tm_sec);
+      
+      // Update our local variables so other systems (like UI) see the new time
+      year = tm_info->tm_year + 1900;
+      month = tm_info->tm_mon + 1;
+      day = tm_info->tm_mday;
+    }
+  }
+
   // Show boot screen (displays boot.png for 3 seconds)
   showBootScreen();
 
@@ -364,6 +384,16 @@ void loop() {
     Serial.println("--- System Alive (Heartbeat) ---");
     // Serial.printf("Raw INT Pin (48): %d\n", digitalRead(48));
     lastHeartbeat = millis();
+  }
+
+  // Save RTC fallback to SD periodically (e.g. every 60 minutes)
+  // Initialized to trigger the first save exactly 1 minute after boot
+  static unsigned long lastRTCSave = millis() - (3600000 - 60000); 
+  if (millis() - lastRTCSave > 3600000) { // 3600000 ms = 60 minutes
+    if (sdManager) {
+      sdManager->saveRTCFallback(time(NULL));
+    }
+    lastRTCSave = millis();
   }
 
   // Update M5 (buttons, touch, etc.)

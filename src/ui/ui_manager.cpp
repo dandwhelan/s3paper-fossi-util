@@ -340,6 +340,9 @@ void UIManager::update() {
   case ScreenID::SETTINGS_FOSSIBOT_TIMERS:
     drawFossibotTimersScreen();
     break;
+  case ScreenID::SETTINGS_FOSSIBOT_PORTS:
+    drawFossibotPortsScreen();
+    break;
   case ScreenID::CLOCK:
     updatePomodoro(); // Update timer logic before drawing
     drawClockScreen();
@@ -481,6 +484,8 @@ void UIManager::handleTouch(int x, int y, TouchEvent event) {
           handleFossibotSettingsTouch(x, y);
         } else if (_currentScreen == ScreenID::SETTINGS_FOSSIBOT_TIMERS) {
           handleFossibotTimersTouch(x, y);
+        } else if (_currentScreen == ScreenID::SETTINGS_FOSSIBOT_PORTS) {
+          handleFossibotPortsTouch(x, y);
         } else if (_currentScreen == ScreenID::READER) {
           handleReaderTouch(x, y, event);
         }
@@ -660,6 +665,17 @@ void UIManager::updatePowerBankData(const Fossibot::PowerBankData &data) {
     _fossiUSBStandby = data.usbStandby;
     _fossiSysStandby = data.sysStandby;
     _fossiScheduleChargeRemaining = data.scheduleCharge;
+  }
+
+  // The USB Ports screen is nothing but live telemetry, and the per-port
+  // numbers move well below the dashboard's SOC/power thresholds, so it
+  // redraws on every packet instead of going through shouldUpdateDashboard().
+  // BLE polls at 45s, so this is not a refresh storm.
+  if (_currentScreen == ScreenID::SETTINGS_FOSSIBOT_PORTS) {
+    _needsRefresh = true;
+    _lastRefresh = 0;
+    _lastRenderedData = _powerData;
+    return;
   }
 
   // Only trigger auto-refresh on HOME screen or Timers screen (when timer
@@ -991,6 +1007,16 @@ void UIManager::drawHomeCompactStatus() {
     int th = M5.Display.fontHeight();
     M5.Display.setCursor(sqX + (sqSize - tw) / 2, sqY + (sqSize - th) / 2);
     M5.Display.print(pctStr);
+
+    // Pack voltage under the percentage, inside the ring
+    String voltStr = batteryVoltageLabel();
+    if (voltStr.length() > 0) {
+      M5.Display.setTextSize(1);
+      int vw = M5.Display.textWidth(voltStr);
+      M5.Display.setCursor(sqX + (sqSize - vw) / 2,
+                           sqY + (sqSize - th) / 2 + th + 12);
+      M5.Display.print(voltStr);
+    }
   }
 
   // Draw Clock at Top Left
@@ -1114,20 +1140,36 @@ void UIManager::drawHomeHorizontalBars() {
     drawErrorBanner(margin, row1Y, barW, battRowH);
   } else {
     M5.Display.drawRect(margin, row1Y, barW, battRowH, COLOR_BLACK);
-    // Full-width progress bar with padding
-    int pbX = margin + 10;
-    int pbW = barW - 120; // leave room for % text
-    int pbH = battRowH - 16;
-    drawProgressBar(pbX, row1Y + 8, pbW, pbH,
-                    _powerData.batteryPercent / 100.0f, true);
-    // Percentage right-aligned
+    // Percentage right-aligned, pack voltage to its left. Measure both first
+    // so the progress bar can give up exactly the width they need.
     M5.Display.setTextColor(COLOR_BLACK);
     M5.Display.setTextSize(2);
     char pctStr[8];
     snprintf(pctStr, sizeof(pctStr), "%.0f%%", _powerData.batteryPercent);
     int pw = M5.Display.textWidth(pctStr);
+
+    String voltStr = batteryVoltageLabel();
+    M5.Display.setTextSize(1);
+    int vw = (voltStr.length() > 0) ? M5.Display.textWidth(voltStr) : 0;
+    int textBlockW = pw + (vw > 0 ? vw + 20 : 0);
+
+    // Full-width progress bar with padding
+    int pbX = margin + 10;
+    int pbW = barW - textBlockW - 40;
+    int pbH = battRowH - 16;
+    drawProgressBar(pbX, row1Y + 8, pbW, pbH,
+                    _powerData.batteryPercent / 100.0f, true);
+
+    M5.Display.setTextSize(2);
     M5.Display.setCursor(margin + barW - pw - 15, row1Y + (battRowH - 16) / 2);
     M5.Display.print(pctStr);
+
+    if (vw > 0) {
+      M5.Display.setTextSize(1);
+      M5.Display.setCursor(margin + barW - pw - vw - 30,
+                           row1Y + (battRowH - 12) / 2);
+      M5.Display.print(voltStr);
+    }
   }
 
   // Row 2: IN — label and watts inline, bar below
@@ -2663,6 +2705,19 @@ bool UIManager::handleBleStatusTouch(int x, int y) {
   return true;
 }
 
+// Pack voltage, the number SOC% hides. A LiFePO4 pack sitting at 47V is in
+// trouble at any state of charge the gauge cares to report, so an
+// out-of-range reading is marked rather than just printed.
+String UIManager::batteryVoltageLabel() {
+  if (!_powerData.batteryVoltageValid())
+    return String();
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%s%.1fV",
+           _powerData.batteryVoltageOutOfRange() ? "! " : "",
+           _powerData.batteryVoltage);
+  return String(buf);
+}
+
 void UIManager::drawBatteryBar(float percent) {
   int barY = 5;
   int barHeight = BATTERY_BAR_HEIGHT - 10;
@@ -2780,6 +2835,20 @@ void UIManager::drawBatteryBar(float percent) {
   M5.Display.setTextSize(1);
   M5.Display.setCursor(textX, textY);
   M5.Display.print(percentStr);
+
+  // Pack voltage at the right end of the bar. The fill only reaches here at
+  // ~97%+, so that is where the text has to flip to white.
+  String voltStr = batteryVoltageLabel();
+  if (voltStr.length() > 0) {
+    int vw = M5.Display.textWidth(voltStr);
+    int vx = 5 + barWidth - vw - 20;
+    // Only draw it if it clears the centred percentage.
+    if (vx > textX + 90) {
+      M5.Display.setTextColor(percent > 97 ? COLOR_WHITE : COLOR_BLACK);
+      M5.Display.setCursor(vx, textY);
+      M5.Display.print(voltStr);
+    }
+  }
 }
 
 void UIManager::drawPowerPanel(int x, int y, int w, int h, const char *title,
@@ -2968,6 +3037,11 @@ void UIManager::drawPowerButton(int x, int y, int w, int h) {
   // drawButton only uses black and white, so this survives epd_fastest.
   bool linked = bleClient && bleClient->isConnected();
   drawButton(x, y, w, h, powerButtonLabel(), linked);
+  
+  // Draw an inner border to make the button's full hitbox more visible
+  if (!linked) {
+    M5.Display.drawRect(x + 1, y + 1, w - 2, h - 2, COLOR_BLACK);
+  }
 }
 
 bool UIManager::handlePowerButtonTouch(int x, int y) {
@@ -3445,6 +3519,16 @@ void UIManager::drawSettingsScreen() {
       snprintf(themeLabel, sizeof(themeLabel), "Theme: %s", themeName);
     }
     drawButton(col3X, row3Y, btnW, btnH, themeLabel);
+
+    // Row 4: Fossibot screens. Campervan only - there is no Fossibot to talk
+    // to in home mode. Without these tiles the Fossibot settings screen has no
+    // entry point at all: the old FOSSIBOT tile was replaced by the mode
+    // toggle, leaving both sub-screens unreachable.
+    if (!config || config->isCampervanMode()) {
+      int row4Y = row3Y + btnH + spacing;
+      drawButton(col1X, row4Y, btnW, btnH, "FOSSIBOT");
+      drawButton(col2X, row4Y, btnW, btnH, "USB PORTS");
+    }
   }
 
   // --- Battery Status (Top Right, left of home icon) ---
@@ -3483,6 +3567,22 @@ void UIManager::handleSettingsTouch(int x, int y) {
   int col3X = startX + (btnW + spacing) * 2;
   int row2Y = startY + btnH + spacing;
   int row3Y = row2Y + btnH + spacing;
+  int row4Y = row3Y + btnH + spacing;
+
+  // Row 4: Fossibot | USB Ports (campervan only, matching drawSettingsScreen)
+  {
+    extern Config *config;
+    if (!config || config->isCampervanMode()) {
+      if (isHit(col1X, row4Y, btnW, btnH)) {
+        navigateTo(ScreenID::SETTINGS_FOSSIBOT);
+        return;
+      }
+      if (isHit(col2X, row4Y, btnW, btnH)) {
+        navigateTo(ScreenID::SETTINGS_FOSSIBOT_PORTS);
+        return;
+      }
+    }
+  }
 
   // Row 1: Read | Games | Clock
   if (isHit(col1X, startY, btnW, btnH)) {
@@ -3969,6 +4069,21 @@ void UIManager::drawFossibotSettingsScreen() {
   int col2X = 550;
   int col2Y = 120;
 
+  // Master system enable (reg 5), shown as status only. It is documented as a
+  // read-only holding register, and turning the station off over BLE leaves
+  // nothing listening to turn it back on - POWER OFF below is the deliberate,
+  // confirmed version of that.
+  M5.Display.setTextSize(1);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(col2X, col2Y - 45);
+  M5.Display.print("Master Output: ");
+  if (_powerData.settingsReceived) {
+    M5.Display.print(_powerData.masterEnabled ? "ON" : "OFF");
+  } else {
+    M5.Display.setTextColor(COLOR_GRAY);
+    M5.Display.print("--");
+  }
+
   drawButton(col2X, col2Y, 200, 60, "TIMERS", true);
 
   M5.Display.setTextSize(1);
@@ -4223,6 +4338,30 @@ void UIManager::handleFossibotSettingsTouch(int x, int y) {
 // Fossibot Timers Sub-Screen (Output standby timers + Schedule Charge)
 // ============================================================================
 
+// The preset buttons below only cover a handful of values, so a timer the
+// Fossibot was set to elsewhere (its own screen, the phone app) highlights
+// nothing and reads as "unset". These render whatever the device actually
+// reported, next to each row.
+static String formatStandbyMinutes(int minutes) {
+  if (minutes <= 0)
+    return "OFF";
+  if (minutes < 60)
+    return String(minutes) + "m";
+  int h = minutes / 60;
+  int m = minutes % 60;
+  return m == 0 ? String(h) + "h" : String(h) + "h" + String(m) + "m";
+}
+
+static String formatStandbySeconds(int seconds) {
+  if (seconds <= 0)
+    return "OFF";
+  if (seconds < 60)
+    return String(seconds) + "s";
+  int m = seconds / 60;
+  int s = seconds % 60;
+  return s == 0 ? String(m) + "m" : String(m) + "m" + String(s) + "s";
+}
+
 void UIManager::drawFossibotTimersScreen() {
   M5.Display.fillScreen(COLOR_WHITE);
   drawHomeButton();
@@ -4258,10 +4397,21 @@ void UIManager::drawFossibotTimersScreen() {
   const int sysPresets[] = {60, 480, 1440, 0}; // Minutes
   const char *sysLabels[] = {"1h", "8h", "24h", "OFF"};
 
+  // Current device value, right-aligned in the gap before the preset buttons.
+  auto drawCurrentValue = [&](int rowY, const String &value) {
+    M5.Display.setTextSize(1);
+    M5.Display.setTextColor(COLOR_DARK_GRAY);
+    int tw = M5.Display.textWidth(value);
+    M5.Display.setCursor(btnStartX - 15 - tw, rowY + 8);
+    M5.Display.print(value);
+    M5.Display.setTextColor(COLOR_BLACK);
+  };
+
   // === AC Standby (Minutes) ===
   M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setCursor(labelX, y + 8);
   M5.Display.print("AC Standby:");
+  drawCurrentValue(y, formatStandbyMinutes(_fossiACStandby));
   for (int i = 0; i < 5; i++) {
     bool active = (_fossiACStandby == acPresets[i]);
     drawButton(btnStartX + i * (btnW + btnGap), y, btnW, btnH, acLabels[i],
@@ -4273,6 +4423,7 @@ void UIManager::drawFossibotTimersScreen() {
   M5.Display.setTextSize(1); // Fixed: was Size 2
   M5.Display.setCursor(labelX, y + 8);
   M5.Display.print("DC Standby:");
+  drawCurrentValue(y, formatStandbyMinutes(_fossiDCStandby));
   for (int i = 0; i < 5; i++) {
     bool active = (_fossiDCStandby == acPresets[i]);
     drawButton(btnStartX + i * (btnW + btnGap), y, btnW, btnH, acLabels[i],
@@ -4285,6 +4436,7 @@ void UIManager::drawFossibotTimersScreen() {
   M5.Display.setCursor(labelX, y + 8);
   M5.Display.setTextColor(COLOR_BLACK); // Reinforce color
   M5.Display.print("USB Standby:");
+  drawCurrentValue(y, formatStandbySeconds(_fossiUSBStandby));
   for (int i = 0; i < 5; i++) {
     bool active = (_fossiUSBStandby == usbPresets[i]);
     drawButton(btnStartX + i * (btnW + btnGap), y, btnW, btnH, usbLabels[i],
@@ -4295,6 +4447,7 @@ void UIManager::drawFossibotTimersScreen() {
   // === Screen Timeout (Minutes) ===
   M5.Display.setCursor(labelX, y + 8);
   M5.Display.print("Screen Off:");
+  drawCurrentValue(y, formatStandbyMinutes(_fossiScreenTimeout));
   for (int i = 0; i < 5; i++) {
     bool active = (_fossiScreenTimeout == screenPresets[i]);
     drawButton(btnStartX + i * (btnW + btnGap), y, btnW, btnH, screenLabels[i],
@@ -4305,6 +4458,7 @@ void UIManager::drawFossibotTimersScreen() {
   // === Sys Standby (Minutes) ===
   M5.Display.setCursor(labelX, y + 8);
   M5.Display.print("Sys Idle:");
+  drawCurrentValue(y, formatStandbyMinutes(_fossiSysStandby));
   for (int i = 0; i < 4; i++) {
     bool active = (_fossiSysStandby == sysPresets[i]);
     drawButton(btnStartX + i * (btnW + btnGap), y, btnW, btnH, sysLabels[i],
@@ -4556,6 +4710,99 @@ void UIManager::handleFossibotTimersTouch(int x, int y) {
   if (isHit(SCREEN_WIDTH / 2 - 100, actionY, 200, 55)) {
     navigateTo(ScreenID::SETTINGS_FOSSIBOT);
     return;
+  }
+}
+
+// ============================================================================
+// Fossibot USB Ports Sub-Screen (live per-port wattage)
+// ============================================================================
+// Registers 30, 31 and 34-37 have always been read and summed into a single
+// USB figure on the dashboard; this screen shows the six ports separately, so
+// "why is the USB rail pulling 60W" has an answer without unplugging things.
+
+void UIManager::drawFossibotPortsScreen() {
+  M5.Display.fillScreen(COLOR_WHITE);
+  drawHomeButton();
+
+  // === Header ===
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(SCREEN_WIDTH / 2 - 110, 15);
+  M5.Display.print("USB Ports");
+  if (bleClient && !bleClient->isConnected()) {
+    M5.Display.print(" (OFFLINE)");
+  }
+
+  // Values are the last ones received. Say so when the link is down rather
+  // than presenting a stale snapshot as live.
+  M5.Display.setTextSize(1);
+  M5.Display.setCursor(20, 55);
+  if (bleClient && !bleClient->isConnected()) {
+    M5.Display.setTextColor(COLOR_DARK_GRAY);
+    M5.Display.print("Last known values - Fossibot not connected");
+  } else {
+    M5.Display.setTextColor(COLOR_DARK_GRAY);
+    M5.Display.print("Live - updates with each BLE poll (45s)");
+  }
+
+  // === Per-port rows ===
+  const int rowH = 46;
+  const int firstRowY = 90;
+  const int labelX = 30;
+  const int valueX = 170;
+  const int barX = 300;
+  const int barW = SCREEN_WIDTH - barX - 40;
+
+  for (int i = 0; i < Fossibot::USB_PORT_COUNT; i++) {
+    int rowY = firstRowY + i * rowH;
+    float watts = _powerData.usbPortWatts[i];
+
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setTextSize(1);
+    M5.Display.setCursor(labelX, rowY + 8);
+    M5.Display.print(Fossibot::USB_PORT_NAMES[i]);
+
+    char wattStr[16];
+    snprintf(wattStr, sizeof(wattStr), "%.1f W", watts);
+    M5.Display.setCursor(valueX, rowY + 8);
+    M5.Display.print(wattStr);
+
+    // An idle port draws exactly nothing, and an empty outline says that more
+    // clearly than a zero-width bar inside a filled frame.
+    if (watts > 0.05f) {
+      drawProgressBar(barX, rowY + 4, barW, 28,
+                      watts / Fossibot::USB_PORT_MAX_WATTS, true);
+    } else {
+      M5.Display.drawRect(barX, rowY + 4, barW, 28, COLOR_LIGHT_GRAY);
+      M5.Display.setTextColor(COLOR_GRAY);
+      M5.Display.setCursor(barX + 10, rowY + 12);
+      M5.Display.print("idle");
+    }
+  }
+
+  // === Totals ===
+  int totalsY = firstRowY + Fossibot::USB_PORT_COUNT * rowH + 10;
+  M5.Display.drawFastHLine(labelX, totalsY, SCREEN_WIDTH - labelX * 2,
+                           COLOR_GRAY);
+
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(1);
+  M5.Display.setCursor(labelX, totalsY + 14);
+  M5.Display.printf("USB total: %.1f W", _powerData.usbOutputPower);
+  M5.Display.setCursor(labelX + 320, totalsY + 14);
+  M5.Display.printf("AC+DC: %.0f W", _powerData.acDcOutputPower);
+  M5.Display.setCursor(labelX + 600, totalsY + 14);
+  M5.Display.printf("Output: %.0f W", _powerData.outputPower);
+
+  // --- Action button ---
+  drawButton(SCREEN_WIDTH / 2 - 100, SCREEN_HEIGHT - 60, 200, 50, "BACK");
+}
+
+void UIManager::handleFossibotPortsTouch(int x, int y) {
+  if (x >= SCREEN_WIDTH / 2 - 100 && x < SCREEN_WIDTH / 2 + 100 &&
+      y >= SCREEN_HEIGHT - 60 && y < SCREEN_HEIGHT - 10) {
+    Buzzer::click();
+    navigateTo(ScreenID::SETTINGS);
   }
 }
 
@@ -8097,7 +8344,7 @@ void UIManager::drawHistoryScreen() {
   // --- Navigation Bar (User Request: Replaces filters to allow navigation) ---
   // Draw Navigation/Filter Bar
   int btnY = SCREEN_HEIGHT - 60;
-  int btnW = SCREEN_WIDTH / 6;
+  int btnW = SCREEN_WIDTH / HISTORY_BTN_COUNT;
   int btnH = 60;
 
   M5.Display.setTextSize(1);
@@ -8107,6 +8354,21 @@ void UIManager::drawHistoryScreen() {
   drawButton(3 * btnW, btnY, btnW, btnH, "ALL", (_historyFilter == 0x07));
   drawButton(4 * btnW, btnY, btnW, btnH, "< DAY");
   drawButton(5 * btnW, btnY, btnW, btnH, "DAY >");
+  drawButton(6 * btnW, btnY, btnW, btnH, "EXPORT");
+
+  // Export result, under the header. Drawn last so it sits over the graph
+  // frame rather than being clipped by it.
+  if (_historyExportMsg[0] != '\0' &&
+      millis() - _historyExportMsgTime < HISTORY_EXPORT_MSG_MS) {
+    M5.Display.setTextSize(1);
+    int tw = M5.Display.textWidth(_historyExportMsg);
+    int boxX = (SCREEN_WIDTH - tw) / 2 - 12;
+    M5.Display.fillRect(boxX, 66, tw + 24, 28, COLOR_WHITE);
+    M5.Display.drawRect(boxX, 66, tw + 24, 28, COLOR_BLACK);
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setCursor(boxX + 12, 72);
+    M5.Display.print(_historyExportMsg);
+  }
 }
 
 void UIManager::handleHistoryTouch(int x, int y, TouchEvent event) {
@@ -8133,7 +8395,7 @@ void UIManager::handleHistoryTouch(int x, int y, TouchEvent event) {
 
   // --- Filter Buttons (bottom bar layout) ---
   int btnY = SCREEN_HEIGHT - 60; // Filter bar height
-  int btnW = SCREEN_WIDTH / 6;
+  int btnW = SCREEN_WIDTH / HISTORY_BTN_COUNT;
 
   // Check if touch is in the bottom bar area
   if (y >= btnY) {
@@ -8159,12 +8421,29 @@ void UIManager::handleHistoryTouch(int x, int y, TouchEvent event) {
         _historyViewDay++;
         forceRefresh();
       }
-    } else if (x >= btnW * 5 && x < SCREEN_WIDTH) { // NEXT DAY
+    } else if (x >= btnW * 5 && x < btnW * 6) { // NEXT DAY
       Buzzer::click();
       if (_historyViewDay > 0) {
         _historyViewDay--;
         forceRefresh();
       }
+    } else if (x >= btnW * 6 && x < SCREEN_WIDTH) { // EXPORT
+      Buzzer::click();
+      // Runs straight off the in-RAM buffer, so this is one SD write and no
+      // CSV re-parse - fast enough to do inline without a progress screen.
+      int days = _powerHistory.exportWeeklySummary();
+      if (days < 0) {
+        snprintf(_historyExportMsg, sizeof(_historyExportMsg),
+                 "Export FAILED - check SD card");
+      } else if (days == 0) {
+        snprintf(_historyExportMsg, sizeof(_historyExportMsg),
+                 "No history to summarise yet");
+      } else {
+        snprintf(_historyExportMsg, sizeof(_historyExportMsg),
+                 "Saved /history/weekly_summary.csv (%d days)", days);
+      }
+      _historyExportMsgTime = millis();
+      forceRefresh();
     }
   }
 
