@@ -434,3 +434,35 @@ String SDManager::getRandomPictureForSleep() {
   Serial.println("Sleep image: none available");
   return "";
 }
+
+void SDManager::saveRTCFallback(time_t current_time) {
+  if (!_available || current_time < 1577836800) return; // Only save valid timestamps (post-2020)
+
+  File file = SD.open("/.rtc_fallback", FILE_WRITE);
+  if (!file) {
+    Serial.println("SDManager: Failed to open /.rtc_fallback for writing");
+    return;
+  }
+
+  file.print(current_time);
+  file.close();
+  
+  Serial.printf("SDManager: Successfully saved RTC fallback time: %ld\n", (long)current_time);
+}
+
+time_t SDManager::loadRTCFallback() {
+  if (!_available || !SD.exists("/.rtc_fallback")) return 0;
+
+  File file = SD.open("/.rtc_fallback", FILE_READ);
+  if (!file) return 0;
+
+  String timeStr = file.readString();
+  file.close();
+
+  time_t saved_time = (time_t)timeStr.toInt();
+  // Basic validation (must be after Jan 1 2020)
+  if (saved_time < 1577836800) {
+    return 0;
+  }
+  return saved_time;
+}

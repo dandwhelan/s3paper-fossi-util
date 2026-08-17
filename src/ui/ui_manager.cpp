@@ -3037,6 +3037,11 @@ void UIManager::drawPowerButton(int x, int y, int w, int h) {
   // drawButton only uses black and white, so this survives epd_fastest.
   bool linked = bleClient && bleClient->isConnected();
   drawButton(x, y, w, h, powerButtonLabel(), linked);
+  
+  // Draw an inner border to make the button's full hitbox more visible
+  if (!linked) {
+    M5.Display.drawRect(x + 1, y + 1, w - 2, h - 2, COLOR_BLACK);
+  }
 }
 
 bool UIManager::handlePowerButtonTouch(int x, int y) {

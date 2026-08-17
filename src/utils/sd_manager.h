@@ -122,6 +122,18 @@ public:
    */
   String getRandomPictureForSleep();
 
+  /**
+   * Save the current timestamp to the SD card as a fallback for when the RTC battery dies
+   * @param current_time The current UNIX epoch timestamp
+   */
+  void saveRTCFallback(time_t current_time);
+
+  /**
+   * Load the fallback timestamp from the SD card
+   * @return The saved UNIX epoch timestamp, or 0 if invalid/missing
+   */
+  time_t loadRTCFallback();
+
 private:
   bool _available;
 

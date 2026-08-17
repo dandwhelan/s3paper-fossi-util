@@ -43,9 +43,10 @@ uint32_t crc32Bytes(const String &s) {
 SwitchBotBLE *SwitchBotBLE::_instance = nullptr;
 
 SwitchBotBLE::SwitchBotBLE()
-    : _client(nullptr), _hasPassword(false), _passwordCrc(0),
-      _result(SwitchBotResult::IDLE), _resultTime(0), _statusChanged(false),
-      _requestedAt(0), _gotResponse(false), _responseStatus(0) {
+    : _client(nullptr), _addressResolved(false), _hasPassword(false),
+      _passwordCrc(0), _result(SwitchBotResult::IDLE), _resultTime(0),
+      _statusChanged(false), _requestedAt(0), _gotResponse(false),
+      _responseStatus(0) {
   _instance = this;
 }
 
@@ -61,7 +62,9 @@ SwitchBotBLE::~SwitchBotBLE() {
 void SwitchBotBLE::setTargetMAC(const String &mac) {
   _targetMAC = mac;
   _targetMAC.trim();
+  _addressResolved = false;
   if (_targetMAC.length() > 0) {
+    // Provisional only - the type is confirmed by resolveAddressByScan().
     _targetAddress = NimBLEAddress(_targetMAC.c_str());
     Serial.printf("SwitchBot: Target MAC set to %s\n", _targetMAC.c_str());
   }
@@ -191,6 +194,80 @@ void SwitchBotBLE::notifyCallback(NimBLERemoteCharacteristic *characteristic,
   Serial.printf("SwitchBot: Response status 0x%02X\n", data[0]);
 }
 
+bool SwitchBotBLE::resolveAddressByScan() {
+  NimBLEScan *scan = NimBLEDevice::getScan();
+  if (!scan) {
+    return false;
+  }
+  scan->stop(); // the Fossibot client shares this singleton
+  scan->setActiveScan(true); // ask for the scan response, which carries the name
+  scan->setInterval(100);
+  scan->setWindow(99);
+
+  Serial.printf("SwitchBot: Scanning %us for %s...\n", (unsigned)SCAN_SECONDS,
+                _targetMAC.c_str());
+  NimBLEScanResults results = scan->start(SCAN_SECONDS, false);
+
+  String wanted = _targetMAC;
+  wanted.toLowerCase();
+
+  bool found = false;
+  int byName = -1;
+
+  for (int i = 0; i < results.getCount(); i++) {
+    NimBLEAdvertisedDevice device = results.getDevice(i);
+    String address = String(device.getAddress().toString().c_str());
+    address.toLowerCase();
+
+    if (address == wanted) {
+      _targetAddress = device.getAddress();
+      _addressResolved = true;
+      found = true;
+      Serial.printf("SwitchBot: Found %s - address type %u, RSSI %d\n",
+                    _targetMAC.c_str(), (unsigned)_targetAddress.getType(),
+                    device.getRSSI());
+      break;
+    }
+
+    // Bots advertise as "WoHand". Remember one in case the configured MAC
+    // never shows up - a stale MAC is far more likely than a stray Bot.
+    if (byName < 0 && device.haveName() && device.getName() == "WoHand") {
+      byName = i;
+    }
+  }
+
+  if (!found && byName >= 0) {
+    NimBLEAdvertisedDevice device = results.getDevice(byName);
+    _targetAddress = device.getAddress();
+    _addressResolved = true;
+    found = true;
+    Serial.printf("SwitchBot: %s not seen, but a WoHand advertised at %s "
+                  "(type %u, RSSI %d) - using it. Update switchbot_mac.\n",
+                  _targetMAC.c_str(), device.getAddress().toString().c_str(),
+                  (unsigned)_targetAddress.getType(), device.getRSSI());
+  }
+
+  if (!found) {
+    Serial.printf("SwitchBot: Bot not among %d scan results - out of range, "
+                  "or already connected to a hub/phone\n",
+                  results.getCount());
+  }
+
+  scan->clearResults();
+  return found;
+}
+
+bool SwitchBotBLE::tryConnect(const NimBLEAddress &address, const char *label) {
+  Serial.printf("SwitchBot: Connecting to %s (%s address type %u)...\n",
+                address.toString().c_str(), label,
+                (unsigned)address.getType());
+  if (_client->connect(address, false)) {
+    return true;
+  }
+  Serial.printf("SwitchBot: Connect failed (%s)\n", label);
+  return false;
+}
+
 void SwitchBotBLE::update() {
   if (_result != SwitchBotResult::PENDING) {
     return;
@@ -232,8 +309,33 @@ void SwitchBotBLE::doPress() {
 
   SwitchBotResult outcome = SwitchBotResult::CONNECT_FAILED;
 
-  Serial.printf("SwitchBot: Connecting to %s...\n", _targetMAC.c_str());
-  if (_client->connect(_targetAddress, false)) {
+  // A MAC alone does not name a peer: the same six bytes address a different
+  // device depending on whether they are a public or a random static address,
+  // and NimBLEAddress defaults to public while SwitchBot Bots use random
+  // static. (Web Bluetooth never hits this - the chooser hands the browser an
+  // already-discovered device, address type included.) So scan once to learn
+  // the real type, and if the Bot did not advertise in that window, still try
+  // both types rather than giving up on the guess we started with.
+  if (!_addressResolved) {
+    resolveAddressByScan();
+  }
+
+  bool connected =
+      tryConnect(_targetAddress, _addressResolved ? "scanned" : "assumed");
+
+  if (!connected && !_addressResolved) {
+    uint8_t otherType = _targetAddress.getType() == BLE_ADDR_PUBLIC
+                            ? BLE_ADDR_RANDOM
+                            : BLE_ADDR_PUBLIC;
+    NimBLEAddress alternate(_targetMAC.c_str(), otherType);
+    connected = tryConnect(alternate, "fallback");
+    if (connected) {
+      _targetAddress = alternate;
+      _addressResolved = true;
+    }
+  }
+
+  if (connected) {
     NimBLERemoteService *service =
         _client->getService(NimBLEUUID(SWITCHBOT_SERVICE_UUID));
     if (!service) {
@@ -281,7 +383,9 @@ void SwitchBotBLE::doPress() {
     }
     _client->disconnect();
   } else {
-    Serial.println("SwitchBot: Connect failed");
+    // tryConnect() has already logged each attempt. Drop the cached address so
+    // the next press rescans rather than retrying a type that just failed.
+    _addressResolved = false;
   }
 
   // Leave the client allocated: NimBLE's deleteClient() can hang on the
