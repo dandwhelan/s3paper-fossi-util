@@ -134,6 +134,16 @@ public:
    */
   time_t loadRTCFallback();
 
+  /**
+   * Append a battery profiling record to the SD card
+   * @param current_time UNIX epoch timestamp
+   * @param voltage Battery voltage
+   * @param percentage Battery percentage
+   * @param isEcoMode True if system is in 80MHz Eco Mode
+   * @param isBleConnected True if connected to BLE device
+   */
+  void logBatteryProfile(time_t current_time, float voltage, int percentage, bool isEcoMode, bool isBleConnected);
+
 private:
   bool _available;
 

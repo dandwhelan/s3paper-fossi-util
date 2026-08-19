@@ -3266,8 +3266,8 @@ void UIManager::handleHomeClassicGridTouch(int x, int y) {
     int acCenter =
         statusX + 20 + toggleSpacing * 2 + (toggleSpacing - 70) / 2 + 35;
 
-    if (y >= buttonY - 30 && y <= buttonY + 80) {
-      if (abs(x - usbCenter) < 50) {
+    if (y >= buttonY - 50 && y <= buttonY + 100) {
+      if (abs(x - usbCenter) < 65) {
         if (bleClient && bleClient->isConnected()) {
           Serial.println("Toggle USB");
           bleClient->toggleUSB();
@@ -3276,7 +3276,7 @@ void UIManager::handleHomeClassicGridTouch(int x, int y) {
           _needsRefresh = true;
           _lastRefresh = 0;
         }
-      } else if (abs(x - dcCenter) < 50) {
+      } else if (abs(x - dcCenter) < 65) {
         if (bleClient && bleClient->isConnected()) {
           Serial.println("Toggle DC");
           bleClient->toggleDC();
@@ -3285,7 +3285,7 @@ void UIManager::handleHomeClassicGridTouch(int x, int y) {
           _needsRefresh = true;
           _lastRefresh = 0;
         }
-      } else if (abs(x - acCenter) < 50) {
+      } else if (abs(x - acCenter) < 65) {
         if (bleClient && bleClient->isConnected()) {
           Serial.println("Toggle AC");
           bleClient->toggleAC();

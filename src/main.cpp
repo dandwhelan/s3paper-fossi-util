@@ -15,6 +15,7 @@
 
 #include "ble/ble_client.h"
 #include "ble/switchbot_client.h"
+#include "hardware/battery.h"
 #include "hardware/buzzer.h"
 #include "hardware/display.h"
 #include "hardware/rtc.h"
@@ -394,6 +395,19 @@ void loop() {
       sdManager->saveRTCFallback(time(NULL));
     }
     lastRTCSave = millis();
+  }
+
+  // Log battery profile every 3 minutes
+  static unsigned long lastBatteryLog = millis(); 
+  if (millis() - lastBatteryLog > 180000) { // 3 minutes = 180,000 ms
+    if (sdManager) {
+      float voltage = Battery::getVoltage();
+      int percentage = Battery::voltageToPercentage(voltage);
+      bool isEcoMode = (uiManager && uiManager->isEcoMode());
+      bool isBleConnected = (bleClient && bleClient->isConnected());
+      sdManager->logBatteryProfile(time(NULL), voltage, percentage, isEcoMode, isBleConnected);
+    }
+    lastBatteryLog = millis();
   }
 
   // Update M5 (buttons, touch, etc.)

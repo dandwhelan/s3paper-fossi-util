@@ -325,7 +325,7 @@ void GivEnergyMQTT::startNTP() {
   // configTzTime is asynchronous - SNTP fetches in the background and sets the
   // system clock when a response arrives. checkNTP() detects completion, so the
   // main loop is never blocked waiting for a server.
-  configTzTime("GMT0BST,M3.5.0/1,M10.5.0", "pool.ntp.org", "time.nist.gov");
+  configTzTime("GMT0BST,M3.5.0/1,M10.5.0", "uk.pool.ntp.org", "time.nist.gov");
   _ntpPending = true;
 }
 

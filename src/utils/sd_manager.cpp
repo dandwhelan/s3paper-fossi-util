@@ -466,3 +466,27 @@ time_t SDManager::loadRTCFallback() {
   }
   return saved_time;
 }
+
+void SDManager::logBatteryProfile(time_t current_time, float voltage, int percentage, bool isEcoMode, bool isBleConnected) {
+  if (!_available || current_time < 1577836800) return; // Only save valid timestamps
+
+  const char* filename = "/history/battery_profile.csv";
+  bool fileExists = SD.exists(filename);
+  
+  File file = SD.open(filename, FILE_APPEND);
+  if (!file) {
+    Serial.println("SDManager: Failed to open battery profile for appending");
+    return;
+  }
+
+  // Write CSV header if this is a new file
+  if (!fileExists || file.size() == 0) {
+    file.println("Timestamp,Voltage,Percentage,EcoMode,BLE_Connected");
+  }
+
+  // Append data row
+  file.printf("%ld,%.2f,%d,%d,%d\n", (long)current_time, voltage, percentage, isEcoMode ? 1 : 0, isBleConnected ? 1 : 0);
+  file.close();
+  
+  Serial.printf("SDManager: Logged battery profile: %.2fV (%d%%)\n", voltage, percentage);
+}
