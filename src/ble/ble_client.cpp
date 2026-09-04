@@ -108,11 +108,21 @@ bool FossibotBLE::connectToDevice() {
     return true;
 
   // CRITICAL: Boost CPU for BLE operations - 80MHz Eco Mode causes connection
-  // failures
-  if (getCpuFrequencyMhz() < 240) {
+  // failures. Remember what we came in at so every exit path can put it back:
+  // leaking 240MHz after a *successful* connect used to pin the device at full
+  // clock forever, because the UI's eco-mode flag was still set and so
+  // checkPowerManagement() never re-applied 80MHz.
+  uint32_t entryFreq = getCpuFrequencyMhz();
+  if (entryFreq < 240) {
     setCpuFrequencyMhz(240);
     Serial.println("BLE: Boosted CPU to 240MHz for connection");
   }
+  auto restoreCpu = [entryFreq]() {
+    if (entryFreq < 240 && getCpuFrequencyMhz() != entryFreq) {
+      setCpuFrequencyMhz(entryFreq);
+      Serial.printf("BLE: Restored CPU to %uMHz\n", entryFreq);
+    }
+  };
 
   // CRITICAL FIX: Wait for EPD to be fully idle before starting BLE radio ops
   Serial.println("BLE: Waiting for EPD idle...");
@@ -157,9 +167,9 @@ bool FossibotBLE::connectToDevice() {
     // NimBLE deleteClient() can hang on ESP32-S3 after failed connection
     Serial.println("BLE: Keeping client for retry");
 
-    // Restore CPU to save power during retry wait
-    setCpuFrequencyMhz(80);
-    Serial.println("BLE: Restored CPU to 80MHz");
+    // Restore the clock we came in at, so a retry from eco mode does not leave
+    // the device running at 240MHz until the next touch.
+    restoreCpu();
 
     return false;
   }
@@ -168,6 +178,7 @@ bool FossibotBLE::connectToDevice() {
   if (!discoverServices()) {
     _connecting = false; // Connection attempt finished
     disconnect();
+    restoreCpu();
     return false;
   }
 
@@ -193,6 +204,10 @@ bool FossibotBLE::connectToDevice() {
         "BLE: Boot auto-enable window expired (uptime: %lu ms > %lu ms)\n",
         millis(), BOOT_AUTO_ENABLE_WINDOW_MS);
   }
+
+  // Link is up and the radio idles on its own between connection events - no
+  // reason to keep burning 240MHz.
+  restoreCpu();
 
   return true;
 }

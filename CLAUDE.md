@@ -159,7 +159,7 @@ There are **no automated tests or linters**. Verification is done by building (`
 ## Power Management
 
 - **CPU scaling**: 240 MHz on touch → 80 MHz after 5s idle (eco mode)
-- **Campervan**: Deep sleep after configurable inactivity. Blocked while timer/pomodoro running. Wake: touch (GPIO 48)
+- **Campervan**: Deep sleep after `display.auto_sleep_minutes` of no touch **while the BLE link is down and the dashboard is showing** (deep sleep kills the BLE controller, so a live link is never cut, and a reader/game/note screen is never closed under the user), plus the outer 60-min disconnect rule. `auto_sleep_minutes = 0` disables both. Blocked while timer/pomodoro running. Wake: touch (GPIO 48)
 - **Home**: Deep sleep disabled (device is mains-powered, always-on monitoring)
 - **Battery cutoff**: Both modes sleep at 3.3V to protect Li-Po
 
@@ -175,6 +175,10 @@ strategy (inactivity timeout, 60-min disconnect), not an idle strategy.
 
 Ranked, biggest first, for a campervan device sitting on the dashboard:
 
+0. **Staying awake when nothing is happening.** Sitting on the dashboard with
+   no Fossibot in range is the worst case: nothing to display, nothing to talk
+   to, and (before the inactivity sleep above) an hour of full idle draw before
+   anything powered down. Idle sleep beats every micro-optimisation below.
 1. **Being awake at all.** The main loop never light-sleeps: it spins on
    `delay(10)` and polls the GT911 over I2C every 15ms (30ms in eco mode). At
    80 MHz that is a continuous ~25-35 mA; at 240 MHz ~40-55 mA. Idle current
