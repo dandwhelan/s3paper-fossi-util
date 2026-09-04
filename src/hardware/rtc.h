@@ -66,6 +66,20 @@ inline bool isPresent() {
 }
 
 /**
+ * Day of week (0=Sunday) for a calendar date - Sakamoto's algorithm.
+ * The BM8563's weekday register is only as good as whatever last wrote it,
+ * so the date itself is the source of truth.
+ */
+inline int calcWeekday(int year, int month, int day) {
+  static const int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+  int y = year;
+  if (month < 3) {
+    y -= 1;
+  }
+  return (y + y / 4 - y / 100 + y / 400 + t[month - 1] + day) % 7;
+}
+
+/**
  * Get current time components
  */
 inline void getTime(int &hours, int &minutes, int &seconds) {
@@ -79,9 +93,9 @@ inline void getTime(int &hours, int &minutes, int &seconds) {
  */
 inline void getDate(int &year, int &month, int &day, int &weekday) {
   day = bcdToDec(readReg(REG_DAYS) & 0x3F);
-  weekday = readReg(REG_WEEKDAYS) & 0x07;
   month = bcdToDec(readReg(REG_MONTHS) & 0x1F);
   year = 2000 + bcdToDec(readReg(REG_YEARS));
+  weekday = calcWeekday(year, month, day);
 }
 
 /**
@@ -97,6 +111,7 @@ inline void setTime(int hours, int minutes, int seconds) {
  * Set date
  */
 inline void setDate(int year, int month, int day) {
+  writeReg(REG_WEEKDAYS, calcWeekday(year, month, day));
   writeReg(REG_DAYS, decToBcd(day));
   writeReg(REG_MONTHS, decToBcd(month));
   writeReg(REG_YEARS, decToBcd(year - 2000));
@@ -107,6 +122,7 @@ inline void setDate(int year, int month, int day) {
  */
 inline void setDateTime(int year, int month, int day, int hours, int minutes,
                         int seconds) {
+  writeReg(REG_WEEKDAYS, calcWeekday(year, month, day));
   writeReg(REG_SECONDS, decToBcd(seconds));
   writeReg(REG_MINUTES, decToBcd(minutes));
   writeReg(REG_HOURS, decToBcd(hours));
@@ -133,6 +149,7 @@ inline void getTimeString(char *buffer, size_t size,
   timeinfo.tm_hour = hours;
   timeinfo.tm_min = minutes;
   timeinfo.tm_sec = seconds;
+  timeinfo.tm_wday = weekday;
   strftime(buffer, size, format, &timeinfo);
 }
 

@@ -282,8 +282,8 @@ because each theme puts it somewhere different:
 |---|---|
 | classic_grid | Bottom-right of the clock/date panel |
 | compact_status | Right end of the band above the toggle strip |
-| horizontal_bars | Row 4, between the clock and the toggles (the only block wide enough) |
-| sector | Reserved row under the DC sector — the three sectors give up 22px each |
+| horizontal_bars | Row 4, its own column between the clock and the output buttons |
+| sector | Reserved row under the DC sector, full column width (the sectors give up height for it; the connection dot was dropped so the button lines up) |
 | live_graph | Right end of the toggle strip; the connection dot moves to the left end |
 
 `handlePowerButtonTouch()` runs from `handleHomeTouch()` **before** the
@@ -293,6 +293,25 @@ queued and executed from `SwitchBotBLE::update()` in the main loop, never in the
 touch handler — a connect can block for seconds. `main.cpp` calls
 `forceRefresh()` when the press result changes, so the label updates even in
 themes that skip clock-tick redraws.
+
+### Output On/Off Buttons (Campervan only)
+
+`drawOutputToggle()` renders USB / DC / AC as labelled buttons carrying their
+own ON/OFF state (filled = on), used by **sector** and **horizontal_bars**. Each
+button records its bounds, and `handleOutputToggleTouch()` — called from
+`handleHomeTouch()` after the power button and Bluetooth strip — hit-tests
+them, so the drawn geometry and the hit zones cannot drift apart. In sector the
+whole panel stays tappable as well (`handleHomeSectorTouch()`); the older
+themes keep their own strip handlers.
+
+### Live Graph refreshes
+
+The panel refreshes whatever area was written since the last flush, so a
+full-screen redraw drives every pixel — that is the flashing, not the waveform
+(the theme already flushes in `epd_fastest`). When only the minute has moved,
+`liveGraphClockTick()` repaints the clock alone and calls
+`M5.Display.display(x, y, w, h)` on just that rectangle; the plot is redrawn in
+full only when the sampled data actually changes.
 
 ### Screens Available (Both Modes)
 

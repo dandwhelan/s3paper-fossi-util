@@ -249,6 +249,19 @@ private:
   int _pwrBtnX = 0, _pwrBtnY = 0, _pwrBtnW = 0, _pwrBtnH = 0;
   bool _showHomePowerConfirm = false;
 
+  // --- Output on/off buttons (USB / DC / AC) ---
+  // Drawn as labelled buttons showing their own ON/OFF state, so a sector or
+  // a row reads as something you can press rather than a readout. Each button
+  // records its bounds here and one handler hit-tests them, instead of every
+  // theme's touch handler re-deriving the layout it was drawn with (which is
+  // how they drifted apart).
+  enum { TOGGLE_USB = 0, TOGGLE_DC = 1, TOGGLE_AC = 2 };
+  void drawOutputToggle(int idx, int x, int y, int w, int h, const char *label,
+                        bool on);
+  bool handleOutputToggleTouch(int x, int y); // true if the touch was consumed
+  int _togX[3] = {0, 0, 0}, _togY[3] = {0, 0, 0};
+  int _togW[3] = {0, 0, 0}, _togH[3] = {0, 0, 0};
+
   // How long a SwitchBot press result stays on the button before it reverts
   // to "POWER ON".
   static const unsigned long PWR_RESULT_HOLD_MS = 12000;
@@ -289,7 +302,6 @@ private:
   void handleHomeTouch(int x, int y, TouchEvent event);
   void handleHomeClassicGridTouch(int x, int y);
   void handleHomeCompactStatusTouch(int x, int y);
-  void handleHomeHorizontalBarsTouch(int x, int y);
   void handleHomeSectorTouch(int x, int y);
   void handleSettingsTouch(int x, int y);         // Main menu touch
   void handleDeviceSettingsTouch(int x, int y);   // Device settings touch
@@ -487,6 +499,13 @@ private:
   int _graphCount = 0; // Valid samples stored (<= GRAPH_SAMPLES)
   unsigned long _lastGraphSample = 0;
   void samplePowerGraph();
+
+  // Live Graph: bounds of the clock in the info column. A whole-screen e-ink
+  // update once a minute is what makes this theme flash, so when only the
+  // minute has moved the clock is repainted on its own and pushed as a
+  // partial panel update instead.
+  int _lgClockX = 0, _lgClockY = 0, _lgClockW = 0, _lgClockH = 0;
+  void liveGraphClockTick();
 
   // Power History (data collection active, UI Phase 3)
   PowerHistory _powerHistory;
