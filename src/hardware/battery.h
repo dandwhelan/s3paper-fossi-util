@@ -36,10 +36,16 @@ inline void init() {
   analogSetAttenuation(ADC_11db); // Full range (0-3.3V)
 }
 
+// How long a reading stays good enough to reuse. The pack cannot move
+// meaningfully inside this window, and the callers (power management, status
+// bars) previously forced a fresh ADC conversion on every main-loop pass -
+// hundreds of conversions a second, each with a Serial.printf attached.
+constexpr unsigned long CACHE_MS = 10000;
+
 /**
- * Get current battery voltage in volts using direct ADC reading
+ * Read the battery voltage from hardware, bypassing the cache.
  */
-inline float getVoltage() {
+inline float readVoltage() {
   // First try M5.Power (in case it works on some units)
   float m5Voltage = M5.Power.getBatteryVoltage() / 1000.0f;
   if (m5Voltage > 0.5f) {
@@ -51,11 +57,29 @@ inline float getVoltage() {
   float adcVoltage = (rawADC / (float)ADC_RESOLUTION) * ADC_REF_VOLTAGE;
   float batteryVoltage = adcVoltage * VOLTAGE_DIVIDER;
 
-  // Debug output
+#ifdef SERIAL_DEBUG
   Serial.printf("Battery ADC: raw=%d, adcV=%.2f, batV=%.2f\n", rawADC,
                 adcVoltage, batteryVoltage);
+#endif
 
   return batteryVoltage;
+}
+
+/**
+ * Get current battery voltage in volts (cached for CACHE_MS).
+ */
+inline float getVoltage() {
+  static float cachedVoltage = 0.0f;
+  static unsigned long lastRead = 0;
+
+  unsigned long now = millis();
+  if (cachedVoltage > 0.0f && (now - lastRead) < CACHE_MS) {
+    return cachedVoltage;
+  }
+
+  cachedVoltage = readVoltage();
+  lastRead = now;
+  return cachedVoltage;
 }
 
 /**

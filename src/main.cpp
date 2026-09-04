@@ -35,6 +35,17 @@ void initBLE();
 void initMQTT();
 void mainLoop();
 void showBootScreen();
+void resetGT911();
+void recoverTouchBus();
+
+// Consecutive I2C failures while talking to the GT911. The touch controller
+// shares the bus with the RTC and can wedge (a NAK storm, a half-finished
+// transaction); when it does, readTouchManual() returns false forever and the
+// device looks crashed - the screen keeps showing whatever was last drawn and
+// nothing responds to touch. Counted here so loop() can re-init the bus.
+static uint32_t g_touchI2cErrors = 0;
+static uint32_t g_touchBusRecoveries = 0;
+static const uint32_t TOUCH_I2C_ERROR_LIMIT = 100;
 
 // Global instances
 UIManager *uiManager = nullptr;
@@ -270,12 +281,19 @@ bool readTouchManual(int *x, int *y) {
   Wire.beginTransmission(0x5D);
   Wire.write(0x81);
   Wire.write(0x4E);
-  if (Wire.endTransmission() != 0)
+  if (Wire.endTransmission() != 0) {
+    g_touchI2cErrors++;
     return false;
+  }
 
-  if (Wire.requestFrom(0x5D, 1) != 1)
+  if (Wire.requestFrom(0x5D, 1) != 1) {
+    g_touchI2cErrors++;
     return false;
+  }
   uint8_t status = Wire.read();
+
+  // The controller answered, so the bus is healthy again.
+  g_touchI2cErrors = 0;
 
   // Debug: Print status if it's not 0 (idle) or 0x80 (touched but 0 points?
   // unlikely)
@@ -291,7 +309,12 @@ bool readTouchManual(int *x, int *y) {
     Wire.endTransmission();
 
     // Read 7 bytes (TrackID, XL, XH, YL, YH, SizeL, SizeH)
-    Wire.requestFrom(0x5D, 7);
+    // A short read leaves Wire.read() returning -1, which would be parsed as
+    // a wild coordinate - discard the sample instead.
+    if (Wire.requestFrom(0x5D, 7) != 7) {
+      g_touchI2cErrors++;
+      return false;
+    }
     for (int i = 0; i < 7; i++)
       raw[i] = Wire.read();
 
@@ -387,6 +410,21 @@ void loop() {
   if (millis() - lastTouchPoll > touchPollInterval) {
     lastTouchPoll = millis();
 
+    // A wedged GT911 is indistinguishable from a crash to the user: the
+    // dashboard freezes on its last frame and nothing responds. Re-init the
+    // shared bus and soft-reset the controller rather than staying dead until
+    // a power cycle.
+    if (g_touchI2cErrors >= TOUCH_I2C_ERROR_LIMIT) {
+      g_touchI2cErrors = 0;
+      g_touchBusRecoveries++;
+      Serial.printf("TOUCH: I2C wedged - recovering bus (recovery #%lu)\n",
+                    (unsigned long)g_touchBusRecoveries);
+      recoverTouchBus();
+      wasTouching = false;
+      if (uiManager)
+        uiManager->forceRefresh();
+    }
+
     int tx, ty;
     bool touching = readTouchManual(&tx, &ty);
     bool validTouch =
@@ -464,8 +502,31 @@ void loop() {
   // Update UI (handles its own refresh timing)
   uiManager->update();
 
-  // Small delay to prevent tight loop
+  // Small delay to prevent tight loop. In eco mode the touch poll only runs
+  // every 30ms, so waking three times in between is pure overhead - sleep up
+  // to the next poll instead. delay() yields to FreeRTOS, so this is idle
+  // time, not spin.
+  if (uiManager && uiManager->isEcoMode()) {
+    unsigned long sinceLastPoll = millis() - lastTouchPoll;
+    delay(sinceLastPoll >= touchPollInterval
+              ? 1
+              : (touchPollInterval - sinceLastPoll));
+  } else {
+    delay(10);
+  }
+}
+
+// Re-initialize the shared I2C bus and the touch controller after a wedge.
+// Both the RTC (0x51) and the GT911 (0x5D) live on this bus, so the whole bus
+// is torn down and brought back up.
+void recoverTouchBus() {
+  Wire.end();
   delay(10);
+  Wire.begin(41, 42);
+  Wire.setClock(400000);
+  delay(10);
+  resetGT911();
+  delay(50);
 }
 
 void initHardware() {
