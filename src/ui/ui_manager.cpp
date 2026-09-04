@@ -270,8 +270,22 @@ void UIManager::update() {
     bool bleStatusChanged =
         bleStatusVisible() && (bleStatusSignature() != _lastRenderedBleSig);
     if (clockChanged || dataChanged || bleStatusChanged) {
-      Serial.println("UI: 60s Auto-refresh trigger");
-      _needsRefresh = true;
+      // Live Graph: a minute tick on its own does not justify redrawing the
+      // whole panel (that full-screen update is what flashes). Repaint the
+      // clock as a partial update and leave the plot alone until the data
+      // moves.
+      bool liveGraphTick = clockChanged && !dataChanged && !bleStatusChanged &&
+                           config && config->isCampervanMode() &&
+                           config->getTheme() == "live_graph" &&
+                           _lgClockW > 0 && !_showHomePowerConfirm;
+      if (liveGraphTick) {
+        Serial.println("UI: Live Graph clock tick (partial refresh)");
+        liveGraphClockTick();
+        _lastRefresh = millis();
+      } else {
+        Serial.println("UI: 60s Auto-refresh trigger");
+        _needsRefresh = true;
+      }
     } else {
       // Nothing to show — re-arm the timer without touching the display
       _lastRefresh = millis();
@@ -754,6 +768,8 @@ void UIManager::drawHomeScreen() {
       bleClient ? (int)bleClient->getConnState() : -1;
   _bleStripW = 0;  // themes re-record this if they draw the strip
   _pwrBtnW = 0;    // ditto for the power on/off button
+  _togW[0] = _togW[1] = _togW[2] = 0; // and the output on/off buttons
+  _lgClockW = 0;                      // and the Live Graph clock
 
   M5.Display.fillScreen(COLOR_WHITE);
 
@@ -1096,90 +1112,90 @@ void UIManager::drawHomeCompactStatus() {
 // Theme: Horizontal Bars (full-width rows, HUD style)
 // ============================================================================
 void UIManager::drawHomeHorizontalBars() {
-  int contentBottom = SCREEN_HEIGHT;
   int margin = 10;
+  int gap = 8;
   int barW = SCREEN_WIDTH - margin * 2;
-  int gap = 5;
 
-  // Layout: 4 rows filling available space
-  // Row 1 (battery): shorter, Row 2/3 (IN/OUT): taller, Row 4 (clock+toggles): remainder
-  int battRowH = 55;
-  int powerRowH = 105; // 1.5x original 70
-  int usedH = battRowH + powerRowH * 2 + gap * 3;
-  int row4H = contentBottom - margin - usedH - gap - margin;
-
-  // Row 1: Battery — full-width bar, no label, % right-aligned
+  // Four full-width rows. Row 4 is the busy one - clock, power button,
+  // outputs and (when the link is down) the Bluetooth strip all live there -
+  // so it gets fixed columns and a reserved band for the strip instead of
+  // everything being positioned relative to everything else.
+  int battRowH = 60;
+  int powerRowH = 118;
   int row1Y = margin;
+  int row2Y = row1Y + battRowH + gap;
+  int row3Y = row2Y + powerRowH + gap;
+  int row4Y = row3Y + powerRowH + gap;
+  int row4H = SCREEN_HEIGHT - margin - row4Y;
+
+  // Row 1: Battery - full-width bar, no label, % right-aligned
   if (_powerData.hasError()) {
     drawErrorBanner(margin, row1Y, barW, battRowH);
   } else {
     M5.Display.drawRect(margin, row1Y, barW, battRowH, COLOR_BLACK);
-    // Full-width progress bar with padding
-    int pbX = margin + 10;
-    int pbW = barW - 120; // leave room for % text
-    int pbH = battRowH - 16;
-    drawProgressBar(pbX, row1Y + 8, pbW, pbH,
+    int pbX = margin + 12;
+    int pbW = barW - 130; // leave room for the % text
+    int pbH = battRowH - 20;
+    drawProgressBar(pbX, row1Y + 10, pbW, pbH,
                     _powerData.batteryPercent / 100.0f, true);
-    // Percentage right-aligned
     M5.Display.setTextColor(COLOR_BLACK);
     M5.Display.setTextSize(2);
     char pctStr[8];
     snprintf(pctStr, sizeof(pctStr), "%.0f%%", _powerData.batteryPercent);
     int pw = M5.Display.textWidth(pctStr);
-    M5.Display.setCursor(margin + barW - pw - 15, row1Y + (battRowH - 16) / 2);
+    M5.Display.setCursor(margin + barW - pw - 16,
+                         row1Y + (battRowH - M5.Display.fontHeight()) / 2);
     M5.Display.print(pctStr);
   }
 
-  // Row 2: IN — label and watts inline, bar below
-  int row2Y = row1Y + battRowH + gap;
-  M5.Display.drawRect(margin, row2Y, barW, powerRowH, COLOR_BLACK);
-  M5.Display.setTextColor(COLOR_BLACK);
-  // Label top-left, watts right-aligned — same text size, inline
-  M5.Display.setTextSize(2);
-  M5.Display.setCursor(margin + 15, row2Y + 10);
-  M5.Display.print("IN");
-  char wBuf[16];
-  snprintf(wBuf, sizeof(wBuf), "%.0f", _powerData.inputPower);
-  int ww = M5.Display.textWidth(wBuf);
-  M5.Display.setCursor(margin + barW - ww - 15, row2Y + 10);
-  M5.Display.print(wBuf);
-  // Progress bar below the text line
-  int pbX = margin + 15;
-  int pbW = barW - 30;
-  drawProgressBar(pbX, row2Y + 45, pbW, 25,
-                  _powerData.inputPower / 1100.0f, true);
-  // Time bottom-left
-  M5.Display.setTextSize(1);
-  M5.Display.setCursor(margin + 15, row2Y + powerRowH - 22);
-  M5.Display.print(Fossibot::formatTime(_powerData.minutesToFull));
-  M5.Display.print(" to full");
+  // Rows 2 and 3: IN / OUT - label and watts inline, bar below, time last
+  struct {
+    int y;
+    const char *label;
+    float watts;
+    float scale;
+    int minutes;
+    const char *suffix;
+  } rows[] = {
+      {row2Y, "IN", _powerData.inputPower, 1100.0f, _powerData.minutesToFull,
+       " to full"},
+      {row3Y, "OUT", _powerData.outputPower, 3000.0f,
+       _powerData.minutesToEmpty, " remaining"},
+  };
 
-  // Row 3: OUT — label and watts inline, bar below
-  int row3Y = row2Y + powerRowH + gap;
-  M5.Display.drawRect(margin, row3Y, barW, powerRowH, COLOR_BLACK);
-  M5.Display.setTextColor(COLOR_BLACK);
-  // Label top-left, watts right-aligned — same text size, inline
-  M5.Display.setTextSize(2);
-  M5.Display.setCursor(margin + 15, row3Y + 10);
-  M5.Display.print("OUT");
-  snprintf(wBuf, sizeof(wBuf), "%.0f", _powerData.outputPower);
-  ww = M5.Display.textWidth(wBuf);
-  M5.Display.setCursor(margin + barW - ww - 15, row3Y + 10);
-  M5.Display.print(wBuf);
-  // Progress bar below the text line
-  drawProgressBar(pbX, row3Y + 45, pbW, 25,
-                  _powerData.outputPower / 3000.0f, true);
-  // Time bottom-left
-  M5.Display.setTextSize(1);
-  M5.Display.setCursor(margin + 15, row3Y + powerRowH - 22);
-  M5.Display.print(Fossibot::formatTime(_powerData.minutesToEmpty));
-  M5.Display.print(" remaining");
+  for (auto &r : rows) {
+    M5.Display.drawRect(margin, r.y, barW, powerRowH, COLOR_BLACK);
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setTextSize(2);
+    M5.Display.setCursor(margin + 16, r.y + 10);
+    M5.Display.print(r.label);
 
-  // Row 4: Clock + Toggles
-  int row4Y = row3Y + powerRowH + gap;
+    char wBuf[16];
+    snprintf(wBuf, sizeof(wBuf), "%.0fW", r.watts);
+    int ww = M5.Display.textWidth(wBuf);
+    M5.Display.setCursor(margin + barW - ww - 16, r.y + 10);
+    M5.Display.print(wBuf);
+
+    drawProgressBar(margin + 16, r.y + 64, barW - 32, 24, r.watts / r.scale,
+                    true);
+
+    M5.Display.setTextSize(1);
+    M5.Display.setCursor(margin + 16, r.y + 92);
+    M5.Display.print(Fossibot::formatTime(r.minutes));
+    M5.Display.print(r.suffix);
+  }
+
+  // Row 4: clock | power button | output buttons
   M5.Display.drawRect(margin, row4Y, barW, row4H, COLOR_BLACK);
 
-  // Clock (left side) — time large, date well below
+  // The Bluetooth strip owns a band at the bottom of the row when it is
+  // showing; everything else is laid out inside what is left.
+  bool showStrip = bleStatusVisible();
+  int stripH = 30;
+  int contentTop = row4Y + 8;
+  int contentBottom = row4Y + row4H - (showStrip ? stripH + 12 : 8);
+  int contentH = contentBottom - contentTop;
+
   int displayHour, displayMinute, displaySecond;
   RTC::getTime(displayHour, displayMinute, displaySecond);
   int displayYear, displayMonth, displayDay, displayDow;
@@ -1195,63 +1211,49 @@ void UIManager::drawHomeHorizontalBars() {
   char timeStr[16];
   snprintf(timeStr, sizeof(timeStr), "%02d:%02d", displayHour, displayMinute);
   M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setTextSize(4);
-  M5.Display.setCursor(margin + 20, row4Y + 8);
+  M5.Display.setTextSize(3);
+  M5.Display.setCursor(margin + 20, contentTop + 6);
   M5.Display.print(timeStr);
 
   char dateStr[32];
   snprintf(dateStr, sizeof(dateStr), "%s %d %s %d", dayNames[displayDow],
            displayDay, monthNames[mon], displayYear);
   M5.Display.setTextSize(1);
-  M5.Display.setCursor(margin + 20, row4Y + row4H - 27);
+  M5.Display.setCursor(margin + 20, contentTop + 88);
   M5.Display.print(dateStr);
 
-  // Toggles (right side)
-  int toggleBaseX = SCREEN_WIDTH / 2 + 80;
-  int toggleCenterY = row4Y + row4H / 2;
-  M5.Display.setFont(&fonts::DejaVu24);
+  // Power button: its own column between the clock and the outputs
+  int pwrW = 190;
+  int pwrH = 64;
+  drawPowerButton(margin + 300, contentTop + (contentH - pwrH) / 2, pwrW, pwrH);
 
-  // USB
-  M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setTextSize(1.5);
-  int tw = M5.Display.textWidth("USB");
-  M5.Display.setCursor(toggleBaseX - tw / 2, toggleCenterY - 25);
-  M5.Display.print("USB");
-  drawToggle(toggleBaseX - 15, toggleCenterY - 18, "", _powerData.usbActive);
+  // Output buttons: fixed columns at the right, clear of everything else
+  int togW = 110;
+  int togH = 88;
+  int togGap = 12;
+  int togY = contentTop + (contentH - togH) / 2;
+  int togX = SCREEN_WIDTH - margin - 40 - (togW * 3 + togGap * 2);
+  drawOutputToggle(TOGGLE_USB, togX, togY, togW, togH, "USB",
+                   _powerData.usbActive);
+  drawOutputToggle(TOGGLE_DC, togX + togW + togGap, togY, togW, togH, "DC",
+                   _powerData.dcActive);
+  drawOutputToggle(TOGGLE_AC, togX + (togW + togGap) * 2, togY, togW, togH,
+                   "AC", _powerData.acActive);
 
-  // DC
-  int dcX = toggleBaseX + 130;
-  tw = M5.Display.textWidth("DC");
-  M5.Display.setCursor(dcX - tw / 2, toggleCenterY - 25);
-  M5.Display.print("DC");
-  drawToggle(dcX - 15, toggleCenterY - 18, "", _powerData.dcActive);
-
-  // AC
-  int acX = dcX + 130;
-  tw = M5.Display.textWidth("AC");
-  M5.Display.setCursor(acX - tw / 2, toggleCenterY - 25);
-  M5.Display.print("AC");
-  drawToggle(acX - 15, toggleCenterY - 18, "", _powerData.acActive);
-
-  // Connection indicator
-  int connX = SCREEN_WIDTH - 40;
+  // Connection indicator, right of the buttons
+  int connX = SCREEN_WIDTH - margin - 15;
+  int connY = togY + togH / 2;
   if (_powerData.connected) {
-    M5.Display.fillCircle(connX, toggleCenterY, 6, COLOR_BLACK);
+    M5.Display.fillCircle(connX, connY, 6, COLOR_BLACK);
   } else {
-    M5.Display.drawCircle(connX, toggleCenterY, 6, COLOR_BLACK);
-    M5.Display.drawLine(connX - 6, toggleCenterY - 6, connX + 6, toggleCenterY + 6, COLOR_BLACK);
+    M5.Display.drawCircle(connX, connY, 6, COLOR_BLACK);
+    M5.Display.drawLine(connX - 6, connY - 6, connX + 6, connY + 6,
+                        COLOR_BLACK);
   }
 
-  // Power button: the column between the clock and the toggles is the only
-  // block in row 4 wide enough for the label. Sits above the Bluetooth strip
-  // band (row4Y+167..row4Y+201) and left of the toggle hit zones (x >= 500).
-  drawPowerButton(margin + 290, row4Y + 65, 175, 55);
-
-  // Bluetooth status strip: lower part of row 4, clear of toggles and date
-  if (bleStatusVisible()) {
-    int stripH = 30;
-    int stripY = row4Y + row4H - 34 - stripH;
-    drawBleStatusStrip(margin + 10, stripY, barW - 20, stripH);
+  if (showStrip) {
+    drawBleStatusStrip(margin + 10, row4Y + row4H - stripH - 8, barW - 20,
+                       stripH);
   }
 }
 
@@ -1281,23 +1283,26 @@ void UIManager::drawHomeSector() {
                  _powerData.outputPower, 3000.0f, "remaining",
                  _powerData.minutesToEmpty, false);
 
-  // --- Right half: Output breakdown sectors ---
+  // --- Right half: output breakdown, one sector per output ---
+  // Each sector carries its own ON/OFF button so it reads as a control, not a
+  // readout; the whole sector stays tappable as a larger target for it.
+  // The power button takes a reserved row underneath, the full width of the
+  // column so it lines up with the sectors above.
   int rightX = SCREEN_WIDTH / 2 + margin;
   int rightW = SCREEN_WIDTH / 2 - margin * 2;
-  // The three sectors give up 22px each to reserve a power-button row at the
-  // bottom of the column. handleHomeSectorTouch recomputes this identically.
-  int pwrH = 56;
+  int pwrH = 58;
   int sectorH = (availH - margin * 3 - pwrH) / 3; // 3 sectors + power row
 
   M5.Display.setTextColor(COLOR_BLACK);
 
-  // Determine what label to show for the non-USB power
-  // If only AC active: label it "AC"
-  // If only DC active: label it "DC"
-  // If both: label it "AC+DC"
-  // If neither: show 0 for both
+  // Non-USB power is reported as one figure, so with both outputs on it can
+  // only be shown once: AC alone -> AC, DC alone -> DC, both -> "AC+DC".
   bool acOn = _powerData.acActive;
   bool dcOn = _powerData.dcActive;
+
+  int togW = 100;
+  int togH = 44;
+  int togX = rightX + rightW - togW - 15;
 
   // --- USB Sector ---
   int usbY = topY;
@@ -1305,92 +1310,65 @@ void UIManager::drawHomeSector() {
   M5.Display.setTextSize(2);
   M5.Display.setCursor(rightX + 15, usbY + 12);
   M5.Display.print("USB");
-  M5.Display.setTextSize(3);
+  M5.Display.setTextSize(2.5);
   char buf[16];
   snprintf(buf, sizeof(buf), "%.1fW", _powerData.usbOutputPower);
   int tw = M5.Display.textWidth(buf);
-  M5.Display.setCursor(rightX + rightW - tw - 15, usbY + 10);
+  M5.Display.setCursor(togX - tw - 15, usbY + 10);
   M5.Display.print(buf);
-  // Progress bar
-  int pbY = usbY + sectorH - 20;
-  drawProgressBar(rightX + 15, pbY, rightW - 30, 12,
+  drawProgressBar(rightX + 15, usbY + sectorH - 34, rightW - togW - 45, 12,
                   _powerData.usbOutputPower / 500.0f, false);
+  drawOutputToggle(TOGGLE_USB, togX, usbY + sectorH - togH - 8, togW, togH,
+                   "USB", _powerData.usbActive);
 
   // --- AC Sector ---
   int acY = usbY + sectorH + margin;
   M5.Display.drawRect(rightX, acY, rightW, sectorH, COLOR_BLACK);
+  M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setTextSize(2);
   M5.Display.setCursor(rightX + 15, acY + 12);
   M5.Display.print("AC");
 
-  float acPower = 0.0f;
-  if (acOn && !dcOn) {
-    acPower = _powerData.acDcOutputPower;
-  } else if (acOn && dcOn) {
-    // Both on — can't split, show nothing here (combined shown in DC row)
-    acPower = 0.0f;
-  }
-  M5.Display.setTextSize(3);
+  float acPower = (acOn && !dcOn) ? _powerData.acDcOutputPower : 0.0f;
+  M5.Display.setTextSize(2.5);
   snprintf(buf, sizeof(buf), "%.0fW", acPower);
   tw = M5.Display.textWidth(buf);
-  M5.Display.setCursor(rightX + rightW - tw - 15, acY + 10);
+  M5.Display.setCursor(togX - tw - 15, acY + 10);
   M5.Display.print(buf);
-  if (!acOn) {
-    M5.Display.setTextSize(1);
-    M5.Display.setCursor(rightX + 15, acY + sectorH - 22);
-    M5.Display.print("OFF");
-  } else {
-    drawProgressBar(rightX + 15, acY + sectorH - 20, rightW - 30, 12,
+  if (acOn) {
+    drawProgressBar(rightX + 15, acY + sectorH - 34, rightW - togW - 45, 12,
                     acPower / 3000.0f, false);
   }
+  drawOutputToggle(TOGGLE_AC, togX, acY + sectorH - togH - 8, togW, togH, "AC",
+                   acOn);
 
   // --- DC Sector ---
   int dcY = acY + sectorH + margin;
   M5.Display.drawRect(rightX, dcY, rightW, sectorH, COLOR_BLACK);
+  M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setTextSize(2);
   M5.Display.setCursor(rightX + 15, dcY + 12);
-  if (acOn && dcOn) {
-    M5.Display.print("AC+DC");
-  } else {
-    M5.Display.print("DC");
-  }
+  M5.Display.print((acOn && dcOn) ? "AC+DC" : "DC");
 
-  float dcPower = 0.0f;
-  if (dcOn && !acOn) {
-    dcPower = _powerData.acDcOutputPower;
-  } else if (acOn && dcOn) {
-    // Both on — show combined non-USB power here
-    dcPower = _powerData.acDcOutputPower;
-  }
-  M5.Display.setTextSize(3);
+  float dcPower = dcOn ? _powerData.acDcOutputPower : 0.0f;
+  M5.Display.setTextSize(2.5);
   snprintf(buf, sizeof(buf), "%.0fW", dcPower);
   tw = M5.Display.textWidth(buf);
-  M5.Display.setCursor(rightX + rightW - tw - 15, dcY + 10);
+  M5.Display.setCursor(togX - tw - 15, dcY + 10);
   M5.Display.print(buf);
-  if (!dcOn && !acOn) {
-    M5.Display.setTextSize(1);
-    M5.Display.setCursor(rightX + 15, dcY + sectorH - 22);
-    M5.Display.print("OFF");
-  } else {
+  if (dcOn) {
     float maxDc = (acOn && dcOn) ? 3000.0f : 1000.0f;
-    drawProgressBar(rightX + 15, dcY + sectorH - 20, rightW - 30, 12,
+    drawProgressBar(rightX + 15, dcY + sectorH - 34, rightW - togW - 45, 12,
                     dcPower / maxDc, false);
   }
+  drawOutputToggle(TOGGLE_DC, togX, dcY + sectorH - togH - 8, togW, togH, "DC",
+                   dcOn);
 
-  // Power button: reserved row under the DC sector. Stops short of the
-  // connection indicator in the corner.
-  int pwrY = dcY + sectorH + margin;
-  drawPowerButton(rightX, pwrY, rightW - 70, pwrH);
-
-  // Connection indicator (bottom-right corner)
-  int connX = SCREEN_WIDTH - 25;
-  int connY = contentBottom - 20;
-  if (_powerData.connected) {
-    M5.Display.fillCircle(connX, connY, 6, COLOR_BLACK);
-  } else {
-    M5.Display.drawCircle(connX, connY, 6, COLOR_BLACK);
-    M5.Display.drawLine(connX - 6, connY - 6, connX + 6, connY + 6, COLOR_BLACK);
-  }
+  // Power button: reserved row under the DC sector, same width as the sectors
+  // (it used to stop 70px short to leave room for a connection dot, which is
+  // what made it look cut off). Link state is already carried by the status
+  // strip and by the button's own label, so the dot is not missed here.
+  drawPowerButton(rightX, dcY + sectorH + margin, rightW, pwrH);
 }
 
 // ============================================================================
@@ -1555,7 +1533,8 @@ void UIManager::drawHomeLiveGraph() {
   // --- Right info column ---
   int y = graphY;
 
-  // Clock
+  // Clock. Bounds are recorded so a minute tick can be pushed on its own as a
+  // partial panel update - see liveGraphClockTick().
   int h, m, s;
   RTC::getTime(h, m, s);
   char timeStr[8];
@@ -1564,6 +1543,10 @@ void UIManager::drawHomeLiveGraph() {
   int tw = M5.Display.textWidth(timeStr);
   M5.Display.setCursor(infoX + (infoW - tw) / 2, y);
   M5.Display.print(timeStr);
+  _lgClockX = infoX;
+  _lgClockY = y;
+  _lgClockW = infoW;
+  _lgClockH = M5.Display.fontHeight();
   y += 70;
 
   char wBuf[16];
@@ -1633,6 +1616,35 @@ void UIManager::drawHomeLiveGraph() {
     M5.Display.drawLine(connX - 6, connDotY - 6, connX + 6, connDotY + 6,
                         COLOR_BLACK);
   }
+}
+
+// Repaint the Live Graph clock alone and push just that rectangle to the
+// panel. The e-ink controller refreshes whatever area was written since the
+// last flush, so a whole-screen redraw once a minute drives every pixel -
+// that is the flashing. The plot has nothing new to show until a sample
+// actually moves, so on a bare minute tick only the clock is written.
+void UIManager::liveGraphClockTick() {
+  if (_lgClockW <= 0) {
+    return;
+  }
+
+  int h, m, s;
+  RTC::getTime(h, m, s);
+  char timeStr[8];
+  snprintf(timeStr, sizeof(timeStr), "%02d:%02d", h, m);
+
+  M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+  M5.Display.fillRect(_lgClockX, _lgClockY, _lgClockW, _lgClockH, COLOR_WHITE);
+  M5.Display.setFont(&fonts::DejaVu24);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(2);
+  int tw = M5.Display.textWidth(timeStr);
+  M5.Display.setCursor(_lgClockX + (_lgClockW - tw) / 2, _lgClockY);
+  M5.Display.print(timeStr);
+  M5.Display.setTextSize(1);
+
+  M5.Display.display(_lgClockX, _lgClockY, _lgClockW, _lgClockH);
+  _lastRenderedMinute = m;
 }
 
 void UIManager::drawErrorBanner(int x, int y, int w, int h) {
@@ -3077,9 +3089,91 @@ void UIManager::drawToggle(int x, int y, const char *label, bool active) {
   }
 }
 
+// Output on/off button: label above, state below, filled while on. Themes
+// that use it get a control that looks pressable and says what it will do,
+// instead of a bare readout with an invisible hit zone.
+void UIManager::drawOutputToggle(int idx, int x, int y, int w, int h,
+                                 const char *label, bool on) {
+  if (idx >= 0 && idx < 3) {
+    _togX[idx] = x;
+    _togY[idx] = y;
+    _togW[idx] = w;
+    _togH[idx] = h;
+  }
+
+  M5.Display.drawRect(x, y, w, h, COLOR_BLACK);
+  M5.Display.drawRect(x + 1, y + 1, w - 2, h - 2, COLOR_BLACK);
+
+  int stateH = (h >= 64) ? 26 : h / 2;
+  int stateY = y + h - stateH - 5;
+
+  // Label, centered in the space above the state strip
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(1);
+  int tw = M5.Display.textWidth(label);
+  int th = M5.Display.fontHeight();
+  M5.Display.setCursor(x + (w - tw) / 2, y + (stateY - y - th) / 2 + 1);
+  M5.Display.print(label);
+
+  // State strip: black fill = on (reads at a glance on e-ink)
+  int sx = x + 8;
+  int sw = w - 16;
+  const char *state = on ? "ON" : "OFF";
+  if (on) {
+    M5.Display.fillRect(sx, stateY, sw, stateH, COLOR_BLACK);
+    M5.Display.setTextColor(COLOR_WHITE);
+  } else {
+    M5.Display.drawRect(sx, stateY, sw, stateH, COLOR_BLACK);
+    M5.Display.setTextColor(COLOR_BLACK);
+  }
+  M5.Display.setTextSize(0.7);
+  tw = M5.Display.textWidth(state);
+  th = M5.Display.fontHeight();
+  M5.Display.setCursor(sx + (sw - tw) / 2, stateY + (stateH - th) / 2);
+  M5.Display.print(state);
+  M5.Display.setTextSize(1);
+}
+
+bool UIManager::handleOutputToggleTouch(int x, int y) {
+  for (int i = 0; i < 3; i++) {
+    if (_togW[i] <= 0)
+      continue;
+    if (x < _togX[i] || x >= _togX[i] + _togW[i] || y < _togY[i] ||
+        y >= _togY[i] + _togH[i])
+      continue;
+
+    // Offline the outputs cannot be switched, but the press is still ours:
+    // falling through would hand it to a theme handler that would do nothing
+    // with it anyway.
+    if (!bleClient || !bleClient->isConnected())
+      return true;
+
+    Buzzer::click();
+    switch (i) {
+    case TOGGLE_USB:
+      Serial.println("Toggle USB");
+      bleClient->toggleUSB();
+      _powerData.usbActive = !_powerData.usbActive;
+      break;
+    case TOGGLE_DC:
+      Serial.println("Toggle DC");
+      bleClient->toggleDC();
+      _powerData.dcActive = !_powerData.dcActive;
+      break;
+    case TOGGLE_AC:
+      Serial.println("Toggle AC");
+      bleClient->toggleAC();
+      _powerData.acActive = !_powerData.acActive;
+      break;
+    }
+    forceRefresh();
+    return true;
+  }
+  return false;
+}
+
 void UIManager::drawButton(int x, int y, int w, int h, const char *label,
                            bool selected) {
-  M5.Display.setTextSize(1);
   if (selected) {
     M5.Display.fillRect(x, y, w, h, COLOR_BLACK);
     M5.Display.setTextColor(COLOR_WHITE);
@@ -3088,11 +3182,24 @@ void UIManager::drawButton(int x, int y, int w, int h, const char *label,
     M5.Display.setTextColor(COLOR_BLACK);
   }
 
-  // Center text
+  // Shrink the label until it fits inside the box. Several labels are built
+  // at run time ("< DASHBOARD", "Theme: Compact", the SwitchBot status on the
+  // power button) and a fixed text size let the long ones run over the
+  // border, which read as a clipped letter.
+  const int padding = 14;
+  float textSize = 1.0f;
+  M5.Display.setTextSize(textSize);
+  while (textSize > 0.55f && M5.Display.textWidth(label) > w - padding) {
+    textSize -= 0.05f;
+    M5.Display.setTextSize(textSize);
+  }
+
+  // Center on the real metrics rather than an assumed 8px line height
   int textLen = M5.Display.textWidth(label);
-  M5.Display.setCursor(x + (w - textLen) / 2,
-                       y + (h - 8) / 2); // 8 is approx height for Size 1
+  int textH = M5.Display.fontHeight();
+  M5.Display.setCursor(x + (w - textLen) / 2, y + (h - textH) / 2);
   M5.Display.print(label);
+  M5.Display.setTextSize(1);
 }
 
 void UIManager::handleHomeTouch(int x, int y, TouchEvent event) {
@@ -3154,12 +3261,17 @@ void UIManager::handleHomeTouch(int x, int y, TouchEvent event) {
     return;
   }
 
+  // USB / DC / AC on-off buttons, wherever the active theme drew them.
+  if (event == TouchEvent::RELEASE && handleOutputToggleTouch(x, y)) {
+    return;
+  }
+
   // Campervan mode: dispatch to active Fossibot theme handler
   String theme = config ? config->getTheme() : "classic_grid";
   if (theme == "compact_status") {
     handleHomeCompactStatusTouch(x, y);
   } else if (theme == "horizontal_bars") {
-    handleHomeHorizontalBarsTouch(x, y);
+    // Horizontal Bars has no hit zones beyond the shared buttons above
   } else if (theme == "sector") {
     handleHomeSectorTouch(x, y);
   } else if (theme == "live_graph") {
@@ -3281,63 +3393,17 @@ void UIManager::handleHomeCompactStatusTouch(int x, int y) {
   }
 }
 
-void UIManager::handleHomeHorizontalBarsTouch(int x, int y) {
-  // Row 4 toggles: match positions from drawHomeHorizontalBars
-  int margin = 10;
-  int gap = 5;
-  int battRowH = 55;
-  int powerRowH = 105;
-  int contentBottom = SCREEN_HEIGHT;
-  int row4Y = margin + battRowH + gap + powerRowH * 2 + gap * 2;
-  int row4H = contentBottom - row4Y - margin;
-
-  if (y >= row4Y && y < row4Y + row4H) {
-    int toggleBaseX = SCREEN_WIDTH / 2 + 80;
-    int dcX = toggleBaseX + 130;
-    int acX = dcX + 130;
-
-    if (abs(x - toggleBaseX) < 60) {
-      if (bleClient && bleClient->isConnected()) {
-        Serial.println("Toggle USB");
-        bleClient->toggleUSB();
-        Buzzer::click();
-        _powerData.usbActive = !_powerData.usbActive;
-        _needsRefresh = true;
-        _lastRefresh = 0;
-      }
-    } else if (abs(x - dcX) < 60) {
-      if (bleClient && bleClient->isConnected()) {
-        Serial.println("Toggle DC");
-        bleClient->toggleDC();
-        Buzzer::click();
-        _powerData.dcActive = !_powerData.dcActive;
-        _needsRefresh = true;
-        _lastRefresh = 0;
-      }
-    } else if (abs(x - acX) < 60) {
-      if (bleClient && bleClient->isConnected()) {
-        Serial.println("Toggle AC");
-        bleClient->toggleAC();
-        Buzzer::click();
-        _powerData.acActive = !_powerData.acActive;
-        _needsRefresh = true;
-        _lastRefresh = 0;
-      }
-    }
-  }
-}
-
 void UIManager::handleHomeSectorTouch(int x, int y) {
-  // Right-side sector panels act as toggle buttons
+  // The whole sector is a hit target for its output, not just the ON/OFF
+  // button inside it (that one is handled by handleOutputToggleTouch before
+  // this runs). Geometry must match drawHomeSector().
   int margin = 10;
   int topY = BATTERY_BAR_HEIGHT + margin;
   int contentBottom = SCREEN_HEIGHT;
   int availH = contentBottom - topY - margin;
   int rightX = SCREEN_WIDTH / 2 + margin;
   int rightW = SCREEN_WIDTH / 2 - margin * 2;
-  // Must match drawHomeSector(): the sectors are shortened to reserve a
-  // power-button row at the bottom of the column.
-  int pwrH = 56;
+  int pwrH = 58;
   int sectorH = (availH - margin * 3 - pwrH) / 3;
 
   if (x < rightX || x > rightX + rightW) return;
@@ -3346,34 +3412,33 @@ void UIManager::handleHomeSectorTouch(int x, int y) {
   int acY = usbY + sectorH + margin;
   int dcY = acY + sectorH + margin;
 
+  int which = -1;
   if (y >= usbY && y < usbY + sectorH) {
-    if (bleClient && bleClient->isConnected()) {
-      Serial.println("Toggle USB");
-      bleClient->toggleUSB();
-      Buzzer::click();
-      _powerData.usbActive = !_powerData.usbActive;
-      _needsRefresh = true;
-      _lastRefresh = 0;
-    }
+    which = TOGGLE_USB;
   } else if (y >= acY && y < acY + sectorH) {
-    if (bleClient && bleClient->isConnected()) {
-      Serial.println("Toggle AC");
-      bleClient->toggleAC();
-      Buzzer::click();
-      _powerData.acActive = !_powerData.acActive;
-      _needsRefresh = true;
-      _lastRefresh = 0;
-    }
+    which = TOGGLE_AC;
   } else if (y >= dcY && y < dcY + sectorH) {
-    if (bleClient && bleClient->isConnected()) {
-      Serial.println("Toggle DC");
-      bleClient->toggleDC();
-      Buzzer::click();
-      _powerData.dcActive = !_powerData.dcActive;
-      _needsRefresh = true;
-      _lastRefresh = 0;
-    }
+    which = TOGGLE_DC;
   }
+  if (which < 0 || !bleClient || !bleClient->isConnected()) {
+    return;
+  }
+
+  Buzzer::click();
+  if (which == TOGGLE_USB) {
+    Serial.println("Toggle USB");
+    bleClient->toggleUSB();
+    _powerData.usbActive = !_powerData.usbActive;
+  } else if (which == TOGGLE_AC) {
+    Serial.println("Toggle AC");
+    bleClient->toggleAC();
+    _powerData.acActive = !_powerData.acActive;
+  } else {
+    Serial.println("Toggle DC");
+    bleClient->toggleDC();
+    _powerData.dcActive = !_powerData.dcActive;
+  }
+  forceRefresh();
 }
 
 void UIManager::drawSettingsScreen() {
