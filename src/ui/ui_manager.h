@@ -36,6 +36,7 @@ enum class ScreenID {
   SETTINGS_DEVICE,          // Device Settings (date/time/refresh/sleep)
   SETTINGS_FOSSIBOT,        // Fossibot settings (Quick Actions, Power Limits)
   SETTINGS_FOSSIBOT_TIMERS, // Fossibot timers sub-menu
+  SETTINGS_FOSSIBOT_INFO,   // Fossibot device info + charge current
   SD_DIAG,
   NOTES_BROWSE,
   HISTORY
@@ -101,6 +102,7 @@ public:
    * Draw Fossibot Timers sub-screen (standby timers, schedule charge)
    */
   void drawFossibotTimersScreen();
+  void drawFossibotInfoScreen();
 
   /**
    * Get current screen ID (useful for main loop logic)
@@ -322,12 +324,13 @@ private:
   int _fossiLightMode = 0;               // 0=off,1=on,2=flash,3=sos
   int _fossiDischargeLimit = 0;          // 0-30%
   int _fossiChargeLimit = 100;           // 60-100%
-  int _fossiScreenTimeout = 60;          // Seconds (0=never)
-  int _fossiSysStandby = 5;              // Minutes (0=never)
+  int _fossiScreenTimeout = 300;         // Seconds (0=never), reg 62
+  int _fossiSysStandby = 5;              // Minutes, reg 68 (0 bricks device)
   int _fossiACStandby = 60;              // Minutes (0=never)
   int _fossiDCStandby = 60;              // Minutes (0=never)
-  int _fossiUSBStandby = 300;            // Seconds (0=never)
+  int _fossiUSBStandby = 30;             // Minutes (0=never), reg 59
   int _fossiChargeSpeed = 3;             // AC charge speed setpoint (1-5)
+  int _fossiChargeCurrent = 0;           // AC charge current limit, amps (reg 20)
   int _fossiScheduleChargeHour = -1;     // -1=off, 0-23 = target hour
   int _fossiScheduleChargeMin = 0;       // 0-59 = target minute
   int _fossiScheduleChargeRemaining = 0; // Read from Reg 63 (minutes)
@@ -335,6 +338,7 @@ private:
   bool _showPowerOffConfirmation = false;
 
   void handleFossibotTimersTouch(int x, int y); // Fossibot timers touch
+  void handleFossibotInfoTouch(int x, int y);   // Fossibot device info touch
 
   // Clock screen state
   ClockMode _clockMode = ClockMode::TIMER; // Default to Timer (Alarm removed)
