@@ -540,6 +540,14 @@ void FossibotBLE::sendCommand(uint8_t reg, uint16_t value) {
   if (!_connected || !_writeChar)
     return;
 
+  // The station does not validate what it is told. An out-of-range value can
+  // brick it permanently (reg 68 = 0 is a confirmed field brick), so every
+  // write is checked against the whitelist before it goes out.
+  if (!Fossibot::isWriteAllowed(reg, value)) {
+    Serial.printf("BLE: REFUSED unsafe write reg=%d value=%d\n", reg, value);
+    return;
+  }
+
   // Build command packet using Modbus Write Single Register format
   // Format: [0x11, 0x06, RegHigh, RegLow, ValueHigh, ValueLow, CRC_Low,
   // CRC_High]
@@ -645,16 +653,23 @@ void FossibotBLE::setChargeSpeed(int level) {
   Serial.printf("BLE: AC charge speed set to %d/5\n", level);
 }
 
-void FossibotBLE::setScreenTimeout(int minutes) {
-  if (minutes < 0)
-    minutes = 0;
-  sendCommand(Fossibot::ControlReg::SCREEN_TIMEOUT, minutes);
-  Serial.printf("BLE: Screen timeout set to %d minutes\n", minutes);
+void FossibotBLE::setScreenTimeout(int seconds) {
+  if (seconds < 0)
+    seconds = 0;
+  if (seconds > 14400)
+    seconds = 14400;
+  sendCommand(Fossibot::ControlReg::SCREEN_TIMEOUT, seconds);
+  Serial.printf("BLE: Screen timeout set to %d seconds\n", seconds);
 }
 
 void FossibotBLE::setSysStandby(int minutes) {
-  if (minutes < 0)
-    minutes = 0;
+  // Register 68 has no "never": writing 0 permanently bricks the station.
+  // Only the vendor app's own presets are accepted.
+  if (!Fossibot::isWriteAllowed(Fossibot::ControlReg::SYS_STANDBY, minutes)) {
+    Serial.printf("BLE: Refusing system standby value %d (allowed: 5/10/30/60/480)\n",
+                  minutes);
+    return;
+  }
   sendCommand(Fossibot::ControlReg::SYS_STANDBY, minutes);
   Serial.printf("BLE: System standby set to %d minutes\n", minutes);
 }
@@ -673,11 +688,24 @@ void FossibotBLE::setDCStandby(int minutes) {
   Serial.printf("BLE: DC standby set to %d minutes\n", minutes);
 }
 
-void FossibotBLE::setUSBStandby(int seconds) {
-  if (seconds < 0)
-    seconds = 0;
-  sendCommand(Fossibot::ControlReg::USB_STANDBY, seconds);
-  Serial.printf("BLE: USB standby set to %d seconds\n", seconds);
+void FossibotBLE::setUSBStandby(int minutes) {
+  if (minutes < 0)
+    minutes = 0;
+  if (minutes > 1440)
+    minutes = 1440;
+  sendCommand(Fossibot::ControlReg::USB_STANDBY, minutes);
+  Serial.printf("BLE: USB standby set to %d minutes\n", minutes);
+}
+
+void FossibotBLE::setChargeCurrent(int amps) {
+  int ceiling = _data.maxChargeCurrent > 0 ? _data.maxChargeCurrent : 20;
+  if (amps < 1)
+    amps = 1;
+  if (amps > ceiling)
+    amps = ceiling;
+  sendCommand(Fossibot::ControlReg::CHARGE_CURRENT, amps);
+  Serial.printf("BLE: AC charge current set to %dA (ceiling %dA)\n", amps,
+                ceiling);
 }
 
 void FossibotBLE::powerOff() {
@@ -738,12 +766,12 @@ void FossibotBLE::parseStatusData(const uint8_t *data, size_t length) {
   // system) Register 22 = Battery voltage Register 41 = State flags Register 56
   // = Battery percent (divide by 10)
 
-  _data.acInputPower = getRegValue(3);
-  _data.dcInputPower = getRegValue(4);
-  _data.inputPower = getRegValue(6);
-  _data.outputPower = getRegValue(39); // Fixed: was using reg 20
-  _data.batteryVoltage = getRegValue(22) / 100.0f;
-  _data.batteryPercent = getRegValue(56) / 10.0f;
+  _data.acInputPower = getRegValue(Fossibot::StatusReg::AC_INPUT_WATTS);
+  _data.dcInputPower = getRegValue(Fossibot::StatusReg::DC_INPUT_WATTS);
+  _data.inputPower = getRegValue(Fossibot::StatusReg::TOTAL_INPUT_WATTS);
+  _data.outputPower = getRegValue(Fossibot::StatusReg::OUTPUT_POWER);
+  _data.batteryVoltage = getRegValue(Fossibot::StatusReg::BATTERY_VOLTAGE) / 100.0f;
+  _data.batteryPercent = getRegValue(Fossibot::StatusReg::MAIN_SOC) / 10.0f;
 
   // Error & protection registers
   _data.errorCode = getRegValue(Fossibot::StatusReg::ERROR_CODE);
@@ -764,17 +792,64 @@ void FossibotBLE::parseStatusData(const uint8_t *data, size_t length) {
   float nonUsb = _data.outputPower - usbTotal;
   _data.acDcOutputPower = (nonUsb > 0.0f) ? nonUsb : 0.0f;
 
-  // Parse output states from bitmask (register 41)
-  uint16_t states = getRegValue(41);
-  _data.usbActive = (states & Fossibot::StateBits::USB_BIT) != 0;
-  _data.dcActive = (states & Fossibot::StateBits::DC_BIT) != 0;
-  _data.acActive = (states & Fossibot::StateBits::AC_BIT) != 0;
+  // Output toggle states come from their own registers (24/25/26), which is
+  // what the vendor app reads. Register 41 carries subsystem-active bits whose
+  // layout differs across models, so it is only a fallback for firmware that
+  // leaves 24-26 at zero.
+  uint16_t states = getRegValue(Fossibot::StatusReg::ACTIVE_OUTPUTS);
+  uint16_t usbState = getRegValue(Fossibot::StatusReg::USB_STATE);
+  uint16_t dcState = getRegValue(Fossibot::StatusReg::DC_STATE);
+  uint16_t acState = getRegValue(Fossibot::StatusReg::AC_STATE);
+  if (usbState || dcState || acState) {
+    _data.usbActive = usbState != 0;
+    _data.dcActive = dcState != 0;
+    _data.acActive = acState != 0;
+  } else {
+    _data.usbActive = (states & Fossibot::StateBits::USB_BIT) != 0;
+    _data.dcActive = (states & Fossibot::StateBits::DC_BIT) != 0;
+    _data.acActive = (states & Fossibot::StateBits::AC_BIT) != 0;
+  }
+  _data.lightMode = getRegValue(Fossibot::StatusReg::LIGHT_STATE);
+
+  // Grid / mains telemetry
+  _data.acOutputVoltage = getRegValue(Fossibot::StatusReg::AC_OUTPUT_VOLTAGE) / 10.0f;
+  _data.acOutputFreq = getRegValue(Fossibot::StatusReg::AC_OUTPUT_FREQ) / 10.0f;
+  _data.acGridPower = (int16_t)getRegValue(Fossibot::StatusReg::AC_GRID_POWER);
+
+  // Reg 21 is multiplexed: a real mains voltage while plugged in, a small
+  // state code otherwise (15 = cold-temperature charge lockout).
+  uint16_t acInRaw = getRegValue(Fossibot::StatusReg::AC_INPUT_VOLTAGE);
+  if (acInRaw > 500) { // >50.0V - a plausible mains reading
+    _data.acInputVoltage = acInRaw / 10.0f;
+    _data.acInputStateCode = 0;
+  } else {
+    _data.acInputVoltage = 0.0f;
+    _data.acInputStateCode = acInRaw;
+  }
+
+  // Cooling, capacity and countdowns
+  _data.fanLevel = getRegValue(Fossibot::StatusReg::FAN_LEVEL);
+  _data.batteryCapacityAh =
+      getRegValue(Fossibot::StatusReg::BATTERY_FULL_CAPACITY) / 10.0f;
+  _data.activeChargeRate = getRegValue(Fossibot::StatusReg::AC_CHARGE_SPEED);
+  uint16_t booking = getRegValue(Fossibot::StatusReg::BOOKING_CHARGE_DELAY);
+  _data.bookingChargeRemaining = booking > 0 ? (int)booking : -1;
+
+  // Expansion batteries (0 = pack not fitted)
+  _data.extSoc[0] =
+      Fossibot::decodeExtSoc(getRegValue(Fossibot::StatusReg::EXT1_SOC));
+  _data.extSoc[1] =
+      Fossibot::decodeExtSoc(getRegValue(Fossibot::StatusReg::EXT2_SOC));
+  _data.extSoc[2] =
+      Fossibot::decodeExtSoc(getRegValue(Fossibot::StatusReg::EXT3_SOC));
+  _data.extSoc[3] =
+      Fossibot::decodeExtSoc(getRegValue(Fossibot::StatusReg::EXT4_SOC));
 
   // Get time values from device (not calculated)
   // Register 58 = time to full (minutes)
   // Register 59 = remaining time / time to empty (minutes)
-  _data.minutesToFull = getRegValue(58);
-  _data.minutesToEmpty = getRegValue(59);
+  _data.minutesToFull = getRegValue(Fossibot::StatusReg::TIME_TO_FULL);
+  _data.minutesToEmpty = getRegValue(Fossibot::StatusReg::TIME_TO_EMPTY);
 
   Serial.printf("BLE: SOC=%.1f%% IN=%.0fW OUT=%.0fW TTF=%dm TTE=%dm\n",
                 _data.batteryPercent, _data.inputPower, _data.outputPower,
@@ -805,20 +880,43 @@ void FossibotBLE::parseSettingsData(const uint8_t *data, size_t length) {
   };
 
   // Parse Fossibot settings registers
-  uint16_t chargeSpeed = getRegValue(13);
+  uint16_t chargeSpeed = getRegValue(Fossibot::ControlReg::AC_CHARGE_SPEED_SET);
   if (chargeSpeed >= 1 && chargeSpeed <= 5)
     _data.acChargeSpeed = chargeSpeed;
-  _data.lightMode = getRegValue(27);
-  _data.buzzerEnabled = (getRegValue(56) == 1);
-  _data.silentCharging = (getRegValue(57) == 1);
-  _data.screenTimeout = getRegValue(59);
-  _data.acStandby = getRegValue(60);
-  _data.dcStandby = getRegValue(61);
-  _data.usbStandby = getRegValue(62);
-  _data.scheduleCharge = getRegValue(63);
-  _data.dischargeLimit = getRegValue(66) / 10; // Convert from 0.1% to %
-  _data.chargeLimit = getRegValue(67) / 10;    // Convert from 0.1% to %
-  _data.sysStandby = getRegValue(68);
+  _data.lightMode = getRegValue(Fossibot::ControlReg::LIGHT_MODE);
+  _data.buzzerEnabled = (getRegValue(Fossibot::ControlReg::KEY_SOUND) == 1);
+  _data.silentCharging = (getRegValue(Fossibot::ControlReg::SILENT_CHARGING) == 1);
+  // Reg 59 is USB standby in minutes and reg 62 is the screen timeout in
+  // seconds - these two were previously read (and written) the other way round.
+  _data.usbStandby = getRegValue(Fossibot::ControlReg::USB_STANDBY);
+  _data.acStandby = getRegValue(Fossibot::ControlReg::AC_STANDBY);
+  _data.dcStandby = getRegValue(Fossibot::ControlReg::DC_STANDBY);
+  _data.screenTimeout = getRegValue(Fossibot::ControlReg::SCREEN_TIMEOUT);
+  _data.scheduleCharge = getRegValue(Fossibot::ControlReg::SCHEDULE_CHARGE);
+  _data.dischargeLimit =
+      getRegValue(Fossibot::ControlReg::DISCHARGE_LIMIT) / 10; // 0.1% -> %
+  _data.chargeLimit =
+      getRegValue(Fossibot::ControlReg::CHARGE_LIMIT) / 10; // 0.1% -> %
+  _data.sysStandby = getRegValue(Fossibot::ControlReg::SYS_STANDBY);
+
+  // Charge current limit and its hardware ceiling
+  _data.chargeCurrent = getRegValue(Fossibot::ControlReg::CHARGE_CURRENT);
+  uint16_t maxCur = getRegValue(Fossibot::ControlReg::MAX_CHARGE_CURRENT);
+  if (maxCur >= 1 && maxCur <= 20)
+    _data.maxChargeCurrent = maxCur;
+  _data.maxChargeWattage = getRegValue(Fossibot::ControlReg::MAX_CHARGE_WATTAGE);
+  _data.hardwareId = getRegValue(Fossibot::ControlReg::HARDWARE_ID);
+
+  // Sub-MCU firmware versions
+  _data.mcuVersionAC =
+      Fossibot::decodeMcuVersion(getRegValue(Fossibot::ControlReg::MCU_VERSION_AC));
+  _data.mcuVersionBMS =
+      Fossibot::decodeMcuVersion(getRegValue(Fossibot::ControlReg::MCU_VERSION_BMS));
+  _data.mcuVersionPV =
+      Fossibot::decodeMcuVersion(getRegValue(Fossibot::ControlReg::MCU_VERSION_PV));
+  _data.mcuVersionDC =
+      Fossibot::decodeMcuVersion(getRegValue(Fossibot::ControlReg::MCU_VERSION_DC));
+
   _data.settingsReceived = true;
 
   Serial.printf("BLE: Settings received - Buzzer:%d Silent:%d Light:%d "

@@ -354,6 +354,9 @@ void UIManager::update() {
   case ScreenID::SETTINGS_FOSSIBOT_TIMERS:
     drawFossibotTimersScreen();
     break;
+  case ScreenID::SETTINGS_FOSSIBOT_INFO:
+    drawFossibotInfoScreen();
+    break;
   case ScreenID::CLOCK:
     updatePomodoro(); // Update timer logic before drawing
     drawClockScreen();
@@ -495,6 +498,8 @@ void UIManager::handleTouch(int x, int y, TouchEvent event) {
           handleFossibotSettingsTouch(x, y);
         } else if (_currentScreen == ScreenID::SETTINGS_FOSSIBOT_TIMERS) {
           handleFossibotTimersTouch(x, y);
+        } else if (_currentScreen == ScreenID::SETTINGS_FOSSIBOT_INFO) {
+          handleFossibotInfoTouch(x, y);
         } else if (_currentScreen == ScreenID::READER) {
           handleReaderTouch(x, y, event);
         }
@@ -673,6 +678,7 @@ void UIManager::updatePowerBankData(const Fossibot::PowerBankData &data) {
     _fossiDCStandby = data.dcStandby;
     _fossiUSBStandby = data.usbStandby;
     _fossiSysStandby = data.sysStandby;
+    _fossiChargeCurrent = data.chargeCurrent;
     _fossiScheduleChargeRemaining = data.scheduleCharge;
   }
 
@@ -3953,6 +3959,7 @@ void UIManager::drawFossibotSettingsScreen() {
       _fossiACStandby = data.acStandby;
       _fossiDCStandby = data.dcStandby;
       _fossiUSBStandby = data.usbStandby;
+      _fossiChargeCurrent = data.chargeCurrent;
     }
   }
 
@@ -4030,27 +4037,33 @@ void UIManager::drawFossibotSettingsScreen() {
   drawButton(toggleX + 70, y - 10, 50, 40, "+");
   y += rowH + 10;
 
-  // === Timers Section (Right Column) - Navigate to sub-screen ===
+  // === Right Column - sub-screens and actions ===
   int col2X = 550;
-  int col2Y = 120;
+  int col2Y = 100;
 
-  drawButton(col2X, col2Y, 200, 60, "TIMERS", true);
-
+  drawButton(col2X, col2Y, 200, 55, "TIMERS", true);
   M5.Display.setTextSize(1);
   M5.Display.setTextColor(COLOR_DARK_GRAY);
-  M5.Display.setCursor(col2X + 10, col2Y + 70);
+  M5.Display.setCursor(col2X + 10, col2Y + 60);
   M5.Display.print("Standby & Schedule");
 
+  // === Device Info sub-screen ===
+  drawButton(col2X, col2Y + 85, 200, 55, "DEVICE INFO", true);
+  M5.Display.setTextSize(1);
+  M5.Display.setTextColor(COLOR_DARK_GRAY);
+  M5.Display.setCursor(col2X + 10, col2Y + 145);
+  M5.Display.print("Fan, packs, firmware");
+
   // === Power Off Button ===
-  drawButton(col2X, col2Y + 120, 200, 60, "POWER OFF", true);
+  drawButton(col2X, col2Y + 170, 200, 55, "POWER OFF", true);
 
   // === Simulate Error Button (for testing error banner) ===
-  drawButton(col2X, col2Y + 200, 200, 60,
+  drawButton(col2X, col2Y + 240, 200, 55,
              _powerData.simulatedError ? "CLR ERROR" : "SIM ERROR",
              _powerData.simulatedError);
   M5.Display.setTextSize(1);
   M5.Display.setTextColor(COLOR_DARK_GRAY);
-  M5.Display.setCursor(col2X + 10, col2Y + 270);
+  M5.Display.setCursor(col2X + 10, col2Y + 300);
   M5.Display.print("Test error banner");
 
   // --- Action Buttons ---
@@ -4234,23 +4247,29 @@ void UIManager::handleFossibotSettingsTouch(int x, int y) {
     return;
   }
 
-  // === TIMERS button (Right Column) - Navigate to Timers sub-screen ===
+  // === Right column buttons (geometry mirrors drawFossibotSettingsScreen) ===
   int col2X = 550;
-  int col2Y = 120;
-  if (isHit(col2X, col2Y, 200, 60)) {
+  int col2Y = 100;
+  if (isHit(col2X, col2Y, 200, 55)) {
     navigateTo(ScreenID::SETTINGS_FOSSIBOT_TIMERS);
     return;
   }
 
+  // === Device Info button ===
+  if (isHit(col2X, col2Y + 85, 200, 55)) {
+    navigateTo(ScreenID::SETTINGS_FOSSIBOT_INFO);
+    return;
+  }
+
   // === Power Off Button ===
-  if (isHit(col2X, col2Y + 120, 200, 60)) {
+  if (isHit(col2X, col2Y + 170, 200, 55)) {
     _showPowerOffConfirmation = true;
     forceRefresh();
     return;
   }
 
   // === Simulate Error Button ===
-  if (isHit(col2X, col2Y + 200, 200, 60)) {
+  if (isHit(col2X, col2Y + 240, 200, 55)) {
     _powerData.simulatedError = !_powerData.simulatedError;
     if (_powerData.simulatedError) {
       // Inject fake error values matching real-world fault pattern
@@ -4285,6 +4304,177 @@ void UIManager::handleFossibotSettingsTouch(int x, int y) {
 }
 
 // ============================================================================
+// Fossibot Device Info Sub-Screen
+//
+// Read-only telemetry that the register map exposes but no other screen shows
+// (fan level, mains in/out, expansion packs, sub-MCU firmware), plus the one
+// writable value that belongs with it: the AC charge current limit (reg 20).
+// ============================================================================
+
+void UIManager::drawFossibotInfoScreen() {
+  M5.Display.fillScreen(COLOR_WHITE);
+  drawHomeButton();
+
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(SCREEN_WIDTH / 2 - 120, 15);
+  M5.Display.print("Fossibot Info");
+  if (bleClient && !bleClient->isConnected()) {
+    M5.Display.print(" (OFFLINE)");
+  }
+
+  const auto &d = _powerData;
+  bool suppressSync = (millis() - _lastTimerSetTime < 5000);
+  if (!suppressSync && d.settingsReceived) {
+    _fossiChargeCurrent = d.chargeCurrent;
+  }
+
+  M5.Display.setTextSize(1);
+  int colX[2] = {30, 500};
+  int y0 = 70;
+  int rowH = 32;
+  char buf[48];
+
+  auto row = [&](int col, int idx, const char *label, const char *value) {
+    int y = y0 + idx * rowH;
+    M5.Display.setTextColor(COLOR_DARK_GRAY);
+    M5.Display.setCursor(colX[col], y);
+    M5.Display.print(label);
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setCursor(colX[col] + 220, y);
+    M5.Display.print(value);
+  };
+
+  // --- Left column: power flow and cooling ---
+  snprintf(buf, sizeof(buf), "%d / 5", d.fanLevel);
+  row(0, 0, "Fan level", buf);
+
+  if (d.acInputVoltage > 0.0f) {
+    snprintf(buf, sizeof(buf), "%.1f V", d.acInputVoltage);
+  } else if (d.acInputStateCode == 15) {
+    snprintf(buf, sizeof(buf), "cold lockout");
+  } else {
+    snprintf(buf, sizeof(buf), "no mains");
+  }
+  row(0, 1, "AC input", buf);
+
+  snprintf(buf, sizeof(buf), "%.1f V / %.1f Hz", d.acOutputVoltage,
+           d.acOutputFreq);
+  row(0, 2, "AC output", buf);
+
+  if (d.acGridPower == 0) {
+    snprintf(buf, sizeof(buf), "--");
+  } else {
+    snprintf(buf, sizeof(buf), "%d W %s", abs(d.acGridPower),
+             d.acGridPower > 0 ? "in" : "out");
+  }
+  row(0, 3, "Grid power", buf);
+
+  snprintf(buf, sizeof(buf), "%d/5 (set %d/5)", d.activeChargeRate,
+           d.acChargeSpeed);
+  row(0, 4, "Charge rate", buf);
+
+  if (d.batteryCapacityAh > 0.0f) {
+    snprintf(buf, sizeof(buf), "%.1f Ah", d.batteryCapacityAh);
+  } else {
+    snprintf(buf, sizeof(buf), "--");
+  }
+  row(0, 5, "Pack capacity", buf);
+
+  if (d.bookingChargeRemaining > 0) {
+    snprintf(buf, sizeof(buf), "in %d min", d.bookingChargeRemaining);
+  } else {
+    snprintf(buf, sizeof(buf), "none");
+  }
+  row(0, 6, "Scheduled charge", buf);
+
+  // --- Right column: expansion packs and firmware ---
+  int extShown = 0;
+  for (int i = 0; i < 4; i++) {
+    if (d.extSoc[i] < 0.0f)
+      continue;
+    char label[24];
+    snprintf(label, sizeof(label), "Ext battery %d", i + 1);
+    snprintf(buf, sizeof(buf), "%.0f%%", d.extSoc[i]);
+    row(1, extShown++, label, buf);
+  }
+  if (extShown == 0) {
+    row(1, extShown++, "Ext batteries", "none fitted");
+  }
+
+  snprintf(buf, sizeof(buf), "v%.1f", d.mcuVersionBMS);
+  row(1, extShown++, "BMS firmware", buf);
+  snprintf(buf, sizeof(buf), "v%.1f", d.mcuVersionAC);
+  row(1, extShown++, "Inverter firmware", buf);
+  snprintf(buf, sizeof(buf), "v%.1f", d.mcuVersionPV);
+  row(1, extShown++, "Solar firmware", buf);
+  snprintf(buf, sizeof(buf), "v%.1f", d.mcuVersionDC);
+  row(1, extShown++, "Panel firmware", buf);
+  snprintf(buf, sizeof(buf), "0x%04X", d.hardwareId);
+  row(1, extShown++, "Hardware ID", buf);
+
+  // --- Max charging current (reg 20) ---
+  int ccY = 340;
+  M5.Display.setTextColor(COLOR_DARK_GRAY);
+  M5.Display.setCursor(colX[0], ccY);
+  M5.Display.print("-- Max Charging Current --");
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(colX[0], ccY + 45);
+  M5.Display.print("AC charge current");
+  snprintf(buf, sizeof(buf), "%dA", _fossiChargeCurrent);
+  drawButton(340, ccY + 35, 50, 40, "-");
+  M5.Display.setCursor(405, ccY + 45);
+  M5.Display.print(buf);
+  drawButton(470, ccY + 35, 50, 40, "+");
+  M5.Display.setTextColor(COLOR_DARK_GRAY);
+  M5.Display.setCursor(540, ccY + 45);
+  snprintf(buf, sizeof(buf), "(max %dA)", d.maxChargeCurrent);
+  M5.Display.print(buf);
+
+  drawButton(SCREEN_WIDTH / 2 - 100, 440, 200, 55, "BACK");
+}
+
+void UIManager::handleFossibotInfoTouch(int x, int y) {
+  auto isHit = [&](int bx, int by, int bw, int bh) {
+    if (x >= bx && x < bx + bw && y >= by && y < by + bh) {
+      Buzzer::click();
+      _lastTimerSetTime = millis();
+      return true;
+    }
+    return false;
+  };
+
+  int ccY = 340;
+  int ceiling = _powerData.maxChargeCurrent > 0 ? _powerData.maxChargeCurrent : 20;
+
+  if (isHit(340, ccY + 35, 50, 40)) {
+    _fossiChargeCurrent--;
+    if (_fossiChargeCurrent < 1)
+      _fossiChargeCurrent = 1;
+    if (bleClient && bleClient->isConnected()) {
+      bleClient->setChargeCurrent(_fossiChargeCurrent);
+    }
+    forceRefresh();
+    return;
+  }
+  if (isHit(470, ccY + 35, 50, 40)) {
+    _fossiChargeCurrent++;
+    if (_fossiChargeCurrent > ceiling)
+      _fossiChargeCurrent = ceiling;
+    if (bleClient && bleClient->isConnected()) {
+      bleClient->setChargeCurrent(_fossiChargeCurrent);
+    }
+    forceRefresh();
+    return;
+  }
+
+  if (isHit(SCREEN_WIDTH / 2 - 100, 440, 200, 55)) {
+    navigateTo(ScreenID::SETTINGS_FOSSIBOT);
+    return;
+  }
+}
+
+// ============================================================================
 // Fossibot Timers Sub-Screen (Output standby timers + Schedule Charge)
 // ============================================================================
 
@@ -4314,14 +4504,16 @@ void UIManager::drawFossibotTimersScreen() {
   const int acPresets[] = {60, 480, 960, 1440, 0}; // Minutes
   const char *acLabels[] = {"1h", "8h", "16h", "24h", "OFF"};
 
-  const int usbPresets[] = {180, 300, 600, 1800, 0}; // Seconds
-  const char *usbLabels[] = {"3m", "5m", "10m", "30m", "OFF"};
+  const int usbPresets[] = {5, 10, 30, 60, 0}; // Minutes (reg 59)
+  const char *usbLabels[] = {"5m", "10m", "30m", "1h", "OFF"};
 
-  const int screenPresets[] = {3, 5, 10, 30, 0}; // Minutes
+  const int screenPresets[] = {180, 300, 600, 1800, 0}; // Seconds (reg 62)
   const char *screenLabels[] = {"3m", "5m", "10m", "30m", "OFF"};
 
-  const int sysPresets[] = {60, 480, 1440, 0}; // Minutes
-  const char *sysLabels[] = {"1h", "8h", "24h", "OFF"};
+  // Reg 68 has no "never" option: writing 0 permanently bricks the station,
+  // so these are the vendor app's presets and nothing else.
+  const int sysPresets[] = {5, 10, 30, 60, 480}; // Minutes (reg 68)
+  const char *sysLabels[] = {"5m", "10m", "30m", "1h", "8h"};
 
   // === AC Standby (Minutes) ===
   M5.Display.setTextColor(COLOR_BLACK);
@@ -4370,7 +4562,7 @@ void UIManager::drawFossibotTimersScreen() {
   // === Sys Standby (Minutes) ===
   M5.Display.setCursor(labelX, y + 8);
   M5.Display.print("Sys Idle:");
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 5; i++) {
     bool active = (_fossiSysStandby == sysPresets[i]);
     drawButton(btnStartX + i * (btnW + btnGap), y, btnW, btnH, sysLabels[i],
                active);
@@ -4461,10 +4653,10 @@ void UIManager::handleFossibotTimersTouch(int x, int y) {
   int rowGap = 45;
 
   // Same presets as draw
-  const int acPresets[] = {60, 480, 960, 1440, 0};   // Minutes
-  const int usbPresets[] = {180, 300, 600, 1800, 0}; // Seconds
-  const int screenPresets[] = {3, 5, 10, 30, 0};     // Minutes
-  const int sysPresets[] = {60, 480, 1440, 0};       // Minutes
+  const int acPresets[] = {60, 480, 960, 1440, 0};      // Minutes
+  const int usbPresets[] = {5, 10, 30, 60, 0};         // Minutes (reg 59)
+  const int screenPresets[] = {180, 300, 600, 1800, 0}; // Seconds (reg 62)
+  const int sysPresets[] = {5, 10, 30, 60, 480};       // Minutes (reg 68, never 0)
 
   // === AC Standby presets ===
   for (int i = 0; i < 5; i++) {
@@ -4518,8 +4710,8 @@ void UIManager::handleFossibotTimersTouch(int x, int y) {
   }
   baseY += rowGap;
 
-  // === Sys Standby presets (4 items) ===
-  for (int i = 0; i < 4; i++) {
+  // === Sys Standby presets ===
+  for (int i = 0; i < 5; i++) {
     if (isHit(btnStartX + i * (btnW + btnGap), baseY, btnW, btnH)) {
       _fossiSysStandby = sysPresets[i];
       if (bleClient && bleClient->isConnected()) {

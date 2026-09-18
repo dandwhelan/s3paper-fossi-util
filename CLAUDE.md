@@ -36,6 +36,17 @@ Communicates with the Fossibot via **modified Modbus RTU over BLE** (device addr
 
 **Critical:** CRC bytes are **high-byte first** (opposite to standard Modbus). See `docs/ble-protocol.md` and `src/ble/fossibot_protocol.h`.
 
+**Write safety:** the station does not validate writes and an out-of-range value
+can brick it permanently — writing `0` to register 68 (whole-machine idle
+shutdown) is a confirmed field brick. Every write passes through
+`Fossibot::isWriteAllowed()` and `sendCommand()` drops anything that fails it,
+so register 68 offers only 5/10/30/60/480 minutes and no "never".
+
+**Unit traps:** register 59 is the USB standby timer in **minutes**, register 62
+is the screen timeout in **seconds**. Output toggle states are read from status
+registers 24/25/26, not from the register 41 bitmask (whose bit layout varies by
+model); register 41's bits 9/10/11 remain only as a fallback.
+
 **Link feedback:** `FossibotBLE::getConnState()` returns a `BleConnState` (`LINK_UP`, `LINKING`, `RETRY_WAIT`, `RETRY_PAUSED`, `RETRY_STOPPED`, `RADIO_OFF`, `NO_MAC`) plus retry count, countdown to the next attempt (`getMsUntilRetry()`) and time since the link was last up (`getMsSinceLastSeen()`). The home screen renders this as an inverted status strip whenever the link is down (see UI Architecture below). Enum names deliberately avoid `DISABLED`/`CONNECTED` — the Arduino core defines those as macros.
 
 **Reconnect policy:** 30s base interval, doubling to a 5 min cap, abandoned after 55 min (deep sleep takes over at 60 min). A full client cleanup runs every 10 failures. `requestReconnectNow()` resets the backoff and arms an attempt on the next `update()` — never connect from a touch handler, the attempt blocks for up to 3s.
@@ -335,6 +346,7 @@ full only when the sampled data actually changes.
 |--------|-------------|
 | SETTINGS_FOSSIBOT | Quick Actions, Power Limits |
 | SETTINGS_FOSSIBOT_TIMERS | Standby timers, Schedule Charge |
+| SETTINGS_FOSSIBOT_INFO | Fan level, mains in/out, expansion packs, sub-MCU firmware, AC charge current limit |
 
 ## Configuration
 

@@ -210,12 +210,12 @@ public:
   /**
    * Set screen timeout in minutes (0=never)
    */
-  void setScreenTimeout(int minutes);
+  void setScreenTimeout(int seconds); // Reg 62, stored in seconds
 
   /**
    * Set system idle shutdown timer in minutes (0=never)
    */
-  void setSysStandby(int minutes);
+  void setSysStandby(int minutes); // Reg 68: 5/10/30/60/480 only, never 0
 
   /**
    * Set AC standby timeout in minutes (0=never)
@@ -230,7 +230,8 @@ public:
   /**
    * Set USB standby timeout in seconds (0=never)
    */
-  void setUSBStandby(int seconds);
+  void setUSBStandby(int minutes); // Reg 59, stored in minutes
+  void setChargeCurrent(int amps);  // Reg 20, AC charge current limit
 
   /**
    * Power off the Fossibot device
