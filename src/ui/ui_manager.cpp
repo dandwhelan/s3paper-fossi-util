@@ -6208,16 +6208,35 @@ void UIManager::checkPowerManagement() {
       _bleDisconnectedTime = millis(); // Record when first disconnected
     }
 
-    bool sleepDisabled = (config && config->getAutoSleepMinutes() == 0);
+    int autoSleepMinutes = config ? config->getAutoSleepMinutes() : 0;
+    bool sleepDisabled = (autoSleepMinutes == 0);
 
     // Never sleep while Timer or Pomodoro is actively running
     bool timerActive = (_clockMode == ClockMode::TIMER && _timerRunning);
     bool pomodoroActive = (_clockMode == ClockMode::POMODORO &&
                            _pomodoroState == PomodoroState::RUNNING);
+    bool sleepBlocked = sleepDisabled || timerActive || pomodoroActive;
+
+    // Inactivity sleep. This is what `display.auto_sleep_minutes` has always
+    // claimed to do; until now the value was only ever read as an on/off flag
+    // for the 1-hour rule below, so a device left on the dashboard with no
+    // Fossibot in range stayed awake for a full hour at ~25-35mA before it
+    // powered anything down.
+    //
+    // Deliberately restricted to the dashboard with the link *down*: deep
+    // sleep kills the BLE controller, so we must not cut a live link, and we
+    // must not close an EPUB, a game or a half-drawn note out from under the
+    // user just because they have not touched the screen for a few minutes.
+    unsigned long idleMs = millis() - _lastActivityTime;
+    if (!sleepBlocked && !bleConnected && _currentScreen == ScreenID::HOME &&
+        idleMs > (unsigned long)autoSleepMinutes * 60000UL) {
+      Serial.printf("Idle %lus with no BLE link, entering deep sleep...\n",
+                    idleMs / 1000);
+      enterDeepSleep();
+    }
 
     unsigned long bleDisconnectDuration = 60 * 60 * 1000UL; // 1 hour
-    if (!sleepDisabled && !timerActive && !pomodoroActive && !bleConnected &&
-        _bleDisconnectedTime > 0 &&
+    if (!sleepBlocked && !bleConnected && _bleDisconnectedTime > 0 &&
         (millis() - _bleDisconnectedTime > bleDisconnectDuration)) {
       Serial.println("BLE disconnected for 1 hour, entering deep sleep...");
       enterDeepSleep();
@@ -6237,8 +6256,11 @@ void UIManager::checkPowerManagement() {
   // Only actual user touch (handled in main.cpp) exits eco mode.
 
   if (!isHighPerfScreen && !bleBusy && (millis() - _lastActivityTime > 5000)) {
-    // Enter Eco Mode (80MHz)
-    if (!_lowPowerMode) {
+    // Enter Eco Mode (80MHz). Also re-assert it if the clock drifted back up
+    // while the flag stayed set - anything that boosts the CPU behind our back
+    // (a BLE connect attempt, say) would otherwise pin us at 240MHz until the
+    // next touch, because the flag alone made this look like a no-op.
+    if (!_lowPowerMode || getCpuFrequencyMhz() > 80) {
       setCpuFrequencyMhz(80);
       Serial.printf("Power: Entered Eco Mode (80MHz). Active=%lu\n",
                     millis() - _lastActivityTime);
