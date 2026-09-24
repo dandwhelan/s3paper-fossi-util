@@ -122,20 +122,6 @@ public:
    */
   String getRandomPictureForSleep();
 
-  /**
-   * Save the current timestamp to the SD card as a fallback for when the RTC
-   * battery dies. The BM8563 loses the time on power loss without a good backup
-   * cell, so persisting it here lets the clock be restored on the next boot.
-   * @param current_time The current UNIX epoch timestamp
-   */
-  void saveRTCFallback(time_t current_time);
-
-  /**
-   * Load the fallback timestamp previously written by saveRTCFallback().
-   * @return The saved UNIX epoch timestamp, or 0 if invalid/missing
-   */
-  time_t loadRTCFallback();
-
 private:
   bool _available;
 

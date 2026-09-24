@@ -180,33 +180,6 @@ void setup() {
   // Initialize SD card
   initSD();
 
-  // If the RTC came up unset (e.g. dead/absent backup cell puts the BM8563 at
-  // 2000-01-01), restore the last time we persisted to the SD card. Without
-  // this the dashboard, Settings date editor and PowerHistory filenames all
-  // drift back to the year 2000 on every power loss.
-  if (year < 2020 && sdManager && sdManager->isAvailable()) {
-    time_t fallback_t = sdManager->loadRTCFallback();
-    if (fallback_t > 0) {
-      Serial.printf("RTC was reset; restoring SD fallback time: %ld\n",
-                    (long)fallback_t);
-      struct timeval now_tv = {.tv_sec = fallback_t, .tv_usec = 0};
-      settimeofday(&now_tv, NULL);
-
-      // Write it back to the RTC chip so it sticks for this session.
-      struct tm *tm_info = localtime(&fallback_t);
-      RTC::setDateTime(tm_info->tm_year + 1900, tm_info->tm_mon + 1,
-                       tm_info->tm_mday, tm_info->tm_hour, tm_info->tm_min,
-                       tm_info->tm_sec);
-
-      // Refresh the locals so any later boot logic sees the restored date.
-      year = tm_info->tm_year + 1900;
-      month = tm_info->tm_mon + 1;
-      day = tm_info->tm_mday;
-    } else {
-      Serial.println("RTC was reset but no valid SD fallback time was found");
-    }
-  }
-
   // Show boot screen (displays boot.png for 3 seconds)
   showBootScreen();
 
@@ -391,17 +364,6 @@ void loop() {
     Serial.println("--- System Alive (Heartbeat) ---");
     // Serial.printf("Raw INT Pin (48): %d\n", digitalRead(48));
     lastHeartbeat = millis();
-  }
-
-  // Persist the clock to SD every 60 minutes so a later RTC reset can be
-  // recovered on boot. Seeded so the first save lands ~1 minute after boot,
-  // capturing a fresh time without waiting a full hour.
-  static unsigned long lastRTCSave = millis() - (3600000UL - 60000UL);
-  if (millis() - lastRTCSave > 3600000UL) {
-    if (sdManager) {
-      sdManager->saveRTCFallback(time(NULL));
-    }
-    lastRTCSave = millis();
   }
 
   // Update M5 (buttons, touch, etc.)
