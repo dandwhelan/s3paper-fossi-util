@@ -502,8 +502,18 @@ void loop() {
   // Update UI (handles its own refresh timing)
   uiManager->update();
 
-  // Small delay to prevent tight loop
-  delay(10);
+  // Small delay to prevent tight loop. In eco mode the touch poll only runs
+  // every 30ms, so waking every 10ms in between is pure overhead - sleep up to
+  // the next poll instead. delay() yields to FreeRTOS, so this is idle time,
+  // not spin.
+  if (uiManager && uiManager->isEcoMode()) {
+    unsigned long sinceLastPoll = millis() - lastTouchPoll;
+    delay(sinceLastPoll >= touchPollInterval
+              ? 1
+              : (touchPollInterval - sinceLastPoll));
+  } else {
+    delay(10);
+  }
 }
 
 void initHardware() {
