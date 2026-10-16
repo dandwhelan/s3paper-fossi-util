@@ -273,6 +273,163 @@ bool PowerHistory::loadFromSD() {
   return samplesLoaded > 0;
 }
 
+DailySummary PowerHistory::summariseDay(uint8_t dayOffset) {
+  DailySummary s = {};
+  s.valid = false;
+  s.socMin = 255;
+
+  // Date label for the row, derived the same way as the day's CSV filename.
+  time_t targetDay = time(nullptr) - ((time_t)dayOffset * 86400);
+  struct tm ti;
+  localtime_r(&targetDay, &ti);
+  strftime(s.date, sizeof(s.date), "%Y-%m-%d", &ti);
+
+  if (dayOffset >= HISTORY_DAYS) {
+    s.socMin = 0;
+    return s;
+  }
+
+  const PowerSample *day = getDaySamples(dayOffset);
+
+  uint32_t socSum = 0, inSum = 0, outSum = 0;
+  // Energy is integrated between consecutive samples rather than assumed from
+  // the nominal 5-minute cadence: real logs are full of holes (deep sleep, BLE
+  // outages) and multiplying a mean by 24h would invent energy that was never
+  // measured.
+  uint32_t inWattMins = 0, outWattMins = 0;
+  int prevMinute = -1;
+
+  for (uint16_t i = 0; i < SAMPLES_PER_DAY; i++) {
+    const PowerSample &sample = day[i];
+    if (sample.timestamp == 0)
+      continue;
+
+    s.samples++;
+    socSum += sample.batteryPct;
+    inSum += sample.inputW;
+    outSum += sample.outputW;
+
+    if (sample.batteryPct < s.socMin)
+      s.socMin = sample.batteryPct;
+    if (sample.batteryPct > s.socMax)
+      s.socMax = sample.batteryPct;
+    if (sample.inputW > s.inPeakW)
+      s.inPeakW = sample.inputW;
+    if (sample.outputW > s.outPeakW)
+      s.outPeakW = sample.outputW;
+
+    if (prevMinute >= 0) {
+      int gap = (int)i - prevMinute;
+      if (gap > 0 && gap <= SUMMARY_MAX_GAP_MINS) {
+        inWattMins += (uint32_t)sample.inputW * gap;
+        outWattMins += (uint32_t)sample.outputW * gap;
+      }
+    }
+    prevMinute = (int)i;
+  }
+
+  if (s.samples == 0) {
+    s.socMin = 0;
+    return s;
+  }
+
+  s.valid = true;
+  s.socAvg = (uint8_t)(socSum / s.samples);
+  s.inAvgW = (uint16_t)(inSum / s.samples);
+  s.outAvgW = (uint16_t)(outSum / s.samples);
+  s.inWh = inWattMins / 60;
+  s.outWh = outWattMins / 60;
+  return s;
+}
+
+int PowerHistory::exportWeeklySummary(const char *path) {
+  Serial.printf("[PowerHistory] Exporting weekly summary to %s\n", path);
+
+  if (!SD.exists("/history")) {
+    SD.mkdir("/history");
+  }
+
+  // Regenerated report, not a log: replace whatever was there.
+  if (SD.exists(path)) {
+    SD.remove(path);
+  }
+
+  File file = SD.open(path, FILE_WRITE);
+  if (!file) {
+    Serial.println("[PowerHistory] Summary open failed - power cycling SD");
+    if (!sdManager || !sdManager->powerCycleAndReinit()) {
+      Serial.println("[PowerHistory] SD Reset Failed! Aborting export.");
+      return -1;
+    }
+    if (!SD.exists("/history")) {
+      SD.mkdir("/history");
+    }
+    file = SD.open(path, FILE_WRITE);
+    if (!file) {
+      Serial.printf("[PowerHistory] Still failed to open %s\n", path);
+      return -1;
+    }
+  }
+
+  file.println("date,samples,soc_min,soc_max,soc_avg,in_avg_w,in_peak_w,"
+               "out_avg_w,out_peak_w,in_wh,out_wh,charge_ratio");
+
+  uint32_t totalIn = 0, totalOut = 0;
+  uint16_t peakIn = 0, peakOut = 0;
+  uint32_t totalSamples = 0;
+  int daysWithData = 0;
+  char line[160];
+
+  // Oldest first, so the file reads chronologically in a spreadsheet.
+  for (int dayOffset = HISTORY_DAYS - 1; dayOffset >= 0; dayOffset--) {
+    DailySummary s = summariseDay((uint8_t)dayOffset);
+    if (!s.valid) {
+      snprintf(line, sizeof(line), "%s,0,,,,,,,,,,", s.date);
+      file.println(line);
+      continue;
+    }
+
+    daysWithData++;
+    totalIn += s.inWh;
+    totalOut += s.outWh;
+    totalSamples += s.samples;
+    if (s.inPeakW > peakIn)
+      peakIn = s.inPeakW;
+    if (s.outPeakW > peakOut)
+      peakOut = s.outPeakW;
+
+    // Charge/discharge ratio: charged Wh per Wh drawn. Blank rather than
+    // infinite when nothing was drawn that day.
+    char ratio[12];
+    if (s.outWh > 0) {
+      snprintf(ratio, sizeof(ratio), "%.2f", (float)s.inWh / (float)s.outWh);
+    } else {
+      ratio[0] = '\0';
+    }
+
+    snprintf(line, sizeof(line), "%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%s", s.date,
+             s.samples, s.socMin, s.socMax, s.socAvg, s.inAvgW, s.inPeakW,
+             s.outAvgW, s.outPeakW, s.inWh, s.outWh, ratio);
+    file.println(line);
+  }
+
+  char totalRatio[12];
+  if (totalOut > 0) {
+    snprintf(totalRatio, sizeof(totalRatio), "%.2f",
+             (float)totalIn / (float)totalOut);
+  } else {
+    totalRatio[0] = '\0';
+  }
+  snprintf(line, sizeof(line), "TOTAL,%u,,,,,%u,,%u,%u,%u,%s", totalSamples,
+           peakIn, peakOut, totalIn, totalOut, totalRatio);
+  file.println(line);
+
+  file.close();
+  Serial.printf("[PowerHistory] Weekly summary written (%d days with data)\n",
+                daysWithData);
+  return daysWithData;
+}
+
 void PowerHistory::advanceToNextDay() {
   Serial.println("[PowerHistory] Advancing to next day");
 

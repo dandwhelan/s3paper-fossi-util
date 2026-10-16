@@ -37,6 +37,7 @@ enum class ScreenID {
   SETTINGS_FOSSIBOT,        // Fossibot settings (Quick Actions, Power Limits)
   SETTINGS_FOSSIBOT_TIMERS, // Fossibot timers sub-menu
   SETTINGS_FOSSIBOT_INFO,   // Fossibot device info + charge current
+  SETTINGS_FOSSIBOT_PORTS,  // Fossibot per-port USB power breakdown
   SD_DIAG,
   NOTES_BROWSE,
   HISTORY
@@ -103,6 +104,11 @@ public:
    */
   void drawFossibotTimersScreen();
   void drawFossibotInfoScreen();
+
+  /**
+   * Draw Fossibot USB Ports sub-screen (live per-port wattage)
+   */
+  void drawFossibotPortsScreen();
 
   /**
    * Get current screen ID (useful for main loop logic)
@@ -339,6 +345,12 @@ private:
 
   void handleFossibotTimersTouch(int x, int y); // Fossibot timers touch
   void handleFossibotInfoTouch(int x, int y);   // Fossibot device info touch
+  void handleFossibotPortsTouch(int x, int y);  // Fossibot USB ports touch
+
+  // Battery pack voltage readout shared by the campervan themes: "51.2V", or
+  // "! 47.1V" when outside the healthy LiFePO4 window. Empty while the
+  // voltage register has never been read.
+  String batteryVoltageLabel();
 
   // Clock screen state
   ClockMode _clockMode = ClockMode::TIMER; // Default to Timer (Alarm removed)
@@ -521,6 +533,16 @@ private:
   uint8_t _historyViewDay = 0;         // 0=today, 1=yesterday, etc.
   uint8_t _historyFilter = 0x00;       // Bitfield: 0=None (default for speed)
   int16_t _historySelectedMinute = -1; // -1 = no selection
+
+  // Result of the last weekly-summary export, shown under the header for a
+  // few seconds so the SD write has visible feedback.
+  char _historyExportMsg[64] = "";
+  unsigned long _historyExportMsgTime = 0;
+  static const unsigned long HISTORY_EXPORT_MSG_MS = 8000;
+
+  // Buttons across the bottom of the History screen. Shared by the draw and
+  // the touch handler so the hit zones cannot drift from the labels.
+  static const int HISTORY_BTN_COUNT = 7;
 
   // ============================================================
   // Reader (E-Book)

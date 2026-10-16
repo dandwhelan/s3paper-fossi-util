@@ -234,6 +234,21 @@ inline bool isWriteAllowed(uint8_t reg, uint16_t value) {
 static const uint16_t MAX_INPUT_POWER = 1100;  // Max input watts
 static const uint16_t MAX_OUTPUT_POWER = 3000; // Max output watts
 
+// USB ports, in the order they appear on the front of the station. The index
+// is the array index into PowerBankData::usbPortWatts.
+static const int USB_PORT_COUNT = 6;
+static const char *const USB_PORT_NAMES[USB_PORT_COUNT] = {
+    "USB-A1", "USB-A2", "USB-C1", "USB-C2", "USB-C3", "USB-C4"};
+// Per-port ceiling used only to scale the port bars. A-ports are 18W, C-ports
+// are 100W on the F3600 Pro; one shared scale keeps the bars comparable.
+static const float USB_PORT_MAX_WATTS = 100.0f;
+
+// Healthy resting range for the 16S LiFePO4 pack (nominal 51.2V). Outside it
+// the pack is either deeply discharged or being over-charged, which is worth
+// flagging on the dashboard - SOC% alone hides both.
+static const float BATTERY_VOLTAGE_MIN = 48.0f;
+static const float BATTERY_VOLTAGE_MAX = 51.5f;
+
 /**
  * Power bank data structure
  */
@@ -254,6 +269,10 @@ struct PowerBankData {
   // Output breakdown (derived from per-port registers)
   float usbOutputPower = 0.0f;  // Sum of all 6 USB ports (regs 30,31,34-37 ÷10)
   float acDcOutputPower = 0.0f; // Derived: totalOutput - usbTotal (AC+DC combined)
+
+  // Per-port USB wattage, same order as USB_PORT_NAMES
+  // (regs 30, 31, 34, 35, 36, 37, all ÷10)
+  float usbPortWatts[USB_PORT_COUNT] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 
   // Output states
   bool usbActive = false;
@@ -329,6 +348,24 @@ struct PowerBankData {
   }
 
   /**
+   * True once reg 22 has given us a plausible pack voltage. Zero means "not
+   * read yet" (never connected, or the register was out of the response), not
+   * "0 volts" - the difference matters, since a health warning on a value we
+   * never received would fire on every boot.
+   */
+  bool batteryVoltageValid() const { return batteryVoltage > 1.0f; }
+
+  /**
+   * True when a known pack voltage sits outside the healthy LiFePO4 window.
+   */
+  bool batteryVoltageOutOfRange() const {
+    if (!batteryVoltageValid())
+      return false;
+    return batteryVoltage < BATTERY_VOLTAGE_MIN ||
+           batteryVoltage > BATTERY_VOLTAGE_MAX;
+  }
+
+  /**
    * Check if device is actively charging (Reg 48 bit 15).
    */
   bool isCharging() const {
@@ -368,6 +405,7 @@ struct PowerBankData {
   float mcuVersionPV = 0.0f;     // Solar MPPT sub-MCU firmware (reg 49)
   float mcuVersionDC = 0.0f;     // Front panel sub-MCU firmware (reg 50)
   uint16_t hardwareId = 0;       // Regional hardware variant (reg 11)
+  bool masterEnabled = true;     // Master system enable (reg 5), read-only
 
   // For change detection
   float lastBatteryPercent = -1.0f;
