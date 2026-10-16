@@ -49,6 +49,14 @@ public:
   String getFossibotMAC() const { return _fossibotMAC; }
   void setFossibotMAC(const String &mac);
 
+  // SwitchBot Bot that sits over the Fossibot's physical power button. It is
+  // the only way to switch the station back on, because a powered-off station
+  // has no BLE radio listening.
+  String getSwitchbotMAC() const { return _switchbotMAC; }
+  void setSwitchbotMAC(const String &mac);
+  String getSwitchbotPassword() const { return _switchbotPassword; }
+  void setSwitchbotPassword(const String &password);
+
   // Radio enable toggles (persisted so an OFF radio stays off across reboots)
   bool getBluetoothEnabled() const { return _bluetoothEnabled; }
   void setBluetoothEnabled(bool enabled) { _bluetoothEnabled = enabled; }
@@ -107,6 +115,8 @@ private:
 
   // Bluetooth
   String _fossibotMAC;
+  String _switchbotMAC;
+  String _switchbotPassword;
 
   // Radio enable toggles
   bool _bluetoothEnabled;
@@ -120,7 +130,7 @@ private:
   String _inverterSN;
 
   // Display
-  String _theme;      // Campervan themes: classic_grid|compact_status|horizontal_bars|sector
+  String _theme;      // Campervan themes: classic_grid|compact_status|horizontal_bars|sector|live_graph
   String _homeTheme;  // Home themes: energy_flow|house_scene|battery_focus|todays_story
   int _autoSleepMinutes;
 

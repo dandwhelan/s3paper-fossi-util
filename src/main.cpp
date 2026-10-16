@@ -14,6 +14,7 @@
  */
 
 #include "ble/ble_client.h"
+#include "ble/switchbot_client.h"
 #include "hardware/buzzer.h"
 #include "hardware/display.h"
 #include "hardware/rtc.h"
@@ -38,6 +39,7 @@ void showBootScreen();
 // Global instances
 UIManager *uiManager = nullptr;
 FossibotBLE *bleClient = nullptr;
+SwitchBotBLE *switchbotClient = nullptr;
 GivEnergyMQTT *mqttClient = nullptr;
 SDManager *sdManager = nullptr;
 Config *config = nullptr;
@@ -53,7 +55,15 @@ void setup() {
 
   // Initialize M5Unified
   auto cfg = M5.config();
+#ifdef SERIAL_DEBUG
   cfg.serial_baudrate = 115200;
+#else
+  // Production build: leave the port unopened. Most Serial.print calls in
+  // this codebase are not wrapped in #ifdef SERIAL_DEBUG, so this (plus
+  // ARDUINO_USB_CDC_ON_BOOT=0) is what actually silences them - writes to an
+  // uninitialised UART are dropped without running the USB CDC stack.
+  cfg.serial_baudrate = 0;
+#endif
   // Disable some internal modules to prevent auto-I2C init on wrong pins
   // but keep RTC enabled for timekeeping
   cfg.internal_rtc = true; // ENABLE RTC for time/date
@@ -169,6 +179,33 @@ void setup() {
 
   // Initialize SD card
   initSD();
+
+  // If the RTC came up unset (e.g. dead/absent backup cell puts the BM8563 at
+  // 2000-01-01), restore the last time we persisted to the SD card. Without
+  // this the dashboard, Settings date editor and PowerHistory filenames all
+  // drift back to the year 2000 on every power loss.
+  if (year < 2020 && sdManager && sdManager->isAvailable()) {
+    time_t fallback_t = sdManager->loadRTCFallback();
+    if (fallback_t > 0) {
+      Serial.printf("RTC was reset; restoring SD fallback time: %ld\n",
+                    (long)fallback_t);
+      struct timeval now_tv = {.tv_sec = fallback_t, .tv_usec = 0};
+      settimeofday(&now_tv, NULL);
+
+      // Write it back to the RTC chip so it sticks for this session.
+      struct tm *tm_info = localtime(&fallback_t);
+      RTC::setDateTime(tm_info->tm_year + 1900, tm_info->tm_mon + 1,
+                       tm_info->tm_mday, tm_info->tm_hour, tm_info->tm_min,
+                       tm_info->tm_sec);
+
+      // Refresh the locals so any later boot logic sees the restored date.
+      year = tm_info->tm_year + 1900;
+      month = tm_info->tm_mon + 1;
+      day = tm_info->tm_mday;
+    } else {
+      Serial.println("RTC was reset but no valid SD fallback time was found");
+    }
+  }
 
   // Show boot screen (displays boot.png for 3 seconds)
   showBootScreen();
@@ -356,6 +393,17 @@ void loop() {
     lastHeartbeat = millis();
   }
 
+  // Persist the clock to SD every 60 minutes so a later RTC reset can be
+  // recovered on boot. Seeded so the first save lands ~1 minute after boot,
+  // capturing a fresh time without waiting a full hour.
+  static unsigned long lastRTCSave = millis() - (3600000UL - 60000UL);
+  if (millis() - lastRTCSave > 3600000UL) {
+    if (sdManager) {
+      sdManager->saveRTCFallback(time(NULL));
+    }
+    lastRTCSave = millis();
+  }
+
   // Update M5 (buttons, touch, etc.)
   // M5.update(); // DISABLED: Conflicts with manual I2C touch reading
   // (ESP_ERR_INVALID_STATE)
@@ -419,15 +467,26 @@ void loop() {
     // Campervan mode: BLE to Fossibot
     bleClient->update();
 
-    if (bleClient->isConnected()) {
-      uiManager->updatePowerBankData(bleClient->getData());
-    }
+    // Push data every pass, connected or not: the struct carries the link
+    // state, and the UI can only show a disconnect if it hears about it.
+    // (Previously this was gated on isConnected(), so the dashboard kept
+    // showing stale values as if the Fossibot were still linked.)
+    uiManager->updatePowerBankData(bleClient->getData());
 
     // CRITICAL: Skip UI updates during BLE connection attempts to prevent
     // EPD/BLE crash
     if (bleClient->isConnecting()) {
       delay(50);
       return;
+    }
+  }
+
+  // SwitchBot Bot over the Fossibot power button. Runs the queued press here
+  // rather than in the touch handler, which must not block for a connect.
+  if (switchbotClient) {
+    switchbotClient->update();
+    if (switchbotClient->takeStatusChanged()) {
+      uiManager->forceRefresh();
     }
   }
 
@@ -443,8 +502,18 @@ void loop() {
   // Update UI (handles its own refresh timing)
   uiManager->update();
 
-  // Small delay to prevent tight loop
-  delay(10);
+  // Small delay to prevent tight loop. In eco mode the touch poll only runs
+  // every 30ms, so waking every 10ms in between is pure overhead - sleep up to
+  // the next poll instead. delay() yields to FreeRTOS, so this is idle time,
+  // not spin.
+  if (uiManager && uiManager->isEcoMode()) {
+    unsigned long sinceLastPoll = millis() - lastTouchPoll;
+    delay(sinceLastPoll >= touchPollInterval
+              ? 1
+              : (touchPollInterval - sinceLastPoll));
+  } else {
+    delay(10);
+  }
 }
 
 void initHardware() {
@@ -547,6 +616,13 @@ void initBLE() {
   Serial.println("Initializing BLE...");
 
   bleClient = new FossibotBLE();
+
+  // SwitchBot Bot over the physical power button. Created before the
+  // Fossibot MAC check below, because the power-on button is exactly what you
+  // need when there is no Fossibot to talk to yet.
+  switchbotClient = new SwitchBotBLE();
+  switchbotClient->setTargetMAC(config->getSwitchbotMAC());
+  switchbotClient->setPassword(config->getSwitchbotPassword());
 
   // Get MAC address from config
   String macAddress = config->getFossibotMAC();

@@ -12,6 +12,22 @@
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 
+/**
+ * Link state, for user-facing connection feedback.
+ * Everything the UI needs to explain "why is there no data right now".
+ */
+// Value names avoid DISABLED/CONNECTED etc: those collide with Arduino
+// core macros (esp32-hal-gpio.h defines DISABLED).
+enum class BleConnState {
+  NO_MAC,       // no Fossibot MAC in settings.json
+  RADIO_OFF,    // radio powered down (Bluetooth toggled off in Settings)
+  LINK_UP,      // connected
+  LINKING,      // connection attempt in flight
+  RETRY_WAIT,   // disconnected, waiting for the next auto-retry
+  RETRY_PAUSED, // auto-retry suspended (Reader / other intensive screen)
+  RETRY_STOPPED // gave up after RETRY_TIMEOUT_MS
+};
+
 class FossibotBLE : public NimBLEClientCallbacks {
 public:
   FossibotBLE();
@@ -93,6 +109,42 @@ public:
    */
   bool isAutoReconnectEnabled() const { return _autoReconnect; }
 
+  // ============================================================
+  // Connection feedback (for the UI status strip)
+  // ============================================================
+
+  /**
+   * Current link state - what the device should be telling the user
+   */
+  BleConnState getConnState() const;
+
+  /**
+   * Number of consecutive failed connection attempts in this retry cycle
+   */
+  int getRetryCount() const { return _consecutiveFailures; }
+
+  /**
+   * Milliseconds until the next auto-retry (0 = attempt is due/in progress)
+   */
+  unsigned long getMsUntilRetry() const;
+
+  /**
+   * Milliseconds since the link was last up (0 if never connected)
+   */
+  unsigned long getMsSinceLastSeen() const;
+
+  /**
+   * True once a connection has succeeded at least since boot
+   */
+  bool hasEverConnected() const { return _lastConnectedTime != 0; }
+
+  /**
+   * Force an immediate reconnect attempt (user tapped the status strip).
+   * Resets the backoff and 55 min timeout; the attempt itself runs on the
+   * next update() so it never blocks a touch handler.
+   */
+  void requestReconnectNow();
+
   /**
    * Enable/disable the BLE radio entirely (user toggle).
    * Disabling deinitializes the BT controller to actually power it down;
@@ -151,14 +203,19 @@ public:
   void setChargeLimit(int percent);
 
   /**
+   * Set AC charge speed setpoint (1-5, ~220W per step on EU units)
+   */
+  void setChargeSpeed(int level);
+
+  /**
    * Set screen timeout in minutes (0=never)
    */
-  void setScreenTimeout(int minutes);
+  void setScreenTimeout(int seconds); // Reg 62, stored in seconds
 
   /**
    * Set system idle shutdown timer in minutes (0=never)
    */
-  void setSysStandby(int minutes);
+  void setSysStandby(int minutes); // Reg 68: 5/10/30/60/480 only, never 0
 
   /**
    * Set AC standby timeout in minutes (0=never)
@@ -173,7 +230,8 @@ public:
   /**
    * Set USB standby timeout in seconds (0=never)
    */
-  void setUSBStandby(int seconds);
+  void setUSBStandby(int minutes); // Reg 59, stored in minutes
+  void setChargeCurrent(int amps);  // Reg 20, AC charge current limit
 
   /**
    * Power off the Fossibot device
@@ -219,6 +277,7 @@ private:
   unsigned long _retryInterval;  // Current backoff interval
   int _consecutiveFailures;
   bool _firstAttemptDone;
+  unsigned long _lastConnectedTime; // millis() while linked; 0 = never linked
 
   // Boot auto-enable state: only triggers once within first 5 minutes
   bool _bootAutoEnableTriggered;
@@ -240,6 +299,9 @@ private:
   // Reconnect backoff: 30s base, doubling to a 5 min cap
   static const unsigned long RETRY_INTERVAL_BASE_MS = 30000;
   static const unsigned long RETRY_INTERVAL_MAX_MS = 300000;
+
+  // Stop retrying after 55 min (deep sleep kicks in at 60 min)
+  static const unsigned long RETRY_TIMEOUT_MS = 55UL * 60UL * 1000UL;
 
   // Power optimized polling intervals (middle ground)
   static const unsigned long POLL_INTERVAL = 45000; // 45s (middle ground)

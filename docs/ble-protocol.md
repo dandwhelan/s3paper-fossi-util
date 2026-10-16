@@ -148,38 +148,76 @@ These registers are read using function code `0x04`.
 | 3 | 6 | AC Input Power | AC charging power | W |
 | 4 | 8 | DC Input Power | Solar/DC input | W |
 | 6 | 12 | Total Input Power | Sum of AC + DC inputs | W |
+| 7 | 14 | AC Grid Power | **Signed**: positive=import, negative=export | W |
 | 8 | 16 | Error Code | 0=OK, 78=Inverter, 79=Safety Lockout | code |
+| 13 | 26 | Active Charge Rate | Rate actually in use (may be throttled below the setpoint) | 1-5 |
+| 14 | 28 | Max AC Input | AC charge limit | W |
+| 16 | 32 | Frequency Setting | Output frequency setting | Hz×10 |
 | 18 | 36 | AC Output Voltage | AC output voltage | V×10 |
 | 19 | 38 | AC Output Frequency | AC output frequency | Hz×10 |
 | 20 | 40 | Total Output Watts | Sum of all outputs | W |
-| 21 | 42 | Bus Voltage | **Multiplexed**: charging=AC input V×10, discharging=DC bus V | V |
+| 21 | 42 | AC Input Voltage | **Multiplexed**: mains V×10 while plugged in, otherwise a small state code (15 = sub-zero charge lockout) | V×10 / code |
 | 22 | 44 | Battery Voltage | ÷ 100 for volts | V×100 |
+| 24 | 48 | USB Toggle State | 0=Off, 1=On | 0/1 |
+| 25 | 50 | DC Toggle State | 0=Off, 1=On | 0/1 |
+| 26 | 52 | AC Toggle State | 0=Off, 1=On | 0/1 |
+| 27 | 54 | Light State | off/on/flash/sos | 0-3 |
 | 30 | 60 | USB-A1 Watts | USB-A port 1 power | W×10 |
 | 31 | 62 | USB-A2 Watts | USB-A port 2 power | W×10 |
+| 34-37 | 68-74 | USB-C1..C4 Watts | USB-C port power | W×10 |
 | 39 | 78 | Output Power | Active output | W |
-| 41 | 82 | Active Port Flags | Bitmask for USB/DC/AC icons | bitmask |
+| 40 | 80 | Pack Config Voltage | Pack voltage calibration | V×10 |
+| 41 | 82 | Port & Subsystem Flags | Subsystem-active bitmask (see below) | bitmask |
 | 42 | 84 | Protection Flags | **Bitmask** (see fault detection below) | bitmask |
 | 47 | 94 | Protocol Version | Always 12288 | - |
 | 48 | 96 | System Status | 0x8000=Charging, 0x4000=Standby, 0x0008=Error | bitmask |
-| 52 | 104 | Model Constant | 180=Fossibot, 0=Aferiy (**NOT temperature**) | - |
+| 52 | 104 | Model Constant | 180=Aferiy, 0=Fossibot (**NOT temperature**) | - |
+| 53 | 106 | Ext1 SOC | Expansion pack 1: 0=absent, else (v−10)/10 | %×10+10 |
 | 54 | 108 | Battery Full Capacity | Full battery capacity | Ah×10 |
+| 55 | 110 | Ext2 SOC | Expansion pack 2 | %×10+10 |
 | 56 | 112 | State of Charge | ÷ 10 for percent | %×10 |
+| 57 | 114 | Booking Charge Delay | Scheduled-charge countdown, 0 = none armed | minutes |
 | 58 | 116 | Time to Full | When charging | minutes |
 | 59 | 118 | Time to Empty | When discharging | minutes |
+| 60 | 120 | AC Standby Counter | Current AC standby countdown | minutes |
+| 61 | 122 | DC Standby Counter | Current DC standby countdown | minutes |
+| 66 | 132 | Ext3 SOC | Expansion pack 3 | %×10+10 |
+| 67 | 134 | Ext4 SOC | Expansion pack 4 | %×10+10 |
+| 68 | 136 | Shutdown Timer | Machine shutdown countdown | - |
+| 69 | 138 | Fan Level | Current fan speed | 0-5 |
 
-### Active Port Flags Bitmask (Register 41)
+> Note that registers 66/67 mean different things in the two banks: expansion
+> pack SOC as **input** registers, discharge/charge limit as **holding**
+> registers.
 
-| Bit | Value | Output |
-|-----|-------|--------|
-| 9 | 512 | USB |
-| 10 | 1024 | DC (12V) |
-| 11 | 2048 | AC (Inverter) |
+### Port & Subsystem Flags Bitmask (Register 41)
+
+Register 41 reports which subsystems are *live*, not which outputs the user has
+switched on, and its layout varies across models. The output toggles are read
+from their own registers (24 USB, 25 DC, 26 AC), which is what the vendor app
+does; register 41's legacy bits 9/10/11 are kept only as a fallback for
+firmware that leaves 24-26 at zero.
+
+| Bit | Mask | Meaning |
+|-----|------|---------|
+| 2 | 0x0004 | AC output active |
+| 3 | 0x0008 | AC input present (grid) |
+| 4 | 0x0010 | AC input charging |
+| 5 | 0x0020 | Low-voltage PV present |
+| 6 | 0x0040 | Low-voltage PV charging |
+| 7 | 0x0080 | DC output active |
+| 8 | 0x0100 | Car input present |
+| 13 | 0x2000 | Car input charging |
+| 14 | 0x4000 | High-voltage PV present |
+| 15 | 0x8000 | High-voltage PV charging |
+
+Bits 2 and 3 set together mean UPS bypass mode.
 
 ```cpp
-uint16_t states = getRegValue(41);
-bool usbActive = (states & 512) != 0;   // Bit 9
-bool dcActive = (states & 1024) != 0;   // Bit 10
-bool acActive = (states & 2048) != 0;   // Bit 11
+// Preferred: explicit toggle registers
+bool usbActive = getRegValue(24) != 0;
+bool dcActive = getRegValue(25) != 0;
+bool acActive = getRegValue(26) != 0;
 ```
 
 ### Protection Flags Bitmask (Register 42)
@@ -234,11 +272,40 @@ const bool isCriticalFault = (Reg42 & 0x6000) > 0;
 | 24 | USB Output | 0=Off, 1=On | Toggle USB ports |
 | 25 | DC Output | 0=Off, 1=On | Toggle 12V DC |
 | 26 | AC Output | 0=Off, 1=On | Toggle inverter |
+| 17 | Max Charge Current | Amps | Hardware ceiling for register 20 |
+| 20 | Charge Current Setting | 1-20 A | Configurable AC charge current limit |
 | 27 | Light Mode | 0-3 | off/on/flash/sos |
+| 32 | Firmware Version | raw | Device firmware identifier |
+| 47 | AC MCU Version | (v & 0xFF) / 10 | Inverter sub-MCU firmware |
+| 48 | BMS MCU Version | (v & 0xFF) / 10 | Battery management sub-MCU firmware |
+| 49 | PV MCU Version | (v & 0xFF) / 10 | Solar MPPT sub-MCU firmware |
+| 50 | DC/Panel MCU Version | (v & 0xFF) / 10 | Front panel sub-MCU firmware |
 | 56 | Key Sound | 0=Off, 1=On | Button beep |
-| 57 | Silent Charging | 0=Off, 1=On | Quiet mode |
+| 57 | Silent Charging | 0=Off, 1=On | Quiet mode; caps fan level |
+| 59 | **USB Standby** | **minutes** (0=never) | Auto-off timer for USB ports |
+| 60 | AC Standby | minutes (0=never) | Auto-off timer for the inverter |
+| 61 | DC Standby | minutes (0=never) | Auto-off timer for 12V DC |
+| 62 | **Screen Timeout** | **seconds** (0=never) | LCD auto-off timer |
+| 63 | Schedule Charge | minutes | Delay before charging starts |
+| 64 | Power Off | write 1 | Shut the machine down |
 | 66 | Discharge Limit | %×10 | Lower SOC limit |
 | 67 | Charge Limit | %×10 | Target charge % |
+| 68 | Machine Shutdown | 5/10/30/60/480 min | Whole-device idle shutdown — **never write 0** |
+
+### Write safety
+
+The station does **not** validate register writes, and an out-of-range value can
+brick it permanently. Writing `0` to register 68 is a confirmed field brick (see
+`dandwhelan/fossibot-bluetooth` PROTOCOL.md), so register 68 accepts only the
+vendor presets 5/10/30/60/480 and has no "never" option in the UI.
+
+Every write in this firmware goes through `Fossibot::isWriteAllowed()` in
+`src/ble/fossibot_protocol.h`; `sendCommand()` drops anything that fails it.
+
+Two unit traps worth spelling out, because this firmware previously had them
+backwards: **register 59 is USB standby in minutes** and **register 62 is the
+screen timeout in seconds**. Swapping them silently writes a screen-timeout
+value into the USB port timer.
 
 ## Response Parsing
 
@@ -338,6 +405,87 @@ stateDiagram-v2
 3. **Check Response Length:**
    - Status response should be 168 bytes
    - Shorter responses may indicate communication issues
+
+## SwitchBot Bot (power-on path)
+
+Powering the station off is a Modbus write to holding register 64, but there is
+no matching power-on register: a Fossibot that is off has its BLE radio off too,
+so nothing can reach it over the air. The way back in is a SwitchBot Bot - a
+servo-driven button pusher - stuck over the physical power button.
+
+This is a completely separate BLE peripheral from the Fossibot, with its own
+service, and it speaks nothing like Modbus. Implemented in
+`src/ble/switchbot_client.cpp`.
+
+### Service and characteristics
+
+Identical on every SwitchBot device:
+
+| UUID | Role |
+|---|---|
+| `cba20d00-224d-11e6-9fb8-0002a5d5c51b` | Communication service |
+| `cba20002-224d-11e6-9fb8-0002a5d5c51b` | Write (commands go here) |
+| `cba20003-224d-11e6-9fb8-0002a5d5c51b` | Notify (result comes back here) |
+
+### Request format
+
+Every request opens with the magic byte `0x57`. Byte 1 packs three fields:
+bits 7:6 protocol version, bits 5:4 encryption mode, bits 3:0 command. Command
+`0x01` is "execute action"; the action byte follows.
+
+| Bytes | Meaning |
+|---|---|
+| `57 01 00` | Press (push and retract) - the one we send |
+| `57 01 01` | Turn on (hold down), latch mode |
+| `57 01 02` | Turn off (release), latch mode |
+| `57 02` | Get device info (battery, firmware, mode) |
+
+If the Bot has a password set in the SwitchBot app, encryption mode 1 applies
+and the CRC32 of the password is carried in the command:
+
+```
+57 11 <crc32 big-endian, 4 bytes> 00
+```
+
+Only the CRC32 is stored on the device, never the password itself. The CRC is
+standard IEEE 802.3 (reflected, polynomial `0xEDB88320`).
+
+### Response codes
+
+First byte of the notification:
+
+| Code | Meaning |
+|---|---|
+| `0x01` | Success (a press answers `01 FF 00`) |
+| `0x02` | Bot reported an error |
+| `0x03` | Bot busy - retry shortly |
+| `0x06` | Bot battery too low to actuate |
+| `0x07` | Password required |
+| `0x09` | Wrong password |
+
+Some firmware revisions never notify at all. A write that was accepted almost
+certainly actuated, so that case is reported as "no reply" rather than failure.
+
+### Implementation notes
+
+- Addressed by MAC (`switchbot_mac` in `settings.json`), so no scan is needed.
+  Note the web PWA cannot do this - Web Bluetooth hides MACs and must show a
+  device chooser instead.
+- The press is queued by the touch handler and executed from `update()`: a
+  connect can block for seconds and touch handlers must stay responsive. Same
+  reasoning as `FossibotBLE::requestReconnectNow()`.
+- Connect, write, disconnect. The link is not held open; in practice the
+  Fossibot link is down anyway whenever this is needed.
+- NimBLE is a singleton shared with the Fossibot client, so the press path
+  initialises it only if the user has powered the radio down in Settings.
+- Same two guards the Fossibot connect path needs: boost the CPU off 80MHz eco
+  mode, and `waitDisplay()` before starting the radio.
+
+### Reference
+
+- [SwitchBot official BLE API](https://github.com/OpenWonderLabs/SwitchBotAPI-BLE) - `devicetypes/bot.md`
+- [pySwitchbot](https://github.com/Danielhiversen/pySwitchbot) - password/CRC32 variant
+- [node-switchbot](https://github.com/OpenWonderLabs/node-switchbot)
 
 ## See Also
 

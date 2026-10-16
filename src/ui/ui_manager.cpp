@@ -6,6 +6,7 @@
 
 #include "ui_manager.h"
 #include "../ble/ble_client.h"
+#include "../ble/switchbot_client.h"
 #include "../mqtt/mqtt_client.h"
 #include "../fonts/ReaderFonts.h"  // Reader font family registry
 #include "../fonts/TerminusBold.h" // Terminus Bold font
@@ -36,6 +37,27 @@
 // Line spacing (pixels added between lines)
 // You can adjust these values, or the logic in drawReaderScreen uses
 // _readerLineSpacing variable which currently defaults to 1.
+
+// Global reference to BLE client (Campervan mode; null in Home mode)
+extern FossibotBLE *bleClient;
+
+// SwitchBot Bot parked over the Fossibot's physical power button. Null in Home
+// mode, and null until initBLE() runs.
+extern SwitchBotBLE *switchbotClient;
+
+// Home-screen power confirmation dialog geometry, kept in one place so the
+// draw and the touch handler cannot drift apart. Screen is 960x540.
+namespace {
+const int PWR_CONFIRM_W = 520;
+const int PWR_CONFIRM_H = 210;
+const int PWR_CONFIRM_X = (960 - PWR_CONFIRM_W) / 2;
+const int PWR_CONFIRM_Y = (540 - PWR_CONFIRM_H) / 2;
+const int PWR_CONFIRM_BTN_W = 180;
+const int PWR_CONFIRM_BTN_H = 60;
+const int PWR_CONFIRM_BTN_Y = PWR_CONFIRM_Y + PWR_CONFIRM_H - 80;
+const int PWR_CONFIRM_YES_X = PWR_CONFIRM_X + 40;
+const int PWR_CONFIRM_NO_X = PWR_CONFIRM_X + PWR_CONFIRM_W - 40 - PWR_CONFIRM_BTN_W;
+} // namespace
 
 // Static flags for Task Synchronization
 static volatile bool g_bookLoadingComplete = false;
@@ -183,6 +205,18 @@ void UIManager::update() {
     }
   }
 
+  // Live Graph theme: sample IN/OUT power every 10s into the rolling
+  // 10-minute buffer. Sampled regardless of current screen so the graph
+  // is populated when the user returns to the dashboard.
+  {
+    extern Config *config;
+    if ((!config || config->isCampervanMode()) &&
+        millis() - _lastGraphSample >= GRAPH_SAMPLE_MS) {
+      _lastGraphSample = millis();
+      samplePowerGraph();
+    }
+  }
+
   // Check for Book Loading Task completion
   if (g_bookLoadingComplete) {
     g_bookLoadingComplete = false;
@@ -203,6 +237,20 @@ void UIManager::update() {
     updateNotes();
   }
 
+  // Bluetooth link state changed (dropped, gave up, paused, came back):
+  // redraw straight away so the banner never lags behind reality. The
+  // countdown inside the banner is handled by the 60s pass below.
+  if (_currentScreen == ScreenID::HOME && bleClient) {
+    int state = (int)bleClient->getConnState();
+    if (state != _lastRenderedBleState) {
+      Serial.printf("UI: BLE state changed (%d -> %d) - refreshing\n",
+                    _lastRenderedBleState, state);
+      _lastRenderedBleState = state;
+      _needsRefresh = true;
+      _lastRefresh = 0; // bypass rate limiting, this is what the user asked for
+    }
+  }
+
   // Auto-refresh Home Screen every 60 seconds (User Request)
   // Skip the full e-ink redraw when nothing visible changed: data deltas are
   // below the configured thresholds and the on-screen clock (if the active
@@ -218,9 +266,26 @@ void UIManager::update() {
     bool dataChanged = (config && config->isHomeMode())
                            ? _solarDataDirty
                            : shouldUpdateDashboard(_powerData);
-    if (clockChanged || dataChanged) {
-      Serial.println("UI: 60s Auto-refresh trigger");
-      _needsRefresh = true;
+    // Reconnect countdown / attempt count / "last seen" moving on
+    bool bleStatusChanged =
+        bleStatusVisible() && (bleStatusSignature() != _lastRenderedBleSig);
+    if (clockChanged || dataChanged || bleStatusChanged) {
+      // Live Graph: a minute tick on its own does not justify redrawing the
+      // whole panel (that full-screen update is what flashes). Repaint the
+      // clock as a partial update and leave the plot alone until the data
+      // moves.
+      bool liveGraphTick = clockChanged && !dataChanged && !bleStatusChanged &&
+                           config && config->isCampervanMode() &&
+                           config->getTheme() == "live_graph" &&
+                           _lgClockW > 0 && !_showHomePowerConfirm;
+      if (liveGraphTick) {
+        Serial.println("UI: Live Graph clock tick (partial refresh)");
+        liveGraphClockTick();
+        _lastRefresh = millis();
+      } else {
+        Serial.println("UI: 60s Auto-refresh trigger");
+        _needsRefresh = true;
+      }
     } else {
       // Nothing to show — re-arm the timer without touching the display
       _lastRefresh = millis();
@@ -288,6 +353,9 @@ void UIManager::update() {
     break;
   case ScreenID::SETTINGS_FOSSIBOT_TIMERS:
     drawFossibotTimersScreen();
+    break;
+  case ScreenID::SETTINGS_FOSSIBOT_INFO:
+    drawFossibotInfoScreen();
     break;
   case ScreenID::CLOCK:
     updatePomodoro(); // Update timer logic before drawing
@@ -430,6 +498,8 @@ void UIManager::handleTouch(int x, int y, TouchEvent event) {
           handleFossibotSettingsTouch(x, y);
         } else if (_currentScreen == ScreenID::SETTINGS_FOSSIBOT_TIMERS) {
           handleFossibotTimersTouch(x, y);
+        } else if (_currentScreen == ScreenID::SETTINGS_FOSSIBOT_INFO) {
+          handleFossibotInfoTouch(x, y);
         } else if (_currentScreen == ScreenID::READER) {
           handleReaderTouch(x, y, event);
         }
@@ -487,6 +557,11 @@ void UIManager::navigateTo(ScreenID screen) {
   _needsRefresh = true;
   _lastRefresh = 0; // Force immediate refresh on navigation
   Serial.printf("UI: Navigate to screen %d\n", (int)screen);
+
+  // Leaving home disarms the power-off dialog. An edge-swipe gesture is tested
+  // before the tap filter, so it can leave the home screen while the dialog is
+  // up; without this it would still be armed on return.
+  _showHomePowerConfirm = false;
 
   // GHOSTING FIX: Force full EPD quality refresh on screen transition
   // M5.Display.setEpdMode(epd_mode_t::epd_quality); // DISABLED: Causes DMA
@@ -597,11 +672,13 @@ void UIManager::updatePowerBankData(const Fossibot::PowerBankData &data) {
     _fossiLightMode = data.lightMode;
     _fossiChargeLimit = data.chargeLimit;
     _fossiDischargeLimit = data.dischargeLimit;
+    _fossiChargeSpeed = data.acChargeSpeed;
     _fossiScreenTimeout = data.screenTimeout;
     _fossiACStandby = data.acStandby;
     _fossiDCStandby = data.dcStandby;
     _fossiUSBStandby = data.usbStandby;
     _fossiSysStandby = data.sysStandby;
+    _fossiChargeCurrent = data.chargeCurrent;
     _fossiScheduleChargeRemaining = data.scheduleCharge;
   }
 
@@ -674,7 +751,10 @@ bool UIManager::homeThemeShowsClock() {
   if (config->isHomeMode())
     return true; // All GivEnergy layouts show the time
   String theme = config->getTheme();
-  return theme == "compact_status" || theme == "horizontal_bars";
+  // live_graph shows a clock AND its graph scrolls with time, so the
+  // minute-change check also guarantees a refresh every 60s for it.
+  return theme == "compact_status" || theme == "horizontal_bars" ||
+         theme == "live_graph";
 }
 
 void UIManager::drawHomeScreen() {
@@ -689,6 +769,13 @@ void UIManager::drawHomeScreen() {
   }
   _solarDataDirty = false;
   _lastRenderedData = _powerData;
+  _lastRenderedBleSig = bleStatusSignature();
+  _lastRenderedBleState =
+      bleClient ? (int)bleClient->getConnState() : -1;
+  _bleStripW = 0;  // themes re-record this if they draw the strip
+  _pwrBtnW = 0;    // ditto for the power on/off button
+  _togW[0] = _togW[1] = _togW[2] = 0; // and the output on/off buttons
+  _lgClockW = 0;                      // and the Live Graph clock
 
   M5.Display.fillScreen(COLOR_WHITE);
 
@@ -705,24 +792,43 @@ void UIManager::drawHomeScreen() {
       drawHomeGivEnergy(); // "energy_flow" (default)
     }
     drawMenuButton();
-    M5.Display.display();
     return;
   }
 
   // Campervan mode: Dispatch to active Fossibot theme
   String theme = config ? config->getTheme() : "classic_grid";
+
+  // setEpdMode() governs the *next* panel flush (the single display() call
+  // at the end of UIManager::update()), so it must be set before drawing,
+  // not after — and re-asserted every draw since a prior live_graph frame
+  // can leave the panel in fastest mode for a later theme.
+  if (theme == "live_graph") {
+    // Fastest 1-bit mode: shortest panel drive time per refresh (less
+    // energy per update, not just wall-clock speed). The graph avoids
+    // relying on gray fills so nothing is lost switching out of epd_text.
+    M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+  } else {
+    M5.Display.setEpdMode(epd_mode_t::epd_text);
+  }
+
   if (theme == "compact_status") {
     drawHomeCompactStatus();
   } else if (theme == "horizontal_bars") {
     drawHomeHorizontalBars();
   } else if (theme == "sector") {
     drawHomeSector();
+  } else if (theme == "live_graph") {
+    drawHomeLiveGraph();
   } else {
     drawHomeClassicGrid();
   }
 
   drawMenuButton(); // MENU button on home screen (top-right)
-  M5.Display.display();
+
+  // Drawn last so it sits over whichever theme is active
+  if (_showHomePowerConfirm) {
+    drawHomePowerConfirm();
+  }
 }
 
 // ============================================================================
@@ -751,8 +857,14 @@ void UIManager::drawHomeClassicGrid() {
   drawStatusPanel(PANEL_MARGIN * 2 + panelWidth, topRowY, panelWidth,
                   panelHeight);
 
-  drawClockWeatherPanel(PANEL_MARGIN * 2 + panelWidth, bottomRowY, panelWidth,
-                        panelHeight);
+  int clockX = PANEL_MARGIN * 2 + panelWidth;
+  drawClockWeatherPanel(clockX, bottomRowY, panelWidth, panelHeight);
+
+  // Bottom-right of the clock/date panel. The time and date are drawn from
+  // clockX+20 and reach about 215px in, so the right third is free. Kept clear
+  // of the panel's undrawn HISTORY hit zone at x clockX+10..clockX+100.
+  drawPowerButton(clockX + panelWidth - 175, bottomRowY + panelHeight - 72, 165,
+                  58);
 }
 
 // ============================================================================
@@ -760,6 +872,17 @@ void UIManager::drawHomeClassicGrid() {
 // ============================================================================
 void UIManager::drawHomeCompactStatus() {
   int contentBottom = SCREEN_HEIGHT;
+
+  // --- Bluetooth status strip along the top (clock left, MENU right) ---
+  // When an error banner owns the top strip, drop below it instead.
+  if (bleStatusVisible()) {
+    if (_powerData.hasError()) {
+      drawBleStatusStrip(10, 96, SCREEN_WIDTH - 20, 30);
+    } else {
+      int stripX = 100;
+      drawBleStatusStrip(stripX, 6, MENU_ICON_X - 10 - stripX, 30);
+    }
+  }
 
   // --- Toggle strip at the very bottom, just above menu bar ---
   int toggleStripH = 60;
@@ -987,96 +1110,100 @@ void UIManager::drawHomeCompactStatus() {
   }
 
   // Clock and Date removed from bottom (Clock moved to top-left)
+
+  // Clean band between the IN/OUT column and the toggle strip, right-aligned.
+  // The OUT "remaining"/"to full" line ends around y422, hence the 50px offset.
+  drawPowerButton(SCREEN_WIDTH - 180, toggleY - 50, 165, 46);
 }
 
 // ============================================================================
 // Theme: Horizontal Bars (full-width rows, HUD style)
 // ============================================================================
 void UIManager::drawHomeHorizontalBars() {
-  int contentBottom = SCREEN_HEIGHT;
   int margin = 10;
+  int gap = 8;
   int barW = SCREEN_WIDTH - margin * 2;
-  int gap = 5;
 
-  // Layout: 4 rows filling available space
-  // Row 1 (battery): shorter, Row 2/3 (IN/OUT): taller, Row 4 (clock+toggles): remainder
-  int battRowH = 55;
-  int powerRowH = 105; // 1.5x original 70
-  int usedH = battRowH + powerRowH * 2 + gap * 3;
-  int row4H = contentBottom - margin - usedH - gap - margin;
-
-  // Row 1: Battery — full-width bar, no label, % right-aligned
+  // Four full-width rows. Row 4 is the busy one - clock, power button,
+  // outputs and (when the link is down) the Bluetooth strip all live there -
+  // so it gets fixed columns and a reserved band for the strip instead of
+  // everything being positioned relative to everything else.
+  int battRowH = 60;
+  int powerRowH = 118;
   int row1Y = margin;
+  int row2Y = row1Y + battRowH + gap;
+  int row3Y = row2Y + powerRowH + gap;
+  int row4Y = row3Y + powerRowH + gap;
+  int row4H = SCREEN_HEIGHT - margin - row4Y;
+
+  // Row 1: Battery - full-width bar, no label, % right-aligned
   if (_powerData.hasError()) {
     drawErrorBanner(margin, row1Y, barW, battRowH);
   } else {
     M5.Display.drawRect(margin, row1Y, barW, battRowH, COLOR_BLACK);
-    // Full-width progress bar with padding
-    int pbX = margin + 10;
-    int pbW = barW - 120; // leave room for % text
-    int pbH = battRowH - 16;
-    drawProgressBar(pbX, row1Y + 8, pbW, pbH,
+    int pbX = margin + 12;
+    int pbW = barW - 130; // leave room for the % text
+    int pbH = battRowH - 20;
+    drawProgressBar(pbX, row1Y + 10, pbW, pbH,
                     _powerData.batteryPercent / 100.0f, true);
-    // Percentage right-aligned
     M5.Display.setTextColor(COLOR_BLACK);
     M5.Display.setTextSize(2);
     char pctStr[8];
     snprintf(pctStr, sizeof(pctStr), "%.0f%%", _powerData.batteryPercent);
     int pw = M5.Display.textWidth(pctStr);
-    M5.Display.setCursor(margin + barW - pw - 15, row1Y + (battRowH - 16) / 2);
+    M5.Display.setCursor(margin + barW - pw - 16,
+                         row1Y + (battRowH - M5.Display.fontHeight()) / 2);
     M5.Display.print(pctStr);
   }
 
-  // Row 2: IN — label and watts inline, bar below
-  int row2Y = row1Y + battRowH + gap;
-  M5.Display.drawRect(margin, row2Y, barW, powerRowH, COLOR_BLACK);
-  M5.Display.setTextColor(COLOR_BLACK);
-  // Label top-left, watts right-aligned — same text size, inline
-  M5.Display.setTextSize(2);
-  M5.Display.setCursor(margin + 15, row2Y + 10);
-  M5.Display.print("IN");
-  char wBuf[16];
-  snprintf(wBuf, sizeof(wBuf), "%.0f", _powerData.inputPower);
-  int ww = M5.Display.textWidth(wBuf);
-  M5.Display.setCursor(margin + barW - ww - 15, row2Y + 10);
-  M5.Display.print(wBuf);
-  // Progress bar below the text line
-  int pbX = margin + 15;
-  int pbW = barW - 30;
-  drawProgressBar(pbX, row2Y + 45, pbW, 25,
-                  _powerData.inputPower / 1100.0f, true);
-  // Time bottom-left
-  M5.Display.setTextSize(1);
-  M5.Display.setCursor(margin + 15, row2Y + powerRowH - 22);
-  M5.Display.print(Fossibot::formatTime(_powerData.minutesToFull));
-  M5.Display.print(" to full");
+  // Rows 2 and 3: IN / OUT - label and watts inline, bar below, time last
+  struct {
+    int y;
+    const char *label;
+    float watts;
+    float scale;
+    int minutes;
+    const char *suffix;
+  } rows[] = {
+      {row2Y, "IN", _powerData.inputPower, 1100.0f, _powerData.minutesToFull,
+       " to full"},
+      {row3Y, "OUT", _powerData.outputPower, 3000.0f,
+       _powerData.minutesToEmpty, " remaining"},
+  };
 
-  // Row 3: OUT — label and watts inline, bar below
-  int row3Y = row2Y + powerRowH + gap;
-  M5.Display.drawRect(margin, row3Y, barW, powerRowH, COLOR_BLACK);
-  M5.Display.setTextColor(COLOR_BLACK);
-  // Label top-left, watts right-aligned — same text size, inline
-  M5.Display.setTextSize(2);
-  M5.Display.setCursor(margin + 15, row3Y + 10);
-  M5.Display.print("OUT");
-  snprintf(wBuf, sizeof(wBuf), "%.0f", _powerData.outputPower);
-  ww = M5.Display.textWidth(wBuf);
-  M5.Display.setCursor(margin + barW - ww - 15, row3Y + 10);
-  M5.Display.print(wBuf);
-  // Progress bar below the text line
-  drawProgressBar(pbX, row3Y + 45, pbW, 25,
-                  _powerData.outputPower / 3000.0f, true);
-  // Time bottom-left
-  M5.Display.setTextSize(1);
-  M5.Display.setCursor(margin + 15, row3Y + powerRowH - 22);
-  M5.Display.print(Fossibot::formatTime(_powerData.minutesToEmpty));
-  M5.Display.print(" remaining");
+  for (auto &r : rows) {
+    M5.Display.drawRect(margin, r.y, barW, powerRowH, COLOR_BLACK);
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setTextSize(2);
+    M5.Display.setCursor(margin + 16, r.y + 10);
+    M5.Display.print(r.label);
 
-  // Row 4: Clock + Toggles
-  int row4Y = row3Y + powerRowH + gap;
+    char wBuf[16];
+    snprintf(wBuf, sizeof(wBuf), "%.0fW", r.watts);
+    int ww = M5.Display.textWidth(wBuf);
+    M5.Display.setCursor(margin + barW - ww - 16, r.y + 10);
+    M5.Display.print(wBuf);
+
+    drawProgressBar(margin + 16, r.y + 64, barW - 32, 24, r.watts / r.scale,
+                    true);
+
+    M5.Display.setTextSize(1);
+    M5.Display.setCursor(margin + 16, r.y + 92);
+    M5.Display.print(Fossibot::formatTime(r.minutes));
+    M5.Display.print(r.suffix);
+  }
+
+  // Row 4: clock | power button | output buttons
   M5.Display.drawRect(margin, row4Y, barW, row4H, COLOR_BLACK);
 
-  // Clock (left side) — time large, date well below
+  // The Bluetooth strip owns a band at the bottom of the row when it is
+  // showing; everything else is laid out inside what is left.
+  bool showStrip = bleStatusVisible();
+  int stripH = 30;
+  int contentTop = row4Y + 8;
+  int contentBottom = row4Y + row4H - (showStrip ? stripH + 12 : 8);
+  int contentH = contentBottom - contentTop;
+
   int displayHour, displayMinute, displaySecond;
   RTC::getTime(displayHour, displayMinute, displaySecond);
   int displayYear, displayMonth, displayDay, displayDow;
@@ -1092,51 +1219,49 @@ void UIManager::drawHomeHorizontalBars() {
   char timeStr[16];
   snprintf(timeStr, sizeof(timeStr), "%02d:%02d", displayHour, displayMinute);
   M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setTextSize(4);
-  M5.Display.setCursor(margin + 20, row4Y + 8);
+  M5.Display.setTextSize(3);
+  M5.Display.setCursor(margin + 20, contentTop + 6);
   M5.Display.print(timeStr);
 
   char dateStr[32];
   snprintf(dateStr, sizeof(dateStr), "%s %d %s %d", dayNames[displayDow],
            displayDay, monthNames[mon], displayYear);
   M5.Display.setTextSize(1);
-  M5.Display.setCursor(margin + 20, row4Y + row4H - 27);
+  M5.Display.setCursor(margin + 20, contentTop + 88);
   M5.Display.print(dateStr);
 
-  // Toggles (right side)
-  int toggleBaseX = SCREEN_WIDTH / 2 + 80;
-  int toggleCenterY = row4Y + row4H / 2;
-  M5.Display.setFont(&fonts::DejaVu24);
+  // Power button: its own column between the clock and the outputs
+  int pwrW = 190;
+  int pwrH = 64;
+  drawPowerButton(margin + 300, contentTop + (contentH - pwrH) / 2, pwrW, pwrH);
 
-  // USB
-  M5.Display.setTextColor(COLOR_BLACK);
-  M5.Display.setTextSize(1.5);
-  int tw = M5.Display.textWidth("USB");
-  M5.Display.setCursor(toggleBaseX - tw / 2, toggleCenterY - 25);
-  M5.Display.print("USB");
-  drawToggle(toggleBaseX - 15, toggleCenterY - 18, "", _powerData.usbActive);
+  // Output buttons: fixed columns at the right, clear of everything else
+  int togW = 110;
+  int togH = 88;
+  int togGap = 12;
+  int togY = contentTop + (contentH - togH) / 2;
+  int togX = SCREEN_WIDTH - margin - 40 - (togW * 3 + togGap * 2);
+  drawOutputToggle(TOGGLE_USB, togX, togY, togW, togH, "USB",
+                   _powerData.usbActive);
+  drawOutputToggle(TOGGLE_DC, togX + togW + togGap, togY, togW, togH, "DC",
+                   _powerData.dcActive);
+  drawOutputToggle(TOGGLE_AC, togX + (togW + togGap) * 2, togY, togW, togH,
+                   "AC", _powerData.acActive);
 
-  // DC
-  int dcX = toggleBaseX + 130;
-  tw = M5.Display.textWidth("DC");
-  M5.Display.setCursor(dcX - tw / 2, toggleCenterY - 25);
-  M5.Display.print("DC");
-  drawToggle(dcX - 15, toggleCenterY - 18, "", _powerData.dcActive);
-
-  // AC
-  int acX = dcX + 130;
-  tw = M5.Display.textWidth("AC");
-  M5.Display.setCursor(acX - tw / 2, toggleCenterY - 25);
-  M5.Display.print("AC");
-  drawToggle(acX - 15, toggleCenterY - 18, "", _powerData.acActive);
-
-  // Connection indicator
-  int connX = SCREEN_WIDTH - 40;
+  // Connection indicator, right of the buttons
+  int connX = SCREEN_WIDTH - margin - 15;
+  int connY = togY + togH / 2;
   if (_powerData.connected) {
-    M5.Display.fillCircle(connX, toggleCenterY, 6, COLOR_BLACK);
+    M5.Display.fillCircle(connX, connY, 6, COLOR_BLACK);
   } else {
-    M5.Display.drawCircle(connX, toggleCenterY, 6, COLOR_BLACK);
-    M5.Display.drawLine(connX - 6, toggleCenterY - 6, connX + 6, toggleCenterY + 6, COLOR_BLACK);
+    M5.Display.drawCircle(connX, connY, 6, COLOR_BLACK);
+    M5.Display.drawLine(connX - 6, connY - 6, connX + 6, connY + 6,
+                        COLOR_BLACK);
+  }
+
+  if (showStrip) {
+    drawBleStatusStrip(margin + 10, row4Y + row4H - stripH - 8, barW - 20,
+                       stripH);
   }
 }
 
@@ -1166,20 +1291,26 @@ void UIManager::drawHomeSector() {
                  _powerData.outputPower, 3000.0f, "remaining",
                  _powerData.minutesToEmpty, false);
 
-  // --- Right half: Output breakdown sectors ---
+  // --- Right half: output breakdown, one sector per output ---
+  // Each sector carries its own ON/OFF button so it reads as a control, not a
+  // readout; the whole sector stays tappable as a larger target for it.
+  // The power button takes a reserved row underneath, the full width of the
+  // column so it lines up with the sectors above.
   int rightX = SCREEN_WIDTH / 2 + margin;
   int rightW = SCREEN_WIDTH / 2 - margin * 2;
-  int sectorH = (availH - margin * 2) / 3; // 3 rows: USB, AC, DC
+  int pwrH = 58;
+  int sectorH = (availH - margin * 3 - pwrH) / 3; // 3 sectors + power row
 
   M5.Display.setTextColor(COLOR_BLACK);
 
-  // Determine what label to show for the non-USB power
-  // If only AC active: label it "AC"
-  // If only DC active: label it "DC"
-  // If both: label it "AC+DC"
-  // If neither: show 0 for both
+  // Non-USB power is reported as one figure, so with both outputs on it can
+  // only be shown once: AC alone -> AC, DC alone -> DC, both -> "AC+DC".
   bool acOn = _powerData.acActive;
   bool dcOn = _powerData.dcActive;
+
+  int togW = 100;
+  int togH = 44;
+  int togX = rightX + rightW - togW - 15;
 
   // --- USB Sector ---
   int usbY = topY;
@@ -1187,87 +1318,341 @@ void UIManager::drawHomeSector() {
   M5.Display.setTextSize(2);
   M5.Display.setCursor(rightX + 15, usbY + 12);
   M5.Display.print("USB");
-  M5.Display.setTextSize(3);
+  M5.Display.setTextSize(2.5);
   char buf[16];
   snprintf(buf, sizeof(buf), "%.1fW", _powerData.usbOutputPower);
   int tw = M5.Display.textWidth(buf);
-  M5.Display.setCursor(rightX + rightW - tw - 15, usbY + 10);
+  M5.Display.setCursor(togX - tw - 15, usbY + 10);
   M5.Display.print(buf);
-  // Progress bar
-  int pbY = usbY + sectorH - 20;
-  drawProgressBar(rightX + 15, pbY, rightW - 30, 12,
+  drawProgressBar(rightX + 15, usbY + sectorH - 34, rightW - togW - 45, 12,
                   _powerData.usbOutputPower / 500.0f, false);
+  drawOutputToggle(TOGGLE_USB, togX, usbY + sectorH - togH - 8, togW, togH,
+                   "USB", _powerData.usbActive);
 
   // --- AC Sector ---
   int acY = usbY + sectorH + margin;
   M5.Display.drawRect(rightX, acY, rightW, sectorH, COLOR_BLACK);
+  M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setTextSize(2);
   M5.Display.setCursor(rightX + 15, acY + 12);
   M5.Display.print("AC");
 
-  float acPower = 0.0f;
-  if (acOn && !dcOn) {
-    acPower = _powerData.acDcOutputPower;
-  } else if (acOn && dcOn) {
-    // Both on — can't split, show nothing here (combined shown in DC row)
-    acPower = 0.0f;
-  }
-  M5.Display.setTextSize(3);
+  float acPower = (acOn && !dcOn) ? _powerData.acDcOutputPower : 0.0f;
+  M5.Display.setTextSize(2.5);
   snprintf(buf, sizeof(buf), "%.0fW", acPower);
   tw = M5.Display.textWidth(buf);
-  M5.Display.setCursor(rightX + rightW - tw - 15, acY + 10);
+  M5.Display.setCursor(togX - tw - 15, acY + 10);
   M5.Display.print(buf);
-  if (!acOn) {
-    M5.Display.setTextSize(1);
-    M5.Display.setCursor(rightX + 15, acY + sectorH - 22);
-    M5.Display.print("OFF");
-  } else {
-    drawProgressBar(rightX + 15, acY + sectorH - 20, rightW - 30, 12,
+  if (acOn) {
+    drawProgressBar(rightX + 15, acY + sectorH - 34, rightW - togW - 45, 12,
                     acPower / 3000.0f, false);
   }
+  drawOutputToggle(TOGGLE_AC, togX, acY + sectorH - togH - 8, togW, togH, "AC",
+                   acOn);
 
   // --- DC Sector ---
   int dcY = acY + sectorH + margin;
   M5.Display.drawRect(rightX, dcY, rightW, sectorH, COLOR_BLACK);
+  M5.Display.setTextColor(COLOR_BLACK);
   M5.Display.setTextSize(2);
   M5.Display.setCursor(rightX + 15, dcY + 12);
-  if (acOn && dcOn) {
-    M5.Display.print("AC+DC");
-  } else {
-    M5.Display.print("DC");
-  }
+  M5.Display.print((acOn && dcOn) ? "AC+DC" : "DC");
 
-  float dcPower = 0.0f;
-  if (dcOn && !acOn) {
-    dcPower = _powerData.acDcOutputPower;
-  } else if (acOn && dcOn) {
-    // Both on — show combined non-USB power here
-    dcPower = _powerData.acDcOutputPower;
-  }
-  M5.Display.setTextSize(3);
+  float dcPower = dcOn ? _powerData.acDcOutputPower : 0.0f;
+  M5.Display.setTextSize(2.5);
   snprintf(buf, sizeof(buf), "%.0fW", dcPower);
   tw = M5.Display.textWidth(buf);
-  M5.Display.setCursor(rightX + rightW - tw - 15, dcY + 10);
+  M5.Display.setCursor(togX - tw - 15, dcY + 10);
   M5.Display.print(buf);
-  if (!dcOn && !acOn) {
-    M5.Display.setTextSize(1);
-    M5.Display.setCursor(rightX + 15, dcY + sectorH - 22);
-    M5.Display.print("OFF");
-  } else {
+  if (dcOn) {
     float maxDc = (acOn && dcOn) ? 3000.0f : 1000.0f;
-    drawProgressBar(rightX + 15, dcY + sectorH - 20, rightW - 30, 12,
+    drawProgressBar(rightX + 15, dcY + sectorH - 34, rightW - togW - 45, 12,
                     dcPower / maxDc, false);
   }
+  drawOutputToggle(TOGGLE_DC, togX, dcY + sectorH - togH - 8, togW, togH, "DC",
+                   dcOn);
 
-  // Connection indicator (bottom-right corner)
-  int connX = SCREEN_WIDTH - 25;
-  int connY = contentBottom - 20;
-  if (_powerData.connected) {
-    M5.Display.fillCircle(connX, connY, 6, COLOR_BLACK);
-  } else {
-    M5.Display.drawCircle(connX, connY, 6, COLOR_BLACK);
-    M5.Display.drawLine(connX - 6, connY - 6, connX + 6, connY + 6, COLOR_BLACK);
+  // Power button: reserved row under the DC sector, same width as the sectors
+  // (it used to stop 70px short to leave room for a connection dot, which is
+  // what made it look cut off). Link state is already carried by the status
+  // strip and by the button's own label, so the dot is not missed here.
+  drawPowerButton(rightX, dcY + sectorH + margin, rightW, pwrH);
+}
+
+// ============================================================================
+// Theme: Live Graph (rolling 10-minute IN/OUT power chart)
+// ============================================================================
+
+void UIManager::samplePowerGraph() {
+  // When disconnected, record zeros so gaps are visible rather than
+  // freezing at the last known value.
+  _graphIn[_graphHead] = _powerData.connected ? _powerData.inputPower : 0.0f;
+  _graphOut[_graphHead] = _powerData.connected ? _powerData.outputPower : 0.0f;
+  _graphHead = (_graphHead + 1) % GRAPH_SAMPLES;
+  if (_graphCount < GRAPH_SAMPLES)
+    _graphCount++;
+}
+
+void UIManager::drawHomeLiveGraph() {
+  drawBatteryBar(_powerData.batteryPercent);
+
+  int margin = 10;
+  int toggleStripH = 60;
+  int toggleY = SCREEN_HEIGHT - toggleStripH;
+
+  // --- Right info column: current values + clock ---
+  int infoW = 210;
+  int infoX = SCREEN_WIDTH - infoW - margin;
+
+  // --- Graph panel (left of info column) ---
+  int graphX = margin;
+  int graphY = BATTERY_BAR_HEIGHT + margin;
+  int graphW = infoX - margin * 2;
+  int graphH = toggleY - graphY - margin;
+
+  if (_powerData.hasError()) {
+    drawErrorBanner(graphX, graphY, graphW, 80);
+    graphY += 90;
+    graphH -= 90;
   }
+
+  M5.Display.drawRect(graphX, graphY, graphW, graphH, COLOR_BLACK);
+
+  // Plot area inside the frame: room for Y labels left, X labels bottom
+  int plotX = graphX + 78;
+  int plotY = graphY + 14;
+  int plotW = graphW - 92;
+  int plotH = graphH - 52;
+
+  // Autoscale Y to the peak in the buffer, snapped to a "nice" ceiling
+  float peak = 0.0f;
+  for (int i = 0; i < _graphCount; i++) {
+    int idx = (_graphHead - _graphCount + i + GRAPH_SAMPLES) % GRAPH_SAMPLES;
+    if (_graphIn[idx] > peak)
+      peak = _graphIn[idx];
+    if (_graphOut[idx] > peak)
+      peak = _graphOut[idx];
+  }
+  const float niceMax[] = {100, 200, 500, 1000, 1500, 2000, 3000};
+  float yMax = 3000;
+  for (float m : niceMax) {
+    if (peak <= m) {
+      yMax = m;
+      break;
+    }
+  }
+
+  M5.Display.setFont(&fonts::DejaVu24);
+  M5.Display.setTextSize(1);
+  M5.Display.setTextColor(COLOR_BLACK);
+
+  // Horizontal gridlines + Y axis labels at 0 / 50% / 100%
+  char lbl[16];
+  for (int g = 0; g <= 4; g++) {
+    int gy = plotY + plotH - (plotH * g) / 4;
+    if (g > 0) { // dotted gridline (skip baseline, drawn solid below)
+      for (int gx = plotX; gx < plotX + plotW; gx += 8)
+        M5.Display.drawPixel(gx, gy, COLOR_GRAY);
+    }
+    if (g % 2 == 0) {
+      snprintf(lbl, sizeof(lbl), "%.0fW", yMax * g / 4.0f);
+      int tw = M5.Display.textWidth(lbl);
+      M5.Display.setCursor(plotX - tw - 6, gy - 10);
+      M5.Display.print(lbl);
+    }
+  }
+  // Axes
+  M5.Display.drawFastHLine(plotX, plotY + plotH, plotW, COLOR_BLACK);
+  M5.Display.drawFastVLine(plotX, plotY, plotH, COLOR_BLACK);
+
+  // X axis labels: -10m ... now
+  const char *xLabels[] = {"-10m", "-5m", "now"};
+  for (int i = 0; i < 3; i++) {
+    int lx = plotX + (plotW * i) / 2;
+    int tw = M5.Display.textWidth(xLabels[i]);
+    M5.Display.setCursor(lx - (i == 0 ? 0 : (i == 2 ? tw : tw / 2)),
+                         plotY + plotH + 8);
+    M5.Display.print(xLabels[i]);
+  }
+
+  // --- Plot the two series (newest sample pinned to the right edge) ---
+  auto sampleX = [&](int slot) {
+    return plotX + 2 + ((plotW - 4) * slot) / (GRAPH_SAMPLES - 1);
+  };
+  auto sampleY = [&](float watts) {
+    float f = watts / yMax;
+    if (f > 1.0f)
+      f = 1.0f;
+    if (f < 0.0f)
+      f = 0.0f;
+    return plotY + plotH - 2 - (int)((plotH - 4) * f);
+  };
+
+  if (_graphCount < 2) {
+    M5.Display.setTextColor(COLOR_GRAY);
+    const char *msg = "Collecting data...";
+    int tw = M5.Display.textWidth(msg);
+    M5.Display.setCursor(plotX + (plotW - tw) / 2, plotY + plotH / 2 - 12);
+    M5.Display.print(msg);
+  } else {
+    for (int i = 1; i < _graphCount; i++) {
+      int idxA =
+          (_graphHead - _graphCount + i - 1 + GRAPH_SAMPLES) % GRAPH_SAMPLES;
+      int idxB = (_graphHead - _graphCount + i + GRAPH_SAMPLES) % GRAPH_SAMPLES;
+      int slotA = GRAPH_SAMPLES - _graphCount + i - 1;
+      int slotB = slotA + 1;
+      int xA = sampleX(slotA), xB = sampleX(slotB);
+
+      // OUT drawn as a dashed black line (skip every other segment) so it
+      // stays distinct from IN in 1-bit fastest EPD mode, where gray fills
+      // don't render reliably.
+      if (i % 2 == 1) {
+        int oyA = sampleY(_graphOut[idxA]), oyB = sampleY(_graphOut[idxB]);
+        for (int t = -2; t <= 2; t++)
+          M5.Display.drawLine(xA, oyA + t, xB, oyB + t, COLOR_BLACK);
+      }
+
+      // IN drawn solid so the two series stay visually distinct
+      int iyA = sampleY(_graphIn[idxA]), iyB = sampleY(_graphIn[idxB]);
+      for (int t = -2; t <= 2; t++)
+        M5.Display.drawLine(xA, iyA + t, xB, iyB + t, COLOR_BLACK);
+    }
+    // Markers on the newest points
+    int newest = (_graphHead - 1 + GRAPH_SAMPLES) % GRAPH_SAMPLES;
+    M5.Display.fillCircle(sampleX(GRAPH_SAMPLES - 1),
+                          sampleY(_graphIn[newest]), 5, COLOR_BLACK);
+    M5.Display.drawCircle(sampleX(GRAPH_SAMPLES - 1),
+                          sampleY(_graphOut[newest]), 5, COLOR_BLACK);
+  }
+
+  // Legend (top-left inside the frame) — solid swatch for IN, dashed for OUT
+  int legX = plotX + 10;
+  int legY = plotY + 6;
+  M5.Display.fillRect(legX, legY + 6, 26, 6, COLOR_BLACK);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(legX + 34, legY);
+  M5.Display.print("IN");
+  M5.Display.fillRect(legX + 100, legY + 6, 6, 6, COLOR_BLACK);
+  M5.Display.fillRect(legX + 110, legY + 6, 6, 6, COLOR_BLACK);
+  M5.Display.fillRect(legX + 120, legY + 6, 6, 6, COLOR_BLACK);
+  M5.Display.setCursor(legX + 134, legY);
+  M5.Display.print("OUT");
+
+  // --- Right info column ---
+  int y = graphY;
+
+  // Clock. Bounds are recorded so a minute tick can be pushed on its own as a
+  // partial panel update - see liveGraphClockTick().
+  int h, m, s;
+  RTC::getTime(h, m, s);
+  char timeStr[8];
+  snprintf(timeStr, sizeof(timeStr), "%02d:%02d", h, m);
+  M5.Display.setTextSize(2);
+  int tw = M5.Display.textWidth(timeStr);
+  M5.Display.setCursor(infoX + (infoW - tw) / 2, y);
+  M5.Display.print(timeStr);
+  _lgClockX = infoX;
+  _lgClockY = y;
+  _lgClockW = infoW;
+  _lgClockH = M5.Display.fontHeight();
+  y += 70;
+
+  char wBuf[16];
+
+  // IN current value + time to full
+  M5.Display.setTextSize(1);
+  M5.Display.setCursor(infoX, y);
+  M5.Display.print("IN");
+  snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.inputPower);
+  M5.Display.setTextSize(3);
+  tw = M5.Display.textWidth(wBuf);
+  M5.Display.setCursor(infoX + infoW - tw, y + 26);
+  M5.Display.print(wBuf);
+  M5.Display.setTextSize(1);
+  String ft = Fossibot::formatTime(_powerData.minutesToFull);
+  M5.Display.setCursor(infoX, y + 100);
+  M5.Display.printf("%s to full", ft.c_str());
+  y += 140;
+
+  M5.Display.drawFastHLine(infoX, y, infoW, COLOR_GRAY);
+  y += 15;
+
+  // OUT current value + time remaining
+  M5.Display.setCursor(infoX, y);
+  M5.Display.print("OUT");
+  snprintf(wBuf, sizeof(wBuf), "%.0fW", _powerData.outputPower);
+  M5.Display.setTextSize(3);
+  tw = M5.Display.textWidth(wBuf);
+  M5.Display.setCursor(infoX + infoW - tw, y + 26);
+  M5.Display.print(wBuf);
+  M5.Display.setTextSize(1);
+  String et = Fossibot::formatTime(_powerData.minutesToEmpty);
+  M5.Display.setCursor(infoX, y + 100);
+  M5.Display.printf("%s remaining", et.c_str());
+
+  // --- Bottom toggle strip (same geometry as Compact Status so the
+  //     Compact Status touch handler can be reused) ---
+  M5.Display.drawFastHLine(0, toggleY, SCREEN_WIDTH, COLOR_GRAY);
+  int toggleSpacing = SCREEN_WIDTH / 4;
+  const char *toggleNames[] = {"USB", "DC", "AC"};
+  bool toggleStates[] = {_powerData.usbActive, _powerData.dcActive,
+                         _powerData.acActive};
+  M5.Display.setTextColor(COLOR_BLACK);
+  for (int i = 0; i < 3; i++) {
+    int cx = toggleSpacing * (i + 1);
+    M5.Display.setTextSize(2);
+    int ltw = M5.Display.textWidth(toggleNames[i]);
+    M5.Display.setCursor(cx - ltw / 2, toggleY + 5);
+    M5.Display.print(toggleNames[i]);
+    drawToggle(cx - 15, toggleY + 10, "", toggleStates[i]);
+  }
+
+  // Power button: the right end of the toggle strip is the only gap tall
+  // enough for a full-height button in this theme (the info column above runs
+  // down to ~y444). The AC toggle's hit zone ends at x780, hence x782.
+  drawPowerButton(782, toggleY + 4, 164, toggleStripH - 12);
+
+  // Connection indicator. Moved to the free left end of the strip because the
+  // power button now occupies the right end; the strip has nothing before the
+  // USB toggle's hit zone at x180.
+  int connX = 40;
+  int connDotY = toggleY + 30;
+  if (_powerData.connected) {
+    M5.Display.fillCircle(connX, connDotY, 6, COLOR_BLACK);
+  } else {
+    M5.Display.drawCircle(connX, connDotY, 6, COLOR_BLACK);
+    M5.Display.drawLine(connX - 6, connDotY - 6, connX + 6, connDotY + 6,
+                        COLOR_BLACK);
+  }
+}
+
+// Repaint the Live Graph clock alone and push just that rectangle to the
+// panel. The e-ink controller refreshes whatever area was written since the
+// last flush, so a whole-screen redraw once a minute drives every pixel -
+// that is the flashing. The plot has nothing new to show until a sample
+// actually moves, so on a bare minute tick only the clock is written.
+void UIManager::liveGraphClockTick() {
+  if (_lgClockW <= 0) {
+    return;
+  }
+
+  int h, m, s;
+  RTC::getTime(h, m, s);
+  char timeStr[8];
+  snprintf(timeStr, sizeof(timeStr), "%02d:%02d", h, m);
+
+  M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+  M5.Display.fillRect(_lgClockX, _lgClockY, _lgClockW, _lgClockH, COLOR_WHITE);
+  M5.Display.setFont(&fonts::DejaVu24);
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(2);
+  int tw = M5.Display.textWidth(timeStr);
+  M5.Display.setCursor(_lgClockX + (_lgClockW - tw) / 2, _lgClockY);
+  M5.Display.print(timeStr);
+  M5.Display.setTextSize(1);
+
+  M5.Display.display(_lgClockX, _lgClockY, _lgClockW, _lgClockH);
+  _lastRenderedMinute = m;
 }
 
 void UIManager::drawErrorBanner(int x, int y, int w, int h) {
@@ -2487,10 +2872,214 @@ void UIManager::drawHomeGivEnergyTodaysStory() {
   }
 }
 
+// ============================================================================
+// Bluetooth link feedback (Campervan mode)
+// ============================================================================
+// The dashboard keeps showing the last values it received, so without this
+// strip a dropped Fossibot link looks identical to a live one. Whenever the
+// link is down the home screen carries a black status strip naming the state
+// and, while auto-reconnect is running, the countdown to the next attempt.
+
+// Compact duration for the status line: "45s", "12m", "2h05m"
+static String formatBleDuration(unsigned long ms) {
+  unsigned long secs = ms / 1000;
+  if (secs < 60)
+    return String(secs) + "s";
+  unsigned long mins = secs / 60;
+  if (mins < 60)
+    return String(mins) + "m";
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%luh%02lum", mins / 60, mins % 60);
+  return String(buf);
+}
+
+bool UIManager::bleStatusVisible() {
+  extern Config *config;
+  if (config && config->isHomeMode())
+    return false;
+  if (!bleClient)
+    return false;
+  return bleClient->getConnState() != BleConnState::LINK_UP;
+}
+
+String UIManager::bleStatusHeadline() {
+  if (!bleClient)
+    return "FOSSIBOT UNAVAILABLE";
+
+  switch (bleClient->getConnState()) {
+  case BleConnState::NO_MAC:
+    return "NO FOSSIBOT PAIRED";
+  case BleConnState::RADIO_OFF:
+    return "BLUETOOTH OFF";
+  case BleConnState::LINKING:
+    return "FOSSIBOT CONNECTING";
+  case BleConnState::RETRY_PAUSED:
+    return "FOSSIBOT PAUSED";
+  case BleConnState::RETRY_STOPPED:
+  case BleConnState::RETRY_WAIT:
+  default:
+    return bleClient->hasEverConnected() ? "FOSSIBOT DISCONNECTED"
+                                         : "FOSSIBOT NOT FOUND";
+  }
+}
+
+String UIManager::bleStatusDetail() {
+  if (!bleClient)
+    return "";
+
+  switch (bleClient->getConnState()) {
+  case BleConnState::NO_MAC:
+    return "set fossibot_mac in /config/settings.json";
+  case BleConnState::RADIO_OFF:
+    return "turn Bluetooth back on in Menu > Settings";
+  case BleConnState::LINKING:
+    return "linking now...";
+  case BleConnState::RETRY_PAUSED:
+    return "auto-reconnect paused - TAP TO RETRY";
+  case BleConnState::RETRY_STOPPED:
+    return "auto-reconnect gave up - TAP TO RETRY";
+  case BleConnState::RETRY_WAIT:
+  default: {
+    unsigned long untilRetry = bleClient->getMsUntilRetry();
+    String detail = "retrying: ";
+    if (untilRetry == 0) {
+      detail += "next try now";
+    } else {
+      detail += "next try in " + formatBleDuration(untilRetry);
+    }
+    int tries = bleClient->getRetryCount();
+    if (tries > 0) {
+      detail += " (" + String(tries) + " failed)";
+    }
+    if (bleClient->hasEverConnected()) {
+      detail += ", last seen " +
+                formatBleDuration(bleClient->getMsSinceLastSeen()) + " ago";
+    }
+    return detail;
+  }
+  }
+}
+
+// Change detector so a redraw is only spent when the strip would say
+// something different. Elapsed times are bucketed (per-minute under 10 min,
+// then 5 min, then hourly) to keep e-ink refreshes rare on a long outage.
+uint32_t UIManager::bleStatusSignature() {
+  if (!bleClient)
+    return 0;
+
+  BleConnState state = bleClient->getConnState();
+  uint32_t sig = (uint32_t)state + 1;
+
+  // Only the retrying banner carries live numbers; every other state draws
+  // fixed text, so its signature must not drift (and cost refreshes).
+  if (state != BleConnState::RETRY_WAIT)
+    return sig;
+
+  int tries = bleClient->getRetryCount();
+  if (tries > 99)
+    tries = 99;
+  sig = sig * 131 + (uint32_t)tries;
+
+  unsigned long mins = bleClient->getMsSinceLastSeen() / 60000UL;
+  unsigned long bucket = (mins < 10)   ? mins
+                         : (mins < 60) ? (mins / 5) * 5
+                                       : (mins / 60) * 60;
+  sig = sig * 131 + (uint32_t)bucket;
+
+  // Coarse countdown bucket: only "due now" vs "waiting" matters visually
+  sig = sig * 131 + (bleClient->getMsUntilRetry() == 0 ? 1 : 0);
+
+  return sig;
+}
+
+void UIManager::drawBleStatusStrip(int x, int y, int w, int h) {
+  // Remember where it landed so a tap anywhere on the strip forces a retry
+  _bleStripX = x;
+  _bleStripY = y;
+  _bleStripW = w;
+  _bleStripH = h;
+
+  // Inverted block: the loudest thing available on a 1-bit-ish panel
+  M5.Display.fillRect(x, y, w, h, COLOR_BLACK);
+
+  int cy = y + h / 2;
+
+  // Warning triangle (white outline, black centre) at the left edge
+  int triX = x + 12;
+  M5.Display.fillTriangle(triX, cy + 10, triX + 10, cy - 10, triX + 20, cy + 10,
+                          COLOR_WHITE);
+  M5.Display.fillTriangle(triX + 3, cy + 7, triX + 10, cy - 5, triX + 17,
+                          cy + 7, COLOR_BLACK);
+  M5.Display.fillRect(triX + 9, cy - 3, 2, 7, COLOR_WHITE);
+  M5.Display.fillRect(triX + 9, cy + 5, 2, 2, COLOR_WHITE);
+
+  M5.Display.setTextColor(COLOR_WHITE);
+
+  // Headline
+  String headline = bleStatusHeadline();
+  M5.Display.setFont(&fonts::DejaVu24);
+  M5.Display.setTextSize(1);
+  int headX = triX + 30;
+  M5.Display.setCursor(headX, cy - 12);
+  M5.Display.print(headline);
+  int headW = M5.Display.textWidth(headline);
+
+  // Detail, right of the headline - dropped entirely if it cannot fit
+  String detail = bleStatusDetail();
+  if (detail.length() > 0) {
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setTextSize(1);
+    int detailX = headX + headW + 20;
+    int avail = (x + w - 10) - detailX;
+    if (M5.Display.textWidth(detail) <= avail) {
+      M5.Display.setCursor(detailX, cy - 8);
+      M5.Display.print(detail);
+    }
+  }
+
+  // Restore a sane default for whatever draws next
+  M5.Display.setFont(&fonts::DejaVu24);
+  M5.Display.setTextSize(1);
+  M5.Display.setTextColor(COLOR_BLACK);
+}
+
+bool UIManager::handleBleStatusTouch(int x, int y) {
+  if (_bleStripW <= 0 || !bleClient)
+    return false;
+  if (x < _bleStripX || x >= _bleStripX + _bleStripW || y < _bleStripY ||
+      y >= _bleStripY + _bleStripH)
+    return false;
+
+  BleConnState state = bleClient->getConnState();
+  Buzzer::click();
+
+  if (state == BleConnState::RADIO_OFF ||
+      state == BleConnState::NO_MAC) {
+    // Nothing to retry - send the user where they can fix it
+    navigateTo(ScreenID::SETTINGS);
+    return true;
+  }
+
+  bleClient->requestReconnectNow();
+  _needsRefresh = true;
+  _lastRefresh = 0; // show the acknowledgement immediately
+  return true;
+}
+
 void UIManager::drawBatteryBar(float percent) {
   int barY = 5;
   int barHeight = BATTERY_BAR_HEIGHT - 10;
   int barWidth = SCREEN_WIDTH - 10; // Full width with small margin
+
+  // === BLUETOOTH STATUS STRIP: takes the top of the bar area when the
+  // Fossibot link is down. What is left below still shows the last known
+  // charge, which is exactly what the numbers on screen are: last known. ===
+  if (bleStatusVisible()) {
+    const int stripH = 30;
+    drawBleStatusStrip(5, barY, barWidth, stripH);
+    barY += stripH + 2;
+    barHeight -= stripH + 2;
+  }
 
   // === ERROR BANNER: Replace battery bar when device has active fault ===
   if (_powerData.hasError()) {
@@ -2542,6 +3131,11 @@ void UIManager::drawBatteryBar(float percent) {
     M5.Display.fillRect(triX2 + 11, triCY + 7, 3, 3, COLOR_WHITE);
 
     // Show error code, protection flags, and classification on second line
+    // (skipped when the Bluetooth strip has taken part of the bar area)
+    if (barHeight < 60) {
+      Serial.println("UI: Error banner detail line suppressed (BLE strip)");
+      return;
+    }
     M5.Display.setTextSize(1);
     char detailStr[64];
     const char *classification =
@@ -2739,6 +3333,104 @@ void UIManager::drawClockWeatherPanel(int x, int y, int w, int h) {
   M5.Display.print(dateStr);
 }
 
+// ============================================================================
+// Fossibot power on/off button (Campervan mode)
+// ============================================================================
+// Off is a Modbus write the station itself handles. On cannot be: a powered-off
+// Fossibot has no BLE radio listening, so the only way back is the SwitchBot
+// Bot pressing the physical button.
+
+const char *UIManager::powerButtonLabel() {
+  if (bleClient && bleClient->isConnected()) {
+    return "POWER OFF";
+  }
+  if (!switchbotClient) {
+    return "POWER ON";
+  }
+  if (switchbotClient->isBusy()) {
+    return switchbotClient->getStatusText();
+  }
+  // Hold a recent press outcome on the button for a few seconds, then go back
+  // to offering the action.
+  if (switchbotClient->getResultTime() != 0 &&
+      millis() - switchbotClient->getResultTime() < PWR_RESULT_HOLD_MS) {
+    return switchbotClient->getStatusText();
+  }
+  return "POWER ON";
+}
+
+void UIManager::drawPowerButton(int x, int y, int w, int h) {
+  // Remember where it landed; each theme places it differently and the touch
+  // handler tests these bounds rather than recomputing theme geometry.
+  _pwrBtnX = x;
+  _pwrBtnY = y;
+  _pwrBtnW = w;
+  _pwrBtnH = h;
+
+  // Filled while the station is on, so the destructive action reads as armed.
+  // drawButton only uses black and white, so this survives epd_fastest.
+  bool linked = bleClient && bleClient->isConnected();
+  drawButton(x, y, w, h, powerButtonLabel(), linked);
+}
+
+bool UIManager::handlePowerButtonTouch(int x, int y) {
+  if (_pwrBtnW <= 0) {
+    return false;
+  }
+  if (x < _pwrBtnX || x >= _pwrBtnX + _pwrBtnW || y < _pwrBtnY ||
+      y >= _pwrBtnY + _pwrBtnH) {
+    return false;
+  }
+
+  Buzzer::click();
+
+  if (bleClient && bleClient->isConnected()) {
+    // Cutting power in a van takes the fridge with it, so confirm first.
+    _showHomePowerConfirm = true;
+    forceRefresh();
+    return true;
+  }
+
+  if (switchbotClient) {
+    // Queued, not run here: the connect can block for seconds and this is a
+    // touch handler.
+    switchbotClient->requestPress();
+  } else {
+    Serial.println("UI: No SwitchBot client - cannot power on");
+  }
+  forceRefresh();
+  return true;
+}
+
+void UIManager::drawHomePowerConfirm() {
+  M5.Display.fillRect(PWR_CONFIRM_X, PWR_CONFIRM_Y, PWR_CONFIRM_W,
+                      PWR_CONFIRM_H, COLOR_WHITE);
+  M5.Display.drawRect(PWR_CONFIRM_X, PWR_CONFIRM_Y, PWR_CONFIRM_W,
+                      PWR_CONFIRM_H, COLOR_BLACK);
+  M5.Display.drawRect(PWR_CONFIRM_X + 1, PWR_CONFIRM_Y + 1, PWR_CONFIRM_W - 2,
+                      PWR_CONFIRM_H - 2, COLOR_BLACK);
+
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(1);
+
+  const char *title = "Power off the Fossibot?";
+  int tw = M5.Display.textWidth(title);
+  M5.Display.setCursor(PWR_CONFIRM_X + (PWR_CONFIRM_W - tw) / 2,
+                       PWR_CONFIRM_Y + 30);
+  M5.Display.print(title);
+
+  const char *note = "The SwitchBot has to press the button to restart it.";
+  tw = M5.Display.textWidth(note);
+  M5.Display.setCursor(PWR_CONFIRM_X + (PWR_CONFIRM_W - tw) / 2,
+                       PWR_CONFIRM_Y + 75);
+  M5.Display.print(note);
+
+  drawButton(PWR_CONFIRM_YES_X, PWR_CONFIRM_BTN_Y, PWR_CONFIRM_BTN_W,
+             PWR_CONFIRM_BTN_H, "POWER OFF", true);
+  drawButton(PWR_CONFIRM_NO_X, PWR_CONFIRM_BTN_Y, PWR_CONFIRM_BTN_W,
+             PWR_CONFIRM_BTN_H, "CANCEL", false);
+}
+
 // drawMenuBar() removed — bottom nav bar replaced by MENU button on home +
 // HOME button on sub-screens
 
@@ -2788,9 +3480,91 @@ void UIManager::drawToggle(int x, int y, const char *label, bool active) {
   }
 }
 
+// Output on/off button: label above, state below, filled while on. Themes
+// that use it get a control that looks pressable and says what it will do,
+// instead of a bare readout with an invisible hit zone.
+void UIManager::drawOutputToggle(int idx, int x, int y, int w, int h,
+                                 const char *label, bool on) {
+  if (idx >= 0 && idx < 3) {
+    _togX[idx] = x;
+    _togY[idx] = y;
+    _togW[idx] = w;
+    _togH[idx] = h;
+  }
+
+  M5.Display.drawRect(x, y, w, h, COLOR_BLACK);
+  M5.Display.drawRect(x + 1, y + 1, w - 2, h - 2, COLOR_BLACK);
+
+  int stateH = (h >= 64) ? 26 : h / 2;
+  int stateY = y + h - stateH - 5;
+
+  // Label, centered in the space above the state strip
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(1);
+  int tw = M5.Display.textWidth(label);
+  int th = M5.Display.fontHeight();
+  M5.Display.setCursor(x + (w - tw) / 2, y + (stateY - y - th) / 2 + 1);
+  M5.Display.print(label);
+
+  // State strip: black fill = on (reads at a glance on e-ink)
+  int sx = x + 8;
+  int sw = w - 16;
+  const char *state = on ? "ON" : "OFF";
+  if (on) {
+    M5.Display.fillRect(sx, stateY, sw, stateH, COLOR_BLACK);
+    M5.Display.setTextColor(COLOR_WHITE);
+  } else {
+    M5.Display.drawRect(sx, stateY, sw, stateH, COLOR_BLACK);
+    M5.Display.setTextColor(COLOR_BLACK);
+  }
+  M5.Display.setTextSize(0.7);
+  tw = M5.Display.textWidth(state);
+  th = M5.Display.fontHeight();
+  M5.Display.setCursor(sx + (sw - tw) / 2, stateY + (stateH - th) / 2);
+  M5.Display.print(state);
+  M5.Display.setTextSize(1);
+}
+
+bool UIManager::handleOutputToggleTouch(int x, int y) {
+  for (int i = 0; i < 3; i++) {
+    if (_togW[i] <= 0)
+      continue;
+    if (x < _togX[i] || x >= _togX[i] + _togW[i] || y < _togY[i] ||
+        y >= _togY[i] + _togH[i])
+      continue;
+
+    // Offline the outputs cannot be switched, but the press is still ours:
+    // falling through would hand it to a theme handler that would do nothing
+    // with it anyway.
+    if (!bleClient || !bleClient->isConnected())
+      return true;
+
+    Buzzer::click();
+    switch (i) {
+    case TOGGLE_USB:
+      Serial.println("Toggle USB");
+      bleClient->toggleUSB();
+      _powerData.usbActive = !_powerData.usbActive;
+      break;
+    case TOGGLE_DC:
+      Serial.println("Toggle DC");
+      bleClient->toggleDC();
+      _powerData.dcActive = !_powerData.dcActive;
+      break;
+    case TOGGLE_AC:
+      Serial.println("Toggle AC");
+      bleClient->toggleAC();
+      _powerData.acActive = !_powerData.acActive;
+      break;
+    }
+    forceRefresh();
+    return true;
+  }
+  return false;
+}
+
 void UIManager::drawButton(int x, int y, int w, int h, const char *label,
                            bool selected) {
-  M5.Display.setTextSize(1);
   if (selected) {
     M5.Display.fillRect(x, y, w, h, COLOR_BLACK);
     M5.Display.setTextColor(COLOR_WHITE);
@@ -2799,19 +3573,55 @@ void UIManager::drawButton(int x, int y, int w, int h, const char *label,
     M5.Display.setTextColor(COLOR_BLACK);
   }
 
-  // Center text
-  int textLen = M5.Display.textWidth(label);
-  M5.Display.setCursor(x + (w - textLen) / 2,
-                       y + (h - 8) / 2); // 8 is approx height for Size 1
-  M5.Display.print(label);
-}
+  // Shrink the label until it fits inside the box. Several labels are built
+  // at run time ("< DASHBOARD", "Theme: Compact", the SwitchBot status on the
+  // power button) and a fixed text size let the long ones run over the
+  // border, which read as a clipped letter.
+  const int padding = 14;
+  float textSize = 1.0f;
+  M5.Display.setTextSize(textSize);
+  while (textSize > 0.55f && M5.Display.textWidth(label) > w - padding) {
+    textSize -= 0.05f;
+    M5.Display.setTextSize(textSize);
+  }
 
-// Global reference to BLE client
-extern FossibotBLE *bleClient;
+  // Center on the real metrics rather than an assumed 8px line height
+  int textLen = M5.Display.textWidth(label);
+  int textH = M5.Display.fontHeight();
+  M5.Display.setCursor(x + (w - textLen) / 2, y + (h - textH) / 2);
+  M5.Display.print(label);
+  M5.Display.setTextSize(1);
+}
 
 void UIManager::handleHomeTouch(int x, int y, TouchEvent event) {
   if (event != TouchEvent::PRESS && event != TouchEvent::RELEASE)
     return;
+
+  // Power-off confirmation is modal: it swallows every tap, including MENU, so
+  // the dialog cannot be left armed behind another screen.
+  if (_showHomePowerConfirm) {
+    if (event != TouchEvent::RELEASE) {
+      return;
+    }
+    if (x >= PWR_CONFIRM_YES_X && x < PWR_CONFIRM_YES_X + PWR_CONFIRM_BTN_W &&
+        y >= PWR_CONFIRM_BTN_Y && y < PWR_CONFIRM_BTN_Y + PWR_CONFIRM_BTN_H) {
+      Buzzer::click();
+      if (bleClient && bleClient->isConnected()) {
+        bleClient->powerOff();
+      }
+      _showHomePowerConfirm = false;
+      forceRefresh();
+      return;
+    }
+    if (x >= PWR_CONFIRM_NO_X && x < PWR_CONFIRM_NO_X + PWR_CONFIRM_BTN_W &&
+        y >= PWR_CONFIRM_BTN_Y && y < PWR_CONFIRM_BTN_Y + PWR_CONFIRM_BTN_H) {
+      Buzzer::click();
+      _showHomePowerConfirm = false;
+      forceRefresh();
+      return;
+    }
+    return; // Block everything else while the dialog is up
+  }
 
   // MENU button check first — works for all themes and both modes
   if (hitTestMenuButton(x, y)) {
@@ -2827,14 +3637,37 @@ void UIManager::handleHomeTouch(int x, int y, TouchEvent event) {
     return;
   }
 
+  // Power on/off button. Checked before the Bluetooth strip because in the
+  // Horizontal Bars theme the strip's band overlaps it, and "power on" is
+  // precisely what you want while the link is down.
+  if (event == TouchEvent::RELEASE && handlePowerButtonTouch(x, y)) {
+    return;
+  }
+
+  // Bluetooth status strip (only present while the link is down) - tapping
+  // it forces an immediate reconnect attempt instead of waiting out the
+  // backoff. Checked before the theme handlers because it can overlap the
+  // (inert while offline) output toggles.
+  if (event == TouchEvent::RELEASE && handleBleStatusTouch(x, y)) {
+    return;
+  }
+
+  // USB / DC / AC on-off buttons, wherever the active theme drew them.
+  if (event == TouchEvent::RELEASE && handleOutputToggleTouch(x, y)) {
+    return;
+  }
+
   // Campervan mode: dispatch to active Fossibot theme handler
   String theme = config ? config->getTheme() : "classic_grid";
   if (theme == "compact_status") {
     handleHomeCompactStatusTouch(x, y);
   } else if (theme == "horizontal_bars") {
-    handleHomeHorizontalBarsTouch(x, y);
+    // Horizontal Bars has no hit zones beyond the shared buttons above
   } else if (theme == "sector") {
     handleHomeSectorTouch(x, y);
+  } else if (theme == "live_graph") {
+    // Live Graph uses the same bottom toggle strip as Compact Status
+    handleHomeCompactStatusTouch(x, y);
   } else {
     handleHomeClassicGridTouch(x, y);
   }
@@ -2951,61 +3784,18 @@ void UIManager::handleHomeCompactStatusTouch(int x, int y) {
   }
 }
 
-void UIManager::handleHomeHorizontalBarsTouch(int x, int y) {
-  // Row 4 toggles: match positions from drawHomeHorizontalBars
-  int margin = 10;
-  int gap = 5;
-  int battRowH = 55;
-  int powerRowH = 105;
-  int contentBottom = SCREEN_HEIGHT;
-  int row4Y = margin + battRowH + gap + powerRowH * 2 + gap * 2;
-  int row4H = contentBottom - row4Y - margin;
-
-  if (y >= row4Y && y < row4Y + row4H) {
-    int toggleBaseX = SCREEN_WIDTH / 2 + 80;
-    int dcX = toggleBaseX + 130;
-    int acX = dcX + 130;
-
-    if (abs(x - toggleBaseX) < 60) {
-      if (bleClient && bleClient->isConnected()) {
-        Serial.println("Toggle USB");
-        bleClient->toggleUSB();
-        Buzzer::click();
-        _powerData.usbActive = !_powerData.usbActive;
-        _needsRefresh = true;
-        _lastRefresh = 0;
-      }
-    } else if (abs(x - dcX) < 60) {
-      if (bleClient && bleClient->isConnected()) {
-        Serial.println("Toggle DC");
-        bleClient->toggleDC();
-        Buzzer::click();
-        _powerData.dcActive = !_powerData.dcActive;
-        _needsRefresh = true;
-        _lastRefresh = 0;
-      }
-    } else if (abs(x - acX) < 60) {
-      if (bleClient && bleClient->isConnected()) {
-        Serial.println("Toggle AC");
-        bleClient->toggleAC();
-        Buzzer::click();
-        _powerData.acActive = !_powerData.acActive;
-        _needsRefresh = true;
-        _lastRefresh = 0;
-      }
-    }
-  }
-}
-
 void UIManager::handleHomeSectorTouch(int x, int y) {
-  // Right-side sector panels act as toggle buttons
+  // The whole sector is a hit target for its output, not just the ON/OFF
+  // button inside it (that one is handled by handleOutputToggleTouch before
+  // this runs). Geometry must match drawHomeSector().
   int margin = 10;
   int topY = BATTERY_BAR_HEIGHT + margin;
   int contentBottom = SCREEN_HEIGHT;
   int availH = contentBottom - topY - margin;
   int rightX = SCREEN_WIDTH / 2 + margin;
   int rightW = SCREEN_WIDTH / 2 - margin * 2;
-  int sectorH = (availH - margin * 2) / 3;
+  int pwrH = 58;
+  int sectorH = (availH - margin * 3 - pwrH) / 3;
 
   if (x < rightX || x > rightX + rightW) return;
 
@@ -3013,34 +3803,33 @@ void UIManager::handleHomeSectorTouch(int x, int y) {
   int acY = usbY + sectorH + margin;
   int dcY = acY + sectorH + margin;
 
+  int which = -1;
   if (y >= usbY && y < usbY + sectorH) {
-    if (bleClient && bleClient->isConnected()) {
-      Serial.println("Toggle USB");
-      bleClient->toggleUSB();
-      Buzzer::click();
-      _powerData.usbActive = !_powerData.usbActive;
-      _needsRefresh = true;
-      _lastRefresh = 0;
-    }
+    which = TOGGLE_USB;
   } else if (y >= acY && y < acY + sectorH) {
-    if (bleClient && bleClient->isConnected()) {
-      Serial.println("Toggle AC");
-      bleClient->toggleAC();
-      Buzzer::click();
-      _powerData.acActive = !_powerData.acActive;
-      _needsRefresh = true;
-      _lastRefresh = 0;
-    }
+    which = TOGGLE_AC;
   } else if (y >= dcY && y < dcY + sectorH) {
-    if (bleClient && bleClient->isConnected()) {
-      Serial.println("Toggle DC");
-      bleClient->toggleDC();
-      Buzzer::click();
-      _powerData.dcActive = !_powerData.dcActive;
-      _needsRefresh = true;
-      _lastRefresh = 0;
-    }
+    which = TOGGLE_DC;
   }
+  if (which < 0 || !bleClient || !bleClient->isConnected()) {
+    return;
+  }
+
+  Buzzer::click();
+  if (which == TOGGLE_USB) {
+    Serial.println("Toggle USB");
+    bleClient->toggleUSB();
+    _powerData.usbActive = !_powerData.usbActive;
+  } else if (which == TOGGLE_AC) {
+    Serial.println("Toggle AC");
+    bleClient->toggleAC();
+    _powerData.acActive = !_powerData.acActive;
+  } else {
+    Serial.println("Toggle DC");
+    bleClient->toggleDC();
+    _powerData.dcActive = !_powerData.dcActive;
+  }
+  forceRefresh();
 }
 
 void UIManager::drawSettingsScreen() {
@@ -3109,6 +3898,7 @@ void UIManager::drawSettingsScreen() {
       if (theme == "compact_status") themeName = "Compact";
       else if (theme == "horizontal_bars") themeName = "H-Bars";
       else if (theme == "sector") themeName = "Sector";
+      else if (theme == "live_graph") themeName = "Graph";
       snprintf(themeLabel, sizeof(themeLabel), "Theme: %s", themeName);
     }
     drawButton(col3X, row3Y, btnW, btnH, themeLabel);
@@ -3244,6 +4034,8 @@ void UIManager::handleSettingsTouch(int x, int y) {
           config->setTheme("horizontal_bars");
         } else if (theme == "horizontal_bars") {
           config->setTheme("sector");
+        } else if (theme == "sector") {
+          config->setTheme("live_graph");
         } else {
           config->setTheme("classic_grid");
         }
@@ -3529,7 +4321,12 @@ void UIManager::drawFossibotSettingsScreen() {
   // Title
   M5.Display.setTextSize(2); // Reverted 3 -> 2
   M5.Display.setTextColor(COLOR_BLACK);
+  // Flag the link state in the title: every control on this screen is a
+  // no-op while the Fossibot is offline, which is otherwise silent.
   String title = "Fossibot Settings";
+  if (bleClient && !bleClient->isConnected()) {
+    title += " (OFFLINE)";
+  }
   M5.Display.setCursor((SCREEN_WIDTH - M5.Display.textWidth(title)) / 2, 15);
   M5.Display.print(title);
 
@@ -3545,11 +4342,13 @@ void UIManager::drawFossibotSettingsScreen() {
       _fossiLightMode = data.lightMode;
       _fossiDischargeLimit = data.dischargeLimit;
       _fossiChargeLimit = data.chargeLimit;
+      _fossiChargeSpeed = data.acChargeSpeed;
       _fossiScreenTimeout = data.screenTimeout;
       _fossiSysStandby = data.sysStandby;
       _fossiACStandby = data.acStandby;
       _fossiDCStandby = data.dcStandby;
       _fossiUSBStandby = data.usbStandby;
+      _fossiChargeCurrent = data.chargeCurrent;
     }
   }
 
@@ -3615,29 +4414,45 @@ void UIManager::drawFossibotSettingsScreen() {
   M5.Display.setCursor(toggleX + 5, y);
   M5.Display.print(limitStr);
   drawButton(toggleX + 70, y - 10, 50, 40, "+");
+  y += rowH;
+
+  // Charge Speed (AC charge rate setpoint, ~220W per step on EU units)
+  M5.Display.setCursor(labelX, y);
+  M5.Display.print("Charge Speed");
+  snprintf(limitStr, sizeof(limitStr), "%d/5", _fossiChargeSpeed);
+  drawButton(toggleX - 60, y - 10, 50, 40, "-");
+  M5.Display.setCursor(toggleX + 5, y);
+  M5.Display.print(limitStr);
+  drawButton(toggleX + 70, y - 10, 50, 40, "+");
   y += rowH + 10;
 
-  // === Timers Section (Right Column) - Navigate to sub-screen ===
+  // === Right Column - sub-screens and actions ===
   int col2X = 550;
-  int col2Y = 120;
+  int col2Y = 100;
 
-  drawButton(col2X, col2Y, 200, 60, "TIMERS", true);
-
+  drawButton(col2X, col2Y, 200, 55, "TIMERS", true);
   M5.Display.setTextSize(1);
   M5.Display.setTextColor(COLOR_DARK_GRAY);
-  M5.Display.setCursor(col2X + 10, col2Y + 70);
+  M5.Display.setCursor(col2X + 10, col2Y + 60);
   M5.Display.print("Standby & Schedule");
 
+  // === Device Info sub-screen ===
+  drawButton(col2X, col2Y + 85, 200, 55, "DEVICE INFO", true);
+  M5.Display.setTextSize(1);
+  M5.Display.setTextColor(COLOR_DARK_GRAY);
+  M5.Display.setCursor(col2X + 10, col2Y + 145);
+  M5.Display.print("Fan, packs, firmware");
+
   // === Power Off Button ===
-  drawButton(col2X, col2Y + 120, 200, 60, "POWER OFF", true);
+  drawButton(col2X, col2Y + 170, 200, 55, "POWER OFF", true);
 
   // === Simulate Error Button (for testing error banner) ===
-  drawButton(col2X, col2Y + 200, 200, 60,
+  drawButton(col2X, col2Y + 240, 200, 55,
              _powerData.simulatedError ? "CLR ERROR" : "SIM ERROR",
              _powerData.simulatedError);
   M5.Display.setTextSize(1);
   M5.Display.setTextColor(COLOR_DARK_GRAY);
-  M5.Display.setCursor(col2X + 10, col2Y + 270);
+  M5.Display.setCursor(col2X + 10, col2Y + 300);
   M5.Display.print("Test error banner");
 
   // --- Action Buttons ---
@@ -3794,24 +4609,56 @@ void UIManager::handleFossibotSettingsTouch(int x, int y) {
     forceRefresh();
     return;
   }
+  baseY += rowH;
 
-  // === TIMERS button (Right Column) - Navigate to Timers sub-screen ===
+  // Charge Speed -
+  if (isHit(toggleX - 60, baseY - 10, 50, 40)) {
+    _fossiChargeSpeed--;
+    if (_fossiChargeSpeed < 1)
+      _fossiChargeSpeed = 1;
+    _lastTimerSetTime = millis(); // Prevent BLE sync from overwriting
+    if (bleClient && bleClient->isConnected()) {
+      bleClient->setChargeSpeed(_fossiChargeSpeed);
+    }
+    forceRefresh();
+    return;
+  }
+  // Charge Speed +
+  if (isHit(toggleX + 70, baseY - 10, 50, 40)) {
+    _fossiChargeSpeed++;
+    if (_fossiChargeSpeed > 5)
+      _fossiChargeSpeed = 5;
+    _lastTimerSetTime = millis(); // Prevent BLE sync from overwriting
+    if (bleClient && bleClient->isConnected()) {
+      bleClient->setChargeSpeed(_fossiChargeSpeed);
+    }
+    forceRefresh();
+    return;
+  }
+
+  // === Right column buttons (geometry mirrors drawFossibotSettingsScreen) ===
   int col2X = 550;
-  int col2Y = 120;
-  if (isHit(col2X, col2Y, 200, 60)) {
+  int col2Y = 100;
+  if (isHit(col2X, col2Y, 200, 55)) {
     navigateTo(ScreenID::SETTINGS_FOSSIBOT_TIMERS);
     return;
   }
 
+  // === Device Info button ===
+  if (isHit(col2X, col2Y + 85, 200, 55)) {
+    navigateTo(ScreenID::SETTINGS_FOSSIBOT_INFO);
+    return;
+  }
+
   // === Power Off Button ===
-  if (isHit(col2X, col2Y + 120, 200, 60)) {
+  if (isHit(col2X, col2Y + 170, 200, 55)) {
     _showPowerOffConfirmation = true;
     forceRefresh();
     return;
   }
 
   // === Simulate Error Button ===
-  if (isHit(col2X, col2Y + 200, 200, 60)) {
+  if (isHit(col2X, col2Y + 240, 200, 55)) {
     _powerData.simulatedError = !_powerData.simulatedError;
     if (_powerData.simulatedError) {
       // Inject fake error values matching real-world fault pattern
@@ -3846,6 +4693,177 @@ void UIManager::handleFossibotSettingsTouch(int x, int y) {
 }
 
 // ============================================================================
+// Fossibot Device Info Sub-Screen
+//
+// Read-only telemetry that the register map exposes but no other screen shows
+// (fan level, mains in/out, expansion packs, sub-MCU firmware), plus the one
+// writable value that belongs with it: the AC charge current limit (reg 20).
+// ============================================================================
+
+void UIManager::drawFossibotInfoScreen() {
+  M5.Display.fillScreen(COLOR_WHITE);
+  drawHomeButton();
+
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(SCREEN_WIDTH / 2 - 120, 15);
+  M5.Display.print("Fossibot Info");
+  if (bleClient && !bleClient->isConnected()) {
+    M5.Display.print(" (OFFLINE)");
+  }
+
+  const auto &d = _powerData;
+  bool suppressSync = (millis() - _lastTimerSetTime < 5000);
+  if (!suppressSync && d.settingsReceived) {
+    _fossiChargeCurrent = d.chargeCurrent;
+  }
+
+  M5.Display.setTextSize(1);
+  int colX[2] = {30, 500};
+  int y0 = 70;
+  int rowH = 32;
+  char buf[48];
+
+  auto row = [&](int col, int idx, const char *label, const char *value) {
+    int y = y0 + idx * rowH;
+    M5.Display.setTextColor(COLOR_DARK_GRAY);
+    M5.Display.setCursor(colX[col], y);
+    M5.Display.print(label);
+    M5.Display.setTextColor(COLOR_BLACK);
+    M5.Display.setCursor(colX[col] + 220, y);
+    M5.Display.print(value);
+  };
+
+  // --- Left column: power flow and cooling ---
+  snprintf(buf, sizeof(buf), "%d / 5", d.fanLevel);
+  row(0, 0, "Fan level", buf);
+
+  if (d.acInputVoltage > 0.0f) {
+    snprintf(buf, sizeof(buf), "%.1f V", d.acInputVoltage);
+  } else if (d.acInputStateCode == 15) {
+    snprintf(buf, sizeof(buf), "cold lockout");
+  } else {
+    snprintf(buf, sizeof(buf), "no mains");
+  }
+  row(0, 1, "AC input", buf);
+
+  snprintf(buf, sizeof(buf), "%.1f V / %.1f Hz", d.acOutputVoltage,
+           d.acOutputFreq);
+  row(0, 2, "AC output", buf);
+
+  if (d.acGridPower == 0) {
+    snprintf(buf, sizeof(buf), "--");
+  } else {
+    snprintf(buf, sizeof(buf), "%d W %s", abs(d.acGridPower),
+             d.acGridPower > 0 ? "in" : "out");
+  }
+  row(0, 3, "Grid power", buf);
+
+  snprintf(buf, sizeof(buf), "%d/5 (set %d/5)", d.activeChargeRate,
+           d.acChargeSpeed);
+  row(0, 4, "Charge rate", buf);
+
+  if (d.batteryCapacityAh > 0.0f) {
+    snprintf(buf, sizeof(buf), "%.1f Ah", d.batteryCapacityAh);
+  } else {
+    snprintf(buf, sizeof(buf), "--");
+  }
+  row(0, 5, "Pack capacity", buf);
+
+  if (d.bookingChargeRemaining > 0) {
+    snprintf(buf, sizeof(buf), "in %d min", d.bookingChargeRemaining);
+  } else {
+    snprintf(buf, sizeof(buf), "none");
+  }
+  row(0, 6, "Scheduled charge", buf);
+
+  // --- Right column: expansion packs and firmware ---
+  int extShown = 0;
+  for (int i = 0; i < 4; i++) {
+    if (d.extSoc[i] < 0.0f)
+      continue;
+    char label[24];
+    snprintf(label, sizeof(label), "Ext battery %d", i + 1);
+    snprintf(buf, sizeof(buf), "%.0f%%", d.extSoc[i]);
+    row(1, extShown++, label, buf);
+  }
+  if (extShown == 0) {
+    row(1, extShown++, "Ext batteries", "none fitted");
+  }
+
+  snprintf(buf, sizeof(buf), "v%.1f", d.mcuVersionBMS);
+  row(1, extShown++, "BMS firmware", buf);
+  snprintf(buf, sizeof(buf), "v%.1f", d.mcuVersionAC);
+  row(1, extShown++, "Inverter firmware", buf);
+  snprintf(buf, sizeof(buf), "v%.1f", d.mcuVersionPV);
+  row(1, extShown++, "Solar firmware", buf);
+  snprintf(buf, sizeof(buf), "v%.1f", d.mcuVersionDC);
+  row(1, extShown++, "Panel firmware", buf);
+  snprintf(buf, sizeof(buf), "0x%04X", d.hardwareId);
+  row(1, extShown++, "Hardware ID", buf);
+
+  // --- Max charging current (reg 20) ---
+  int ccY = 340;
+  M5.Display.setTextColor(COLOR_DARK_GRAY);
+  M5.Display.setCursor(colX[0], ccY);
+  M5.Display.print("-- Max Charging Current --");
+  M5.Display.setTextColor(COLOR_BLACK);
+  M5.Display.setCursor(colX[0], ccY + 45);
+  M5.Display.print("AC charge current");
+  snprintf(buf, sizeof(buf), "%dA", _fossiChargeCurrent);
+  drawButton(340, ccY + 35, 50, 40, "-");
+  M5.Display.setCursor(405, ccY + 45);
+  M5.Display.print(buf);
+  drawButton(470, ccY + 35, 50, 40, "+");
+  M5.Display.setTextColor(COLOR_DARK_GRAY);
+  M5.Display.setCursor(540, ccY + 45);
+  snprintf(buf, sizeof(buf), "(max %dA)", d.maxChargeCurrent);
+  M5.Display.print(buf);
+
+  drawButton(SCREEN_WIDTH / 2 - 100, 440, 200, 55, "BACK");
+}
+
+void UIManager::handleFossibotInfoTouch(int x, int y) {
+  auto isHit = [&](int bx, int by, int bw, int bh) {
+    if (x >= bx && x < bx + bw && y >= by && y < by + bh) {
+      Buzzer::click();
+      _lastTimerSetTime = millis();
+      return true;
+    }
+    return false;
+  };
+
+  int ccY = 340;
+  int ceiling = _powerData.maxChargeCurrent > 0 ? _powerData.maxChargeCurrent : 20;
+
+  if (isHit(340, ccY + 35, 50, 40)) {
+    _fossiChargeCurrent--;
+    if (_fossiChargeCurrent < 1)
+      _fossiChargeCurrent = 1;
+    if (bleClient && bleClient->isConnected()) {
+      bleClient->setChargeCurrent(_fossiChargeCurrent);
+    }
+    forceRefresh();
+    return;
+  }
+  if (isHit(470, ccY + 35, 50, 40)) {
+    _fossiChargeCurrent++;
+    if (_fossiChargeCurrent > ceiling)
+      _fossiChargeCurrent = ceiling;
+    if (bleClient && bleClient->isConnected()) {
+      bleClient->setChargeCurrent(_fossiChargeCurrent);
+    }
+    forceRefresh();
+    return;
+  }
+
+  if (isHit(SCREEN_WIDTH / 2 - 100, 440, 200, 55)) {
+    navigateTo(ScreenID::SETTINGS_FOSSIBOT);
+    return;
+  }
+}
+
+// ============================================================================
 // Fossibot Timers Sub-Screen (Output standby timers + Schedule Charge)
 // ============================================================================
 
@@ -3858,6 +4876,9 @@ void UIManager::drawFossibotTimersScreen() {
   M5.Display.setTextSize(2);
   M5.Display.setCursor(SCREEN_WIDTH / 2 - 120, 15);
   M5.Display.print("Fossibot Timers");
+  if (bleClient && !bleClient->isConnected()) {
+    M5.Display.print(" (OFFLINE)");
+  }
 
   M5.Display.setTextSize(1);
   int y = 65;
@@ -3872,14 +4893,16 @@ void UIManager::drawFossibotTimersScreen() {
   const int acPresets[] = {60, 480, 960, 1440, 0}; // Minutes
   const char *acLabels[] = {"1h", "8h", "16h", "24h", "OFF"};
 
-  const int usbPresets[] = {180, 300, 600, 1800, 0}; // Seconds
-  const char *usbLabels[] = {"3m", "5m", "10m", "30m", "OFF"};
+  const int usbPresets[] = {5, 10, 30, 60, 0}; // Minutes (reg 59)
+  const char *usbLabels[] = {"5m", "10m", "30m", "1h", "OFF"};
 
-  const int screenPresets[] = {3, 5, 10, 30, 0}; // Minutes
+  const int screenPresets[] = {180, 300, 600, 1800, 0}; // Seconds (reg 62)
   const char *screenLabels[] = {"3m", "5m", "10m", "30m", "OFF"};
 
-  const int sysPresets[] = {60, 480, 1440, 0}; // Minutes
-  const char *sysLabels[] = {"1h", "8h", "24h", "OFF"};
+  // Reg 68 has no "never" option: writing 0 permanently bricks the station,
+  // so these are the vendor app's presets and nothing else.
+  const int sysPresets[] = {5, 10, 30, 60, 480}; // Minutes (reg 68)
+  const char *sysLabels[] = {"5m", "10m", "30m", "1h", "8h"};
 
   // === AC Standby (Minutes) ===
   M5.Display.setTextColor(COLOR_BLACK);
@@ -3928,7 +4951,7 @@ void UIManager::drawFossibotTimersScreen() {
   // === Sys Standby (Minutes) ===
   M5.Display.setCursor(labelX, y + 8);
   M5.Display.print("Sys Idle:");
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 5; i++) {
     bool active = (_fossiSysStandby == sysPresets[i]);
     drawButton(btnStartX + i * (btnW + btnGap), y, btnW, btnH, sysLabels[i],
                active);
@@ -4019,10 +5042,10 @@ void UIManager::handleFossibotTimersTouch(int x, int y) {
   int rowGap = 45;
 
   // Same presets as draw
-  const int acPresets[] = {60, 480, 960, 1440, 0};   // Minutes
-  const int usbPresets[] = {180, 300, 600, 1800, 0}; // Seconds
-  const int screenPresets[] = {3, 5, 10, 30, 0};     // Minutes
-  const int sysPresets[] = {60, 480, 1440, 0};       // Minutes
+  const int acPresets[] = {60, 480, 960, 1440, 0};      // Minutes
+  const int usbPresets[] = {5, 10, 30, 60, 0};         // Minutes (reg 59)
+  const int screenPresets[] = {180, 300, 600, 1800, 0}; // Seconds (reg 62)
+  const int sysPresets[] = {5, 10, 30, 60, 480};       // Minutes (reg 68, never 0)
 
   // === AC Standby presets ===
   for (int i = 0; i < 5; i++) {
@@ -4076,8 +5099,8 @@ void UIManager::handleFossibotTimersTouch(int x, int y) {
   }
   baseY += rowGap;
 
-  // === Sys Standby presets (4 items) ===
-  for (int i = 0; i < 4; i++) {
+  // === Sys Standby presets ===
+  for (int i = 0; i < 5; i++) {
     if (isHit(btnStartX + i * (btnW + btnGap), baseY, btnW, btnH)) {
       _fossiSysStandby = sysPresets[i];
       if (bleClient && bleClient->isConnected()) {
@@ -5574,16 +6597,35 @@ void UIManager::checkPowerManagement() {
       _bleDisconnectedTime = millis(); // Record when first disconnected
     }
 
-    bool sleepDisabled = (config && config->getAutoSleepMinutes() == 0);
+    int autoSleepMinutes = config ? config->getAutoSleepMinutes() : 0;
+    bool sleepDisabled = (autoSleepMinutes == 0);
 
     // Never sleep while Timer or Pomodoro is actively running
     bool timerActive = (_clockMode == ClockMode::TIMER && _timerRunning);
     bool pomodoroActive = (_clockMode == ClockMode::POMODORO &&
                            _pomodoroState == PomodoroState::RUNNING);
+    bool sleepBlocked = sleepDisabled || timerActive || pomodoroActive;
+
+    // Inactivity sleep. This is what `display.auto_sleep_minutes` has always
+    // claimed to do; until now the value was only ever read as an on/off flag
+    // for the 1-hour rule below, so a device left on the dashboard with no
+    // Fossibot in range stayed awake for a full hour at ~25-35mA before it
+    // powered anything down.
+    //
+    // Deliberately restricted to the dashboard with the link *down*: deep
+    // sleep kills the BLE controller, so we must not cut a live link, and we
+    // must not close an EPUB, a game or a half-drawn note out from under the
+    // user just because they have not touched the screen for a few minutes.
+    unsigned long idleMs = millis() - _lastActivityTime;
+    if (!sleepBlocked && !bleConnected && _currentScreen == ScreenID::HOME &&
+        idleMs > (unsigned long)autoSleepMinutes * 60000UL) {
+      Serial.printf("Idle %lus with no BLE link, entering deep sleep...\n",
+                    idleMs / 1000);
+      enterDeepSleep();
+    }
 
     unsigned long bleDisconnectDuration = 60 * 60 * 1000UL; // 1 hour
-    if (!sleepDisabled && !timerActive && !pomodoroActive && !bleConnected &&
-        _bleDisconnectedTime > 0 &&
+    if (!sleepBlocked && !bleConnected && _bleDisconnectedTime > 0 &&
         (millis() - _bleDisconnectedTime > bleDisconnectDuration)) {
       Serial.println("BLE disconnected for 1 hour, entering deep sleep...");
       enterDeepSleep();
@@ -5603,8 +6645,11 @@ void UIManager::checkPowerManagement() {
   // Only actual user touch (handled in main.cpp) exits eco mode.
 
   if (!isHighPerfScreen && !bleBusy && (millis() - _lastActivityTime > 5000)) {
-    // Enter Eco Mode (80MHz)
-    if (!_lowPowerMode) {
+    // Enter Eco Mode (80MHz). Also re-assert it if the clock drifted back up
+    // while the flag stayed set - anything that boosts the CPU behind our back
+    // (a BLE connect attempt, say) would otherwise pin us at 240MHz until the
+    // next touch, because the flag alone made this look like a no-op.
+    if (!_lowPowerMode || getCpuFrequencyMhz() > 80) {
       setCpuFrequencyMhz(80);
       Serial.printf("Power: Entered Eco Mode (80MHz). Active=%lu\n",
                     millis() - _lastActivityTime);

@@ -7,6 +7,8 @@
     },
     "bluetooth": {
         "fossibot_mac": "DC:1E:D5:E4:07:1E",
+        "switchbot_mac": "EC:6F:02:46:5F:64",
+        "switchbot_password": "",
         "enabled": true
     },
     "mqtt": {

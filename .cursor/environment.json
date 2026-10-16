@@ -1,0 +1,4 @@
+{
+  "name": "e-Rex M5Paper S3 firmware",
+  "install": "./.cursor/install.sh"
+}

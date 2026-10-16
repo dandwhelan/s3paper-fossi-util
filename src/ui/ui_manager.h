@@ -36,6 +36,7 @@ enum class ScreenID {
   SETTINGS_DEVICE,          // Device Settings (date/time/refresh/sleep)
   SETTINGS_FOSSIBOT,        // Fossibot settings (Quick Actions, Power Limits)
   SETTINGS_FOSSIBOT_TIMERS, // Fossibot timers sub-menu
+  SETTINGS_FOSSIBOT_INFO,   // Fossibot device info + charge current
   SD_DIAG,
   NOTES_BROWSE,
   HISTORY
@@ -101,6 +102,7 @@ public:
    * Draw Fossibot Timers sub-screen (standby timers, schedule charge)
    */
   void drawFossibotTimersScreen();
+  void drawFossibotInfoScreen();
 
   /**
    * Get current screen ID (useful for main loop logic)
@@ -217,6 +219,55 @@ private:
   unsigned long _lastRefresh;
   bool _needsRefresh;
 
+  // --- Bluetooth link feedback (Campervan mode) ---
+  // Status strip shown on the home screen whenever the Fossibot link is
+  // down, so a disconnect (and the auto-reconnect countdown) is visible on
+  // the device instead of only in the serial log.
+  bool bleStatusVisible();                 // true when the strip should draw
+  String bleStatusHeadline();              // e.g. "FOSSIBOT DISCONNECTED"
+  String bleStatusDetail();                // e.g. "retry in 45s (try 3) ..."
+  void drawBleStatusStrip(int x, int y, int w, int h);
+  bool handleBleStatusTouch(int x, int y); // true if the touch was consumed
+  uint32_t bleStatusSignature();           // change detector for redraws
+
+  // Last drawn strip bounds (0 width = not on screen), used for hit testing
+  int _bleStripX = 0, _bleStripY = 0, _bleStripW = 0, _bleStripH = 0;
+  uint32_t _lastRenderedBleSig = 0;
+  int _lastRenderedBleState = -1;
+
+  // --- Fossibot power on/off button (Campervan mode) ---
+  // Every campervan theme draws this, but each one puts it somewhere
+  // different, so the button records its own bounds for hit testing rather
+  // than the handler recomputing per-theme geometry.
+  //
+  // Linked  -> "POWER OFF", writes Modbus register 64 (after confirmation).
+  // Offline -> "POWER ON", asks the SwitchBot Bot to press the physical
+  //            button, since a powered-off station has no BLE to talk to.
+  void drawPowerButton(int x, int y, int w, int h);
+  bool handlePowerButtonTouch(int x, int y); // true if the touch was consumed
+  const char *powerButtonLabel();
+  void drawHomePowerConfirm();
+
+  int _pwrBtnX = 0, _pwrBtnY = 0, _pwrBtnW = 0, _pwrBtnH = 0;
+  bool _showHomePowerConfirm = false;
+
+  // --- Output on/off buttons (USB / DC / AC) ---
+  // Drawn as labelled buttons showing their own ON/OFF state, so a sector or
+  // a row reads as something you can press rather than a readout. Each button
+  // records its bounds here and one handler hit-tests them, instead of every
+  // theme's touch handler re-deriving the layout it was drawn with (which is
+  // how they drifted apart).
+  enum { TOGGLE_USB = 0, TOGGLE_DC = 1, TOGGLE_AC = 2 };
+  void drawOutputToggle(int idx, int x, int y, int w, int h, const char *label,
+                        bool on);
+  bool handleOutputToggleTouch(int x, int y); // true if the touch was consumed
+  int _togX[3] = {0, 0, 0}, _togY[3] = {0, 0, 0};
+  int _togW[3] = {0, 0, 0}, _togH[3] = {0, 0, 0};
+
+  // How long a SwitchBot press result stays on the button before it reverts
+  // to "POWER ON".
+  static const unsigned long PWR_RESULT_HOLD_MS = 12000;
+
   // Drawing methods
   void drawBatteryBar(float percent);
   void drawErrorBanner(int x, int y, int w, int h);
@@ -235,6 +286,7 @@ private:
   void drawHomeCompactStatus();
   void drawHomeHorizontalBars();
   void drawHomeSector();
+  void drawHomeLiveGraph();
 
   // Home mode (GivEnergy) dashboard themes
   void drawHomeGivEnergy();              // energy_flow (default)
@@ -254,7 +306,6 @@ private:
   void handleHomeTouch(int x, int y, TouchEvent event);
   void handleHomeClassicGridTouch(int x, int y);
   void handleHomeCompactStatusTouch(int x, int y);
-  void handleHomeHorizontalBarsTouch(int x, int y);
   void handleHomeSectorTouch(int x, int y);
   void handleSettingsTouch(int x, int y);         // Main menu touch
   void handleDeviceSettingsTouch(int x, int y);   // Device settings touch
@@ -275,11 +326,13 @@ private:
   int _fossiLightMode = 0;               // 0=off,1=on,2=flash,3=sos
   int _fossiDischargeLimit = 0;          // 0-30%
   int _fossiChargeLimit = 100;           // 60-100%
-  int _fossiScreenTimeout = 60;          // Seconds (0=never)
-  int _fossiSysStandby = 5;              // Minutes (0=never)
+  int _fossiScreenTimeout = 300;         // Seconds (0=never), reg 62
+  int _fossiSysStandby = 5;              // Minutes, reg 68 (0 bricks device)
   int _fossiACStandby = 60;              // Minutes (0=never)
   int _fossiDCStandby = 60;              // Minutes (0=never)
-  int _fossiUSBStandby = 300;            // Seconds (0=never)
+  int _fossiUSBStandby = 30;             // Minutes (0=never), reg 59
+  int _fossiChargeSpeed = 3;             // AC charge speed setpoint (1-5)
+  int _fossiChargeCurrent = 0;           // AC charge current limit, amps (reg 20)
   int _fossiScheduleChargeHour = -1;     // -1=off, 0-23 = target hour
   int _fossiScheduleChargeMin = 0;       // 0-59 = target minute
   int _fossiScheduleChargeRemaining = 0; // Read from Reg 63 (minutes)
@@ -287,6 +340,7 @@ private:
   bool _showPowerOffConfirmation = false;
 
   void handleFossibotTimersTouch(int x, int y); // Fossibot timers touch
+  void handleFossibotInfoTouch(int x, int y);   // Fossibot device info touch
 
   // Clock screen state
   ClockMode _clockMode = ClockMode::TIMER; // Default to Timer (Alarm removed)
@@ -440,6 +494,24 @@ private:
   void minesweeperCheckWin();
   int minesweeperCountNeighbors(int r, int c);
   void minesweeperReveal(int r, int c);
+
+  // Live Graph theme: rolling 10-minute IN/OUT power buffer (RAM only,
+  // resets on deep sleep). Sampled every GRAPH_SAMPLE_MS in update().
+  static const int GRAPH_SAMPLES = 60;               // 10 min @ 10s
+  static const unsigned long GRAPH_SAMPLE_MS = 10000; // 10 seconds
+  float _graphIn[GRAPH_SAMPLES] = {};
+  float _graphOut[GRAPH_SAMPLES] = {};
+  int _graphHead = 0;  // Next write index (ring buffer)
+  int _graphCount = 0; // Valid samples stored (<= GRAPH_SAMPLES)
+  unsigned long _lastGraphSample = 0;
+  void samplePowerGraph();
+
+  // Live Graph: bounds of the clock in the info column. A whole-screen e-ink
+  // update once a minute is what makes this theme flash, so when only the
+  // minute has moved the clock is repainted on its own and pushed as a
+  // partial panel update instead.
+  int _lgClockX = 0, _lgClockY = 0, _lgClockW = 0, _lgClockH = 0;
+  void liveGraphClockTick();
 
   // Power History (data collection active, UI Phase 3)
   PowerHistory _powerHistory;

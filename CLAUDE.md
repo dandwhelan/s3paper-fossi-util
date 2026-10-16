@@ -22,7 +22,7 @@ Set via `"mode"` in `/config/settings.json` on the SD card. Changeable from Sett
 | **Target device** | Fossibot F3600 Pro power bank | GivEnergy inverter via GivTCP3 |
 | **Data direction** | Bidirectional (read + write) | Read-only (MQTT subscribe) |
 | **Deep sleep** | Yes, after inactivity | Disabled (mains-powered) |
-| **Home screen themes** | 4 themes (classic_grid, compact_status, horizontal_bars, sector) | Energy Flow Diagram (single layout) |
+| **Home screen themes** | 5 themes (classic_grid, compact_status, horizontal_bars, sector, live_graph) | Energy Flow Diagram (single layout) |
 | **Fossibot settings** | Available (Quick Actions, Power Limits, Timers) | Not available |
 | **NTP time sync** | No (RTC only) | Yes, on WiFi connect |
 
@@ -35,6 +35,21 @@ Communicates with the Fossibot via **modified Modbus RTU over BLE** (device addr
 **What it controls:** USB/DC/AC output toggles, charge speed (1-5), charge/discharge limits, standby timers, silent charging, LED light mode, buzzer, schedule charge, power off.
 
 **Critical:** CRC bytes are **high-byte first** (opposite to standard Modbus). See `docs/ble-protocol.md` and `src/ble/fossibot_protocol.h`.
+
+**Write safety:** the station does not validate writes and an out-of-range value
+can brick it permanently — writing `0` to register 68 (whole-machine idle
+shutdown) is a confirmed field brick. Every write passes through
+`Fossibot::isWriteAllowed()` and `sendCommand()` drops anything that fails it,
+so register 68 offers only 5/10/30/60/480 minutes and no "never".
+
+**Unit traps:** register 59 is the USB standby timer in **minutes**, register 62
+is the screen timeout in **seconds**. Output toggle states are read from status
+registers 24/25/26, not from the register 41 bitmask (whose bit layout varies by
+model); register 41's bits 9/10/11 remain only as a fallback.
+
+**Link feedback:** `FossibotBLE::getConnState()` returns a `BleConnState` (`LINK_UP`, `LINKING`, `RETRY_WAIT`, `RETRY_PAUSED`, `RETRY_STOPPED`, `RADIO_OFF`, `NO_MAC`) plus retry count, countdown to the next attempt (`getMsUntilRetry()`) and time since the link was last up (`getMsSinceLastSeen()`). The home screen renders this as an inverted status strip whenever the link is down (see UI Architecture below). Enum names deliberately avoid `DISABLED`/`CONNECTED` — the Arduino core defines those as macros.
+
+**Reconnect policy:** 30s base interval, doubling to a 5 min cap, abandoned after 55 min (deep sleep takes over at 60 min). A full client cleanup runs every 10 failures. `requestReconnectNow()` resets the backoff and arms an attempt on the next `update()` — never connect from a touch handler, the attempt blocks for up to 3s.
 
 ### Home Mode Details
 
@@ -56,17 +71,30 @@ Connects to WiFi and subscribes to GivTCP3 MQTT topics for real-time GivEnergy d
 - **Config**: `platformio.ini`
 
 ```bash
-pio run                  # Build
+pio run                  # Build (development env, serial logging on)
 pio run -t upload        # Flash to device via USB
 pio device monitor       # Serial monitor (115200 baud)
 pio run -t clean         # Clean build artifacts
+
+pio run -e m5paper_s3_release -t upload   # Production: no serial, no USB CDC
 ```
+
+Two envs share `[common]` flags: `m5paper_s3` (default, `SERIAL_DEBUG` +
+`ARDUINO_USB_CDC_ON_BOOT=1`) and `m5paper_s3_release` for battery use. Most
+`Serial.print` calls are *not* wrapped in `#ifdef SERIAL_DEBUG`, so the release
+env silences them by never opening the port (`cfg.serial_baudrate = 0` in
+`main.cpp`) plus `ARDUINO_USB_CDC_ON_BOOT=0` — dropping the flag alone would
+not. No serial log means no exception decoder: flash the debug env to chase a
+crash.
 
 There are **no automated tests or linters**. Verification is done by building (`pio run`) and testing on hardware.
 
 ### Build flags
 
-- `-DSERIAL_DEBUG` — enables serial logging; comment out for production
+- `-DSERIAL_DEBUG` — gates `Serial.begin()` and `cfg.serial_baudrate`; use the
+  `m5paper_s3_release` env rather than editing this flag by hand
+- `-DARDUINO_USB_CDC_ON_BOOT` — 1 in the dev env, 0 in release (points `Serial`
+  at UART0 instead of running the USB CDC stack)
 - `-DBOARD_HAS_PSRAM` — enables PSRAM for large allocations
 - `-Os` — optimize for size (flash is limited)
 
@@ -146,6 +174,66 @@ There are **no automated tests or linters**. Verification is done by building (`
 - **Home**: Deep sleep disabled (device is mains-powered, always-on monitoring)
 - **Battery cutoff**: Both modes sleep at 3.3V to protect Li-Po
 
+### Where the battery actually goes
+
+No power measurements have been taken on this hardware — the figures below are
+order-of-magnitude estimates from the ESP32-S3 and e-ink datasheets, useful for
+ranking optimisations, not for predicting runtime. Measure before trusting.
+
+**Constraint that shapes everything:** the Fossibot link must stay up, and deep
+sleep powers down the BLE controller. Deep sleep is therefore a shutdown
+strategy (inactivity timeout, 60-min disconnect), not an idle strategy.
+
+Ranked, biggest first, for a campervan device sitting on the dashboard:
+
+1. **Being awake at all.** The main loop never light-sleeps: it spins on
+   `delay(10)` and polls the GT911 over I2C every 15ms (30ms in eco mode). At
+   80 MHz that is a continuous ~25-35 mA; at 240 MHz ~40-55 mA. Idle current
+   dominates everything else because it is paid 100% of the time — and the
+   usual fix is unavailable: the Arduino core here is built with
+   `# CONFIG_PM_ENABLE is not set` and `# CONFIG_BT_CTRL_MODEM_SLEEP is not
+   set`, so there is no tickless idle and the BT controller does not idle its
+   radio between connection events. See `docs/roadmap.md` → Battery life.
+2. **BLE.** As *central* we transmit an anchor packet every connection interval
+   whether or not there is data, so the interval is the lever (now 200-400ms;
+   it was 30-60ms, carrying data requested only every 45s). Failed *connection
+   attempts* cost much more than the connection itself: `connectToDevice()`
+   boosts the CPU to 240 MHz and holds the radio for up to a 3s timeout. Ten
+   retries a minute would cost more than the link ever did — hence the
+   exponential backoff and the 55 min give-up.
+3. **WiFi (Home mode only).** ~80-120 mA average while associated. Irrelevant on
+   battery, which is why Home mode assumes mains and disables deep sleep.
+4. **E-ink refreshes.** Only significant if they are frequent — see below.
+5. **SD card.** Tens of mA in bursts during note saves, history flushes and
+   EPUB reads; negligible at rest.
+
+### E-ink refresh cost (`epd_mode_t`)
+
+Energy per refresh ≈ panel drive current × drive time, and the drive time is
+what the mode changes. Rough relative cost per full-screen update:
+
+| Mode | Waveform | Approx. drive time | Relative energy |
+|---|---|---|---|
+| `epd_quality` | 16-level greyscale, full clear | ~1-2 s | ~5-10x |
+| `epd_text` (default) | greyscale, shorter waveform | ~0.6-1 s | ~3-5x |
+| `epd_fast` | reduced levels | ~0.3-0.5 s | ~2x |
+| `epd_fastest` | 1-bit, no greys | ~0.1-0.3 s | 1x (baseline) |
+
+So fast refresh is worth roughly **3-10x less energy per update** than a quality
+refresh — but a refresh is a sub-second event on a device that redraws at most
+once a minute. Cutting refresh *frequency* (the change-threshold gating in
+`shouldUpdateDashboard()` and `bleStatusSignature()`) saves far more than
+changing the mode does, and the panel draws nothing between updates. Pick modes
+for legibility, not battery: `epd_fastest` loses the greys (Live Graph accepts
+this deliberately; the other themes rely on them).
+
+Two caveats that matter more than the mode choice:
+
+- E-ink refreshes contend with BLE for DMA on this board — see the EPD/BLE
+  pitfall below. Refresh frequency is a stability question as well as a power one.
+- Anything that keeps the CPU at 240 MHz (rendering, BLE attempts, EPUB
+  parsing) costs more than the panel does while it runs.
+
 ## UI Architecture
 
 ### Home Screen Dispatch (`drawHomeScreen()`)
@@ -154,8 +242,87 @@ There are **no automated tests or linters**. Verification is done by building (`
 if (config->isHomeMode())
     drawHomeGivEnergy()      // Energy Flow Diagram
 else
-    dispatch to theme:       // classic_grid | compact_status | horizontal_bars | sector
+    dispatch to theme:       // classic_grid | compact_status | horizontal_bars | sector | live_graph
 ```
+
+### Bluetooth Status Strip (Campervan only)
+
+The dashboard shows the last values received, so a dropped link would otherwise
+look identical to a live one. Whenever `bleStatusVisible()` is true (campervan
+mode and `getConnState() != LINK_UP`), each theme draws an inverted strip via
+`drawBleStatusStrip()`:
+
+- **classic_grid / sector / live_graph** — top 30px of the battery bar area
+  (`drawBatteryBar()` shrinks the bar; the error banner drops its detail line)
+- **compact_status** — top of screen between the clock and MENU (below the error
+  banner if one is showing)
+- **horizontal_bars** — lower part of row 4, clear of the toggles and date
+
+Text is `bleStatusHeadline()` + `bleStatusDetail()`, e.g. *FOSSIBOT DISCONNECTED
+— retrying: next try in 45s (3 failed), last seen 12m ago*. Tapping the strip
+calls `requestReconnectNow()` (or opens Settings when the radio is off); the
+handler runs from `handleHomeTouch()` before theme dispatch, because the strip
+can overlap output toggles that are inert while offline.
+
+Redraws are deliberately rationed: a state change refreshes immediately, while
+countdown/attempt/"last seen" changes go through `bleStatusSignature()` on the
+existing 60s pass. Elapsed time is bucketed (per minute under 10 min, then 5
+min, then hourly) so a long outage stops costing refreshes.
+
+`main.cpp` pushes `updatePowerBankData()` on **every** loop pass, connected or
+not — gating it on `isConnected()` was what left the UI believing it was still
+linked.
+
+### Power On/Off Button (Campervan only)
+
+Every campervan theme draws one via `drawPowerButton()`. Its meaning flips on
+the link state, because the two directions are not symmetrical:
+
+- **Linked → "POWER OFF"** (filled). Confirms first, then writes Modbus
+  register 64. Cutting power in a van takes the fridge with it.
+- **Offline → "POWER ON"** (outlined). Asks the SwitchBot Bot to press the
+  physical button — a powered-off station has no BLE radio listening, so there
+  is no register that can do this. See
+  [BLE protocol](docs/ble-protocol.md#switchbot-bot-power-on-path).
+
+The button records its own bounds (`_pwrBtnX/Y/W/H`, reset each
+`drawHomeScreen()`) instead of the handler recomputing per-theme geometry,
+because each theme puts it somewhere different:
+
+| Theme | Placement |
+|---|---|
+| classic_grid | Bottom-right of the clock/date panel |
+| compact_status | Right end of the band above the toggle strip |
+| horizontal_bars | Row 4, its own column between the clock and the output buttons |
+| sector | Reserved row under the DC sector, full column width (the sectors give up height for it; the connection dot was dropped so the button lines up) |
+| live_graph | Right end of the toggle strip; the connection dot moves to the left end |
+
+`handlePowerButtonTouch()` runs from `handleHomeTouch()` **before** the
+Bluetooth strip, since in horizontal_bars the strip's band overlaps it and
+"power on" is exactly what is wanted while the link is down. The press itself is
+queued and executed from `SwitchBotBLE::update()` in the main loop, never in the
+touch handler — a connect can block for seconds. `main.cpp` calls
+`forceRefresh()` when the press result changes, so the label updates even in
+themes that skip clock-tick redraws.
+
+### Output On/Off Buttons (Campervan only)
+
+`drawOutputToggle()` renders USB / DC / AC as labelled buttons carrying their
+own ON/OFF state (filled = on), used by **sector** and **horizontal_bars**. Each
+button records its bounds, and `handleOutputToggleTouch()` — called from
+`handleHomeTouch()` after the power button and Bluetooth strip — hit-tests
+them, so the drawn geometry and the hit zones cannot drift apart. In sector the
+whole panel stays tappable as well (`handleHomeSectorTouch()`); the older
+themes keep their own strip handlers.
+
+### Live Graph refreshes
+
+The panel refreshes whatever area was written since the last flush, so a
+full-screen redraw drives every pixel — that is the flashing, not the waveform
+(the theme already flushes in `epd_fastest`). When only the minute has moved,
+`liveGraphClockTick()` repaints the clock alone and calls
+`M5.Display.display(x, y, w, h)` on just that rectangle; the plot is redrawn in
+full only when the sampled data actually changes.
 
 ### Screens Available (Both Modes)
 
@@ -179,6 +346,7 @@ else
 |--------|-------------|
 | SETTINGS_FOSSIBOT | Quick Actions, Power Limits |
 | SETTINGS_FOSSIBOT_TIMERS | Standby timers, Schedule Charge |
+| SETTINGS_FOSSIBOT_INFO | Fan level, mains in/out, expansion packs, sub-MCU firmware, AC charge current limit |
 
 ## Configuration
 
@@ -188,14 +356,19 @@ else
 {
     "mode": "campervan",              // "campervan" or "home"
     "wifi": { "ssid": "", "password": "", "enabled": true },            // Home mode only
-    "bluetooth": { "fossibot_mac": "XX:XX:XX:XX:XX:XX", "enabled": true }, // Campervan only
+    "bluetooth": {                                      // Campervan only
+        "fossibot_mac": "XX:XX:XX:XX:XX:XX",
+        "switchbot_mac": "XX:XX:XX:XX:XX:XX",           // Bot over the power button
+        "switchbot_password": "",                       // only if set in the SwitchBot app
+        "enabled": true
+    },
     "mqtt": {                                           // Home mode only
         "broker": "", "port": 1883,
         "username": "", "password": "",
         "inverter_sn": ""
     },
     "display": {
-        "theme": "classic_grid",      // Campervan only (classic_grid|compact_status|horizontal_bars|sector)
+        "theme": "classic_grid",      // Campervan only (classic_grid|compact_status|horizontal_bars|sector|live_graph)
         "auto_sleep_minutes": 5
     },
     "timezone": { "offset_hours": 0 },
@@ -225,6 +398,8 @@ else
 7. **EPD/BLE contention** (Campervan): Skip UI updates during active BLE operations to avoid display corruption
 8. **MQTT update rate** (Home): Solar data updates throttled to 30-second minimum to prevent e-ink flicker
 9. **Mode requires restart**: Changing mode in settings only takes effect after device restart
+10. **Arduino macro collisions**: The ESP32 core `#define`s common all-caps words (`DISABLED`, `INPUT`, `LOW`…). Enum values like `BleConnState::RADIO_OFF` are named around them — a plain `DISABLED` will not compile
+11. **Stale UI state** (Campervan): The UI caches the last `PowerBankData` it was handed. Anything that stops feeding it (an `isConnected()` gate, a paused task) leaves the dashboard silently showing old numbers as if they were live
 
 ## SD Card Structure (runtime)
 

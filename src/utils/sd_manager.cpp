@@ -434,3 +434,46 @@ String SDManager::getRandomPictureForSleep() {
   Serial.println("Sleep image: none available");
   return "";
 }
+
+// Epoch for 2020-01-01 00:00:00 UTC. Anything earlier is treated as an unset
+// clock (the BM8563 powers up at 2000-01-01 after a battery drain), so we never
+// persist or trust such values.
+static constexpr time_t RTC_FALLBACK_MIN_EPOCH = 1577836800;
+
+void SDManager::saveRTCFallback(time_t current_time) {
+  if (!_available || current_time < RTC_FALLBACK_MIN_EPOCH) {
+    return; // Only persist plausible, post-2020 timestamps.
+  }
+
+  File file = SD.open("/.rtc_fallback", FILE_WRITE);
+  if (!file) {
+    Serial.println("SDManager: Failed to open /.rtc_fallback for writing");
+    return;
+  }
+
+  file.print((long)current_time);
+  file.close();
+
+  Serial.printf("SDManager: Saved RTC fallback time: %ld\n",
+                (long)current_time);
+}
+
+time_t SDManager::loadRTCFallback() {
+  if (!_available || !SD.exists("/.rtc_fallback")) {
+    return 0;
+  }
+
+  File file = SD.open("/.rtc_fallback", FILE_READ);
+  if (!file) {
+    return 0;
+  }
+
+  String timeStr = file.readString();
+  file.close();
+
+  time_t saved_time = (time_t)timeStr.toInt();
+  if (saved_time < RTC_FALLBACK_MIN_EPOCH) {
+    return 0; // Missing or corrupt value.
+  }
+  return saved_time;
+}
