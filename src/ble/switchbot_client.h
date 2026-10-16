@@ -108,15 +108,19 @@ private:
   static const uint32_t PRESS_DELAY_MS = 300;  // let the UI paint "PRESSING"
   static const uint32_t RESPONSE_TIMEOUT_MS = 3000;
   static const uint32_t CONNECT_TIMEOUT_S = 5;
+  static const uint32_t SCAN_SECONDS = 4;
 
   void doPress();
   void setResult(SwitchBotResult result);
   size_t buildPressCommand(uint8_t *out) const;
   static SwitchBotResult resultFromStatusByte(uint8_t status);
+  bool resolveAddressByScan();
+  bool tryConnect(const NimBLEAddress &address, const char *label);
 
   NimBLEClient *_client;
   String _targetMAC;
   NimBLEAddress _targetAddress;
+  bool _addressResolved; // address type confirmed by a scan or a live connect
   bool _hasPassword;
   uint32_t _passwordCrc;
 
